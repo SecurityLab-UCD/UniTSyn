@@ -1,5 +1,6 @@
 import threading
 from returns.maybe import Maybe, Nothing, Some
+from pathos.multiprocessing import ProcessPool
 
 
 class ReadPipe(threading.Thread):
@@ -32,3 +33,9 @@ def path2uri(path: str) -> str:
         str: uri format of path
     """
     return "file://" + path
+
+
+def parallel_starmap(f, args, jobs=1):
+    with ProcessPool(jobs) as p:
+        rnt = p.map(lambda x: f(*x), args)
+    return rnt
