@@ -1,0 +1,3 @@
+git+https://github.com/yeger00/pylspclient.git # pypi does not holds the newest version
+python-lsp-server>=1.8.2
+jedi>=0.19.1
