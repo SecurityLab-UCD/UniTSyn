@@ -33,8 +33,8 @@ class Synchronizer:
         self.root_uri = path2uri(self.workspace_dir)
         self.workspace_folders = [{"name": "python-lsp", "uri": self.root_uri}]
 
-        # config LSP server
-        lsp_cmd = get_lsp_cmd(language)
+    def start_lsp_server(self):
+        lsp_cmd = get_lsp_cmd(self.langID)
         if lsp_cmd is None:
             sys.stderr.write("Language {language} is not supported\n")
             exit(1)

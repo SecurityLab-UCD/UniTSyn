@@ -7,6 +7,7 @@ from unitsyncer.util import parallel_starmap as starmap
 def get_source_in(workspace, lang):
     def get_source(file_path, line, col):
         syncer = Synchronizer(workspace, lang)
+        syncer.start_lsp_server()
         syncer.initialize()
         rnt = syncer.get_source_of_call(file_path, line, col)
         syncer.stop()
@@ -19,10 +20,10 @@ def main():
     focal_funcs = [
         ("tests/test_python_example.py", 5, 13),
         ("tests/test_python_example.py", 10, 17),
-    ]
+    ] * 20
 
     f = get_source_in("./data/repos/py_example", LANGUAGE_IDENTIFIER.PYTHON)
-    rnt = starmap(f, focal_funcs, jobs=4)
+    rnt = starmap(f, focal_funcs, jobs=20)
     print(rnt)
 
 
