@@ -164,5 +164,5 @@ cython_debug/
 
 
 # repository files
-/repos/*
-!/repos/py_example
+/data/repos/*
+!/data/repos/py_example
