@@ -1,4 +1,5 @@
 import threading
+from returns.maybe import Maybe, Nothing, Some
 
 
 class ReadPipe(threading.Thread):
@@ -14,3 +15,20 @@ class ReadPipe(threading.Thread):
         line = self.pipe.readline().decode("utf-8")
         while line:
             line = self.pipe.readline().decode("utf-8")
+
+
+def uri2path(uri: str) -> Maybe[str]:
+    if uri.startswith("file://"):
+        return Some(uri[7:])
+    return Nothing
+
+
+def path2uri(path: str) -> str:
+    """
+    Args:
+        path (str): absolute path to file
+
+    Returns:
+        str: uri format of path
+    """
+    return "file://" + path
