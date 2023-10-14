@@ -81,7 +81,7 @@ def parse_focal_call(test_func: ast.AST, module: ModuleNavigator, repo: jedi.Pro
             and not defs[0].in_builtin_module()
             and is_subpath(repo.path, defs[0].module_path)
         ):
-            return node, defs[0]
+            return node, defs[0], node.lineno, shift_col_offset
     return None
 
 
@@ -121,21 +121,10 @@ def collect_focal_func(
     # find call to to the potential focal function
     result = parse_focal_call(test_func, test_mod, repo)
     if result is not None:
-        focal_call, focal_func_jedi = result
+        focal_call, focal_func_jedi, line, col = result
     else:
-        raise NotFoundException(f"Failed to find potential focal call in {test_id}")
-    # convert focal_func from jedi Name to ast object
-    result = jedi2ast(focal_func_jedi)
-    if result is not None:
-        focal_func, focal_mod = result
-    else:
-        raise NotFoundException(
-            f"Failed to locate focal function {focal_func_jedi.full_name} for {test_id}"
-        )
-    # get focal path to dump focal func
-    focal_path = str(focal_func_jedi.module_path.relative_to(os.path.abspath(iroot)))
-    focal_id = dump_ast_func(focal_func, focal_path, focal_mod)
-    return focal_id
+        return None
+    return f"{line}:{col}"
 
 
 def collect_from_repo(
