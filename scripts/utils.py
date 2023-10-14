@@ -53,7 +53,7 @@ def log_or_skip(path: Optional[str] = None, handler=lambda x: json.dumps(x), **k
 
 def wrap_repo(name: str):
     """wrap repo name from username/repo into username?repo"""
-    return "?".join(name.split("/"))
+    return "-".join(name.split("/"))
 
 
 class TimeoutException(Exception):
