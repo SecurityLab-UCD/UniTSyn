@@ -102,7 +102,6 @@ class Synchronizer:
             Position(line, col),
         ):
             case None | []:
-                print("here!")
                 return Nothing
             case [loc, *_]:
                 def_location = loc

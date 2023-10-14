@@ -22,6 +22,11 @@ Other languages are not supported yet, but will be as the research progresses.
 ## Run
 
 ```bash
-git clone link_to_your_project repose/your_project
-python3 main.py --workspace_dir repose/your_project -j CORES
+mkdir -p data/focal data/repos data/repos_tarball data/tests
+python3 scripts/download_repos.py
+python3 scripts/decompress_repos.py
+python3 scripts/collect_test.py
+python3 scripts/collect_focal.py
+
+python3 main.py
 ```
