@@ -109,7 +109,7 @@ def jedi2ast(jedi_node: jedi.api.classes.Name):
 
 def collect_focal_func(
     repo_id: str = "ageitgey/face_recognition",
-    test_id: str = "ageitgey?face_recognition/ageitgey-face_recognition-59cff93/tests/test_face_recognition.py::Test_face_recognition::test_load_image_file",
+    test_id: str = "ageitgey-face_recognition/ageitgey-face_recognition-59cff93/tests/test_face_recognition.py::Test_face_recognition::test_load_image_file",
     iroot: str = "data/repos",
     repo: Optional[jedi.Project] = None,
 ):
@@ -123,8 +123,19 @@ def collect_focal_func(
     if result is not None:
         focal_call, focal_func_jedi, line, col = result
     else:
-        return None
-    return f"{line}:{col}"
+        raise NotFoundException(f"Failed to find potential focal call in {test_id}")
+    # convert focal_func from jedi Name to ast object
+    result = jedi2ast(focal_func_jedi)
+    if result is not None:
+        focal_func, focal_mod = result
+    else:
+        raise NotFoundException(
+            f"Failed to locate focal function {focal_func_jedi.full_name} for {test_id}"
+        )
+    # get focal path to dump focal func
+    focal_path = str(focal_func_jedi.module_path.relative_to(os.path.abspath(iroot)))
+    focal_id = dump_ast_func(focal_func, focal_path, focal_mod)
+    return focal_id, (line, col), (test_func.lineno, test_func.col_offset)
 
 
 def collect_from_repo(
@@ -152,9 +163,16 @@ def collect_from_repo(
     # load test func id to be parsed
     test_ids, focal_ids = [l.strip() for l in open(test_path, "r").readlines()], []
     failed = 0
+    test_locs = []
+    focal_locs = []
     for test_id in test_ids:
         try:
-            focal_ids.append(collect_focal_func(repo_id, test_id, repo_root, repo))
+            focal_id, focal_loc, test_loc = collect_focal_func(
+                repo_id, test_id, repo_root, repo
+            )
+            focal_ids.append(focal_id)
+            test_locs.append(test_loc)
+            focal_locs.append(focal_loc)
         except TimeoutException:
             raise
         except Exception as e:
@@ -164,8 +182,19 @@ def collect_from_repo(
         return 2, len(test_ids), len(test_ids) - failed
     # save to disk
     with open(focal_path, "w") as ofile:
-        for test_id, focal_id in zip(test_ids, focal_ids):
-            ofile.write(json.dumps({"test": test_id, "focal": focal_id}) + "\n")
+        for (
+            test_id,
+            test_loc,
+            focal_id,
+            focal_loc,
+        ) in zip(test_ids, test_locs, focal_ids, focal_locs):
+            d = {
+                "test_id": test_id,
+                "test_loc": test_loc,
+                "focal_id": focal_id,
+                "focal_loc": focal_loc,
+            }
+            ofile.write(json.dumps(d) + "\n")
     return 0, len(test_ids), len(test_ids) - failed
 
 
