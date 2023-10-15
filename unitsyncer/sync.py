@@ -69,12 +69,11 @@ class Synchronizer:
         """send a file to LSP server
 
         Args:
-            file_path (str): file path relative to workspace
+            file_path (str): absolute path to the file
 
         Returns:
             str: uri of the opened file
         """
-        file_path = os.path.join(self.workspace_dir, file_path)
         uri = path2uri(file_path)
         text = open(file_path, "r").read()
         version = 1
@@ -89,7 +88,7 @@ class Synchronizer:
         """get the source code of a function called at a specific location in a file
 
         Args:
-            file_path (str): file path relative to workspace, that contains the call
+            file_path (str): absolute path to file that contains the call
             line (int): line number of the call, 0-indexed
             col (int): column number of the call, 0-indexed
 
