@@ -8,6 +8,8 @@ import json
 import jsonlines
 import os
 from pathos.multiprocessing import ProcessPool
+import logging
+import fire
 
 
 def id2path(id):
@@ -41,12 +43,15 @@ def focal2result(syncer, repos_root, obj):
     }
 
 
-def main():
+def main(focal_file="./data/focal/ageitgey-face_recognition.jsonl"):
     repos_root = os.path.abspath("./data/repos")
-    proj_id = "ageitgey-face_recognition/ageitgey-face_recognition-59cff93"
-    focal_file = "./data/focal/ageitgey-face_recognition.jsonl"
 
-    # fix: dir with '?' is not supported by LSP
+    with open(focal_file) as f:
+        objs = [json.loads(line) for line in f.readlines()]
+
+    proj_id = "/".join(id2path(objs[0]["test_id"]).split("/")[:2])
+    print(proj_id)
+
     syncer = Synchronizer(
         os.path.join(repos_root, proj_id),
         LANGUAGE_IDENTIFIER.PYTHON,
@@ -54,15 +59,15 @@ def main():
     syncer.start_lsp_server()
     syncer.initialize()
 
-    with jsonlines.open(focal_file) as reader:
-        results = [focal2result(syncer, repos_root, obj) for obj in reader]
+    results = [focal2result(syncer, repos_root, obj) for obj in objs]
 
     syncer.stop()
 
     os.makedirs("./data/source", exist_ok=True)
-    with jsonlines.open(f"./data/source/all.jsonl", "w") as f:
+    with jsonlines.open(focal_file.replace("focal", "source"), "w") as f:
         f.write_all(results)
 
 
 if __name__ == "__main__":
-    main()
+    logging.basicConfig(level=logging.INFO)
+    fire.Fire(main)
