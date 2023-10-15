@@ -5,14 +5,14 @@ from returns.maybe import Maybe, Nothing, Some
 import astunparse
 
 
-def python_get_function_code(func_location: Location) -> Maybe[str]:
+def python_get_function_code(func_location: Location) -> Maybe[tuple[str, str | None]]:
     """Extract the source code of a function from a Location LSP response
 
     Args:
         func_location (Location): location of function responsed by LSP
 
     Returns:
-        Maybe[str]: source code of function
+        Maybe[tuple[str, str | None]]: source code of function, its docstring
     """
     lineno = func_location.range.start.line
     col_offset = func_location.range.start.character
@@ -24,7 +24,7 @@ def python_get_function_code(func_location: Location) -> Maybe[str]:
                 # AST is 1-indexed, LSP is 0-indexed
                 and child.lineno == lineno + 1
                 # AST count from def, LSP count from function name
-                and child.col_offset == col_offset - 4
+                # and child.col_offset == col_offset - 4
             ):
                 return Some(child)
             result = search_target_def(child)
@@ -33,10 +33,12 @@ def python_get_function_code(func_location: Location) -> Maybe[str]:
 
         return Nothing
 
-    def get_function_code(file_path) -> Maybe[str]:
+    def get_function_code(file_path) -> Maybe[tuple[str, str | None]]:
         with open(file_path, "r") as file:
             node = ast.parse(file.read(), filename=file_path)
 
-        return search_target_def(node).map(astunparse.unparse)
+        return search_target_def(node).map(
+            lambda node: (astunparse.unparse(node), ast.get_docstring(node))
+        )
 
     return uri2path(func_location.uri).bind(get_function_code)

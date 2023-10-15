@@ -83,7 +83,9 @@ class Synchronizer:
         )
         return uri
 
-    def get_source_of_call(self, file_path: str, line: int, col: int) -> Maybe[str]:
+    def get_source_of_call(
+        self, file_path: str, line: int, col: int
+    ) -> Maybe[tuple[str, str | None]]:
         """get the source code of a function called at a specific location in a file
 
         Args:
