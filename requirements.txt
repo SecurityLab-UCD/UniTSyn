@@ -3,6 +3,7 @@ python-lsp-server>=1.8.2
 jedi>=0.19.1
 returns>=0.16.1
 astunparse>=1.6.3
+jsonlines>=4.0.0
 pygithub
 pytest
 astor
