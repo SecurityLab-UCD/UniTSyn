@@ -13,7 +13,7 @@ import tarfile
 from tqdm import tqdm
 from multiprocessing import Pool
 
-from utils import wrap_repo
+from frontend.python.utils import wrap_repo
 
 
 def decompress(task):
