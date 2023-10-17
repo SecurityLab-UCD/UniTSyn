@@ -26,10 +26,13 @@ To support a new langauge, you need a frontend to do the following:
 
 ```bash
 mkdir -p data/focal data/repos data/repos_tarball data/tests
+source ./scripts/env.sh
 python3 scripts/download_repos.py
 python3 scripts/decompress_repos.py
-python3 scripts/collect_test.py
-python3 scripts/collect_focal.py
+
+# for python repos
+python3 frontend/python/collect_test.py
+python3 frontend/python/collect_focal.py
 
 python3 main.py
 ```
