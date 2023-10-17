@@ -2,7 +2,6 @@ import ast
 from pylspclient.lsp_structs import Location
 from unitsyncer.util import uri2path
 from returns.maybe import Maybe, Nothing, Some
-import astunparse
 
 
 def python_get_function_code(func_location: Location) -> Maybe[tuple[str, str | None]]:
@@ -38,7 +37,7 @@ def python_get_function_code(func_location: Location) -> Maybe[tuple[str, str | 
             node = ast.parse(file.read(), filename=file_path)
 
         return search_target_def(node).map(
-            lambda node: (astunparse.unparse(node), ast.get_docstring(node))
+            lambda node: (ast.unparse(node), ast.get_docstring(node))
         )
 
     return uri2path(func_location.uri).bind(get_function_code)
