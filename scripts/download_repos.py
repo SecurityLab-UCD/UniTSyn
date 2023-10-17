@@ -1,8 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-# @Date    : 2023-09-27 14:20:28
-# @Author  : Jiabo Huang (jiabohuang@tencent.com)
-
 import os
 import sys
 import fire

@@ -1,8 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-# @Date    : 2023-09-28 16:33:55
-# @Author  : Jiabo Huang (jiabohuang@tencent.com)
-
 """
 Collects all the test functions from projects following
 "Conventions for Python test discovery" in
