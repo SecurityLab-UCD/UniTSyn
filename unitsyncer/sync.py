@@ -93,7 +93,7 @@ class Synchronizer:
             col (int): column number of the call, 0-indexed
 
         Returns:
-            Maybe[str]: the source code of the called function
+            Maybe[tuple[str, str | None]]: the source code and docstring of the called function
         """
         uri = self.open_file(file_path)
 
