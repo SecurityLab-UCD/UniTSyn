@@ -1,3 +1,7 @@
+import os
+
+UNITSYNCER_HOME = os.path.abspath(os.getenv("UNITSYNCER_HOME", os.curdir))
+
 CAPABILITIES = {
     "textDocument": {
         "codeAction": {"dynamicRegistration": True},

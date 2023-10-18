@@ -2,6 +2,9 @@ import fire
 import os
 from pathlib import Path
 from frontend.python.utils import wrap_repo
+from tree_sitter import Language, Parser
+from frontend.parser.langauges import JAVA_LANGUAGE
+from frontend.parser.ast_util import get_all_nodes_of_type, tree_walker
 
 
 def has_test(file_path):
@@ -31,9 +34,21 @@ def collect_test_files(root: str):
                     yield p
 
 
-def collect_test_funcs(module_path: str):
+def collect_test_funcs(file_path: str):
     """collect testing functions from the target file"""
     test_funcs = []
+
+    with open(file_path, "r") as f:
+        src = f.read()
+
+    parser = Parser()
+    parser.set_language(JAVA_LANGUAGE)
+    walk_tree = tree_walker(src)
+
+    tree = parser.parse(bytes(src, "utf8"))
+    root_node = tree.root_node
+    walk_tree(root_node)
+    func_decls = get_all_nodes_of_type(root_node, "method_declaration")
 
     return test_funcs
 
