@@ -1,10 +1,13 @@
+import ast
+from typing import Iterable
 import fire
 import os
 from pathlib import Path
 from frontend.python.utils import wrap_repo
-from tree_sitter import Language, Parser
+from tree_sitter.binding import Node
 from frontend.parser.langauges import JAVA_LANGUAGE
-from frontend.parser.ast_util import get_all_nodes_of_type, tree_walker
+from frontend.parser.ast_util import ASTUtil
+from returns.maybe import Maybe, Nothing, Some
 
 
 def has_test(file_path):
@@ -34,22 +37,22 @@ def collect_test_files(root: str):
                     yield p
 
 
-def collect_test_funcs(file_path: str):
+def collect_test_funcs(file_path: str) -> Iterable[Maybe[str]]:
     """collect testing functions from the target file"""
-    test_funcs = []
 
     with open(file_path, "r") as f:
-        src = f.read()
+        ast_util = ASTUtil(f.read())
 
-    parser = Parser()
-    parser.set_language(JAVA_LANGUAGE)
-    walk_tree = tree_walker(src)
-
-    tree = parser.parse(bytes(src, "utf8"))
+    tree = ast_util.tree(JAVA_LANGUAGE)
     root_node = tree.root_node
-    walk_tree(root_node)
-    func_decls = get_all_nodes_of_type(root_node, "method_declaration")
 
+    decls = ast_util.get_all_nodes_of_type(root_node, "method_declaration")
+
+    def has_test_modifier(node: Node):
+        modifiers = ast_util.get_method_modifiers(node)
+        return modifiers.map(lambda x: "@Test" in x).value_or(False)
+
+    test_funcs = map(ast_util.get_method_name, filter(has_test_modifier, decls))
     return test_funcs
 
 
@@ -67,25 +70,25 @@ def collect_from_repo(repo_id: str, repo_root: str, test_root: str):
         return 3, 0, 0
     # collect potential testing modules
     all_files = collect_test_files(repo_path)
-    test_files, test_funcs = [], []
+    tests = {}
     for f in all_files:
         funcs = collect_test_funcs(f)
-        if funcs is None or len(funcs) == 0:
-            continue
-        test_files.append(f)
-        test_funcs.extend(funcs)
-    if len(test_funcs) == 0:
-        return 2, len(test_files), len(test_funcs)
+        tests[f] = funcs
+    if len(tests.keys()) == 0:
+        return 2, len(tests.keys()), sum(len(list(v)) for v in tests.values())
     # save to disk
+    n_test_func = 0
     with open(test_path, "w") as outfile:
-        for func_id in test_funcs:
-            parts = func_id.split("::")
-            parts[0] = str(
-                Path(os.path.abspath(parts[0])).relative_to(os.path.abspath(repo_root))
-            )
-            func_id = "::".join(parts)
-            outfile.write(f"{func_id}\n")
-    return 0, len(test_files), len(test_funcs)
+        for k in tests.keys():
+            for v in tests[k]:
+                match v:
+                    case Some(func_name):
+                        outfile.write(f"{k}::{func_name}\n")
+                        n_test_func += 1
+                    case Nothing:
+                        continue
+
+    return 0, len(tests.keys()), n_test_func
 
 
 def main(
