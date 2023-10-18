@@ -22,11 +22,19 @@ To support a new langauge, you need a frontend to do the following:
 1. Collect the unit tests locations and focal functions locations in the repo (see `scripts/collect_test.py` and `scripts/collect_focal.py` for Python frontend).
 2. Given a `Location` of function delcaration, extract the function source code (see `unitsyncer/source_code.py`).
 
-## Run
+
+## Setup
 
 ```bash
 mkdir -p data/focal data/repos data/repos_tarball data/tests
 source ./scripts/env.sh
+cd frontend/parser & python3 build.py
+cd ../..
+```
+
+## Run
+
+```bash
 python3 scripts/download_repos.py
 python3 scripts/decompress_repos.py
 
