@@ -5,6 +5,7 @@ returns>=0.16.1
 jsonlines>=4.0.0
 tree-sitter==0.0.6
 tqdm>=4.64.1
+types-tree-sitter
 pygithub
 pytest
 astor
