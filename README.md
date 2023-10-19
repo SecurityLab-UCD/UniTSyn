@@ -39,9 +39,6 @@ cd ../..
 python3 scripts/download_repos.py
 python3 scripts/decompress_repos.py
 
-# for python repos
-python3 frontend/python/collect_test.py
-python3 frontend/python/collect_focal.py
-
+python3 frontend/<language>/collect_all.py
 python3 main.py
 ```
