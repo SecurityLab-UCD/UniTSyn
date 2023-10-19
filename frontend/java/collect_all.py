@@ -85,8 +85,8 @@ def collect_from_repo(repo_id: str, repo_root: str, test_root: str, focal_root: 
     test_path = os.path.join(test_root, wrap_repo(repo_id) + ".txt")
     focal_path = os.path.join(focal_root, wrap_repo(repo_id) + ".jsonl")
     # skip if exist
-    # if os.path.exists(focal_path):
-    #     return 3, 0, 0
+    if os.path.exists(focal_path):
+        return 3, 0, 0
     # collect potential testing modules
     all_files = collect_test_files(repo_path)
     tests = {}
