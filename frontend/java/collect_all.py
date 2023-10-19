@@ -67,6 +67,7 @@ def collect_test_n_focal(file_path: str):
         return {
             "test_id": test_name,
             "test_loc": test_func.start_point,
+            "test": ast_util.get_source_from_node(test_func),
             "focal_id": focal,
             "focal_loc": focal_loc,
         }
@@ -100,8 +101,11 @@ def collect_from_repo(repo_id: str, repo_root: str, test_root: str, focal_root: 
     with open(focal_path, "w") as outfile:
         for k in tests.keys():
             for d in tests[k]:
-                d["test_id"] = f"{k}::{d['test_id']}"
+                d["test_id"] = f"{k.removeprefix(repo_root)}::{d['test_id']}"
+                if d["focal_loc"] is None:
+                    continue
                 outfile.write(json.dumps(d) + "\n")
+                n_test_func += 1
     return 0, len(tests.keys()), n_test_func
 
 

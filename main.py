@@ -21,18 +21,22 @@ def focal2result(syncer, repos_root, obj):
     src_lineno, src_col_offset = obj["focal_loc"]
     test_lineno, test_col_offset = obj["test_loc"]
 
-    fake_loc = Location(
-        path2uri(file_path),
-        Range(
-            Position(test_lineno - 1, test_col_offset),
-            Position(test_lineno - 1, test_col_offset + 1),
-        ),
-    )
-
     code, docstring = syncer.get_source_of_call(
         file_path, src_lineno - 1, src_col_offset
     ).value_or((None, None))
-    test, _ = python_get_function_code(fake_loc).value_or((None, None))
+
+    # since the test's delc node is already capture by frontend, it can store the test code
+    if "test" in obj.keys():
+        test = obj["test"]
+    else:
+        fake_loc = Location(
+            path2uri(file_path),
+            Range(
+                Position(test_lineno - 1, test_col_offset),
+                Position(test_lineno - 1, test_col_offset + 1),
+            ),
+        )
+        test, _ = python_get_function_code(fake_loc).value_or((None, None))
 
     return {
         "test_id": obj["test_id"],
