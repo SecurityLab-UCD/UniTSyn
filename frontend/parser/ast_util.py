@@ -4,6 +4,8 @@ from returns.maybe import Maybe, Nothing, Some
 from unitsyncer.common import UNITSYNCER_HOME
 from frontend.parser.langauges import JAVA_LANGUAGE
 
+ASTLoc = tuple[int, int]
+
 
 class ASTUtil:
     def __init__(self, source_code: str) -> None:

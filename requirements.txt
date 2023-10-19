@@ -11,3 +11,6 @@ pytest
 astor
 jedi
 fire
+python-Levenshtein
+fuzzywuzzy
+cytoolz
