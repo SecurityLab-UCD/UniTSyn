@@ -22,6 +22,8 @@ def get_lsp_cmd(language: str) -> Optional[list[str]]:
             return ["python", "-m", "pylsp"]
         case LANGUAGE_IDENTIFIER.C | LANGUAGE_IDENTIFIER.CPP:
             return ["clangd"]
+        case LANGUAGE_IDENTIFIER.JAVA:
+            return ["jdtls"]
         case _:
             return None
 

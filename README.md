@@ -14,7 +14,8 @@ To run this script on a new project, you need to install the corresponding langu
 | Language | Language Server                                              | Frontend | Backend  |
 | -------- | ------------------------------------------------------------ | -------- | -------- |
 | Python   | [pylsp](https://github.com/python-lsp/python-lsp-server)     | &#x2714; | &#x2714; |
-| C/C++    | [clangd](https://clangd.llvm.org/installation.html)          | ToDo     | &#x2714; |
+| Java     | [jdtls](https://github.com/eclipse-jdtls/eclipse.jdt.ls)     | &#x2714; | &#x2714; |
+| C/C++    | [clangd](https://clangd.llvm.org/installation.html)          | ToDo     | ToDo     |
 | Rust     | [rust-analyzer](https://rust-analyzer.github.io/manual.html) | ToDo     | ToDo     |
 
 Other languages are not supported yet, but will be as the research progresses.
