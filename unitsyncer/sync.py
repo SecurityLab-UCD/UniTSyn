@@ -11,7 +11,7 @@ from pylspclient.lsp_structs import (
 )
 from unitsyncer.util import path2uri, uri2path, ReadPipe
 from unitsyncer.source_code import get_function_code
-from unitsyncer.common import CAPABILITIES
+from unitsyncer.common import CAPABILITIES, UNITSYNCER_HOME
 from typing import Optional, Union
 from returns.maybe import Maybe, Nothing, Some
 
@@ -23,7 +23,10 @@ def get_lsp_cmd(language: str) -> Optional[list[str]]:
         case LANGUAGE_IDENTIFIER.C | LANGUAGE_IDENTIFIER.CPP:
             return ["clangd"]
         case LANGUAGE_IDENTIFIER.JAVA:
-            return ["jdtls"]
+            return [
+                "bash",
+                f"{UNITSYNCER_HOME}/java-language-server/dist/lang_server_linux.sh",
+            ]
         case _:
             return None
 

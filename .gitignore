@@ -168,3 +168,5 @@ cython_debug/
 /data/repos/*
 !/data/repos/py_example
 !/data/repo_meta
+
+/java-language-server/*
