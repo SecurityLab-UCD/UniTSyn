@@ -61,8 +61,12 @@ def get_focal_call(ast_util: ASTUtil, func: Node) -> Maybe[tuple[str, ASTLoc]]:
         idx = func_calls.index(call)
         node = calls[idx]
         lineno, col = node.start_point
-        obj_name = call.split(".")[0]
-        return call, (lineno, col + len(obj_name) + 1)
+        match call.split("."):
+            case [obj_name, *_, method_name]:
+                offset = len(call) - len(method_name)
+                return method_name, (lineno, col + offset)
+            case _:
+                return call, (lineno, col)
 
     return closest_match(test_func_name, calls_before_assert).map(get_loc)
 
