@@ -3,7 +3,7 @@ from unitsyncer.sync import Synchronizer
 from pylspclient.lsp_structs import LANGUAGE_IDENTIFIER, Location, Position, Range
 from returns.maybe import Maybe, Nothing, Some
 from unitsyncer.util import parallel_starmap as starmap, path2uri
-from unitsyncer.source_code import python_get_function_code
+from unitsyncer.source_code import get_function_code
 import json
 import jsonlines
 import os
@@ -36,18 +36,23 @@ def focal2result(syncer, repos_root, obj):
                 Position(test_lineno - 1, test_col_offset + 1),
             ),
         )
-        test, _ = python_get_function_code(fake_loc).value_or((None, None))
+        test, _ = get_function_code(fake_loc, syncer.langID).value_or((None, None))
+
+    if "focal_id" in obj.keys():
+        code_id = obj["focal_id"]
+    else:
+        code_id = None
 
     return {
         "test_id": obj["test_id"],
         "test": test,
-        "code_id": obj["focal_id"],
+        "code_id": code_id,
         "code": code,
         "docstring": docstring,
     }
 
 
-def main(focal_file="./data/focal/ageitgey-face_recognition.jsonl"):
+def main(focal_file="./data/focal/ageitgey-face_recognition.jsonl", language="python"):
     repos_root = os.path.abspath("./data/repos")
 
     with open(focal_file) as f:
@@ -56,10 +61,8 @@ def main(focal_file="./data/focal/ageitgey-face_recognition.jsonl"):
     proj_id = "/".join(id2path(objs[0]["test_id"]).split("/")[:2])
     print(proj_id)
 
-    syncer = Synchronizer(
-        os.path.join(repos_root, proj_id),
-        LANGUAGE_IDENTIFIER.PYTHON,
-    )
+    syncer = Synchronizer(os.path.join(repos_root, proj_id), language)
+
     syncer.start_lsp_server()
     syncer.initialize()
 

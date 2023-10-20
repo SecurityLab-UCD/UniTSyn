@@ -10,7 +10,7 @@ from pylspclient.lsp_structs import (
     LANGUAGE_IDENTIFIER,
 )
 from unitsyncer.util import path2uri, uri2path, ReadPipe
-from unitsyncer.source_code import python_get_function_code
+from unitsyncer.source_code import get_function_code
 from unitsyncer.common import CAPABILITIES
 from typing import Optional, Union
 from returns.maybe import Maybe, Nothing, Some
@@ -99,11 +99,16 @@ class Synchronizer:
         """
         uri = self.open_file(file_path)
 
+        try:
+            response = self.lsp_client.definition(
+                TextDocumentIdentifier(uri),
+                Position(line, col),
+            )
+        except TimeoutError:
+            return Nothing
+
         def_location: Location
-        match self.lsp_client.definition(
-            TextDocumentIdentifier(uri),
-            Position(line, col),
-        ):
+        match response:
             case None | []:
                 return Nothing
             case [loc, *_]:
@@ -113,7 +118,7 @@ class Synchronizer:
                     def_location = loc
                 else:
                     return Nothing
-        return python_get_function_code(def_location)
+        return get_function_code(def_location, self.langID)
 
     def stop(self):
         self.lsp_client.shutdown()
