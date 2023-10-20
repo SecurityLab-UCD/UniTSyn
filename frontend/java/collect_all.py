@@ -57,7 +57,7 @@ def collect_test_funcs(ast_util: ASTUtil) -> Iterable[Node]:
 
 def collect_test_n_focal(file_path: str):
     with open(file_path, "r") as f:
-        ast_util = ASTUtil(f.read())
+        ast_util = ASTUtil(f.read().replace("\t", "    "))
 
     test_funcs = collect_test_funcs(ast_util)
 

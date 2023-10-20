@@ -25,7 +25,6 @@ def get_function_code(
     def get_function_code(file_path) -> Maybe[tuple[str, str | None]]:
         with open(file_path, "r") as file:
             code = file.read()
-            ast_util = ASTUtil(code)
 
         match lang:
             case LANGUAGE_IDENTIFIER.PYTHON:
@@ -34,6 +33,7 @@ def get_function_code(
                     lambda node: (ast.unparse(node), ast.get_docstring(node))
                 )
             case LANGUAGE_IDENTIFIER.JAVA:
+                ast_util = ASTUtil(code.replace("\t", "    "))
                 tree = ast_util.tree(JAVA_LANGUAGE)
                 return java_get_def(tree.root_node, lineno, ast_util).map(
                     lambda node: (ast_util.get_source_from_node(node), None)
@@ -63,6 +63,7 @@ def py_get_def(node: ast.AST, lineno: int) -> Maybe[ast.FunctionDef]:
 
 def java_get_def(node: Node, lineno: int, ast_util: ASTUtil) -> Maybe[Node]:
     for defn in ast_util.get_all_nodes_of_type(node, "method_declaration"):
-        if defn.start_point[0] == lineno + 1:
+        # tree-sitter AST is 0-indexed
+        if defn.start_point[0] == lineno:
             return Some(defn)
     return Nothing
