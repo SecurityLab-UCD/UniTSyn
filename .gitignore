@@ -167,3 +167,4 @@ cython_debug/
 /data/*
 /data/repos/*
 !/data/repos/py_example
+!/data/repo_meta
