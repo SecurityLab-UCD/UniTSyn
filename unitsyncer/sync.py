@@ -14,6 +14,7 @@ from unitsyncer.source_code import get_function_code
 from unitsyncer.common import CAPABILITIES, UNITSYNCER_HOME
 from typing import Optional, Union
 from returns.maybe import Maybe, Nothing, Some
+import logging
 
 
 def get_lsp_cmd(language: str) -> Optional[list[str]]:
@@ -108,6 +109,10 @@ class Synchronizer:
                 Position(line, col),
             )
         except TimeoutError:
+            logging.error("TimeoutError", uri, line, col)
+            return Nothing
+        except Exception as e:
+            logging.error(e)
             return Nothing
 
         def_location: Location
