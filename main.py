@@ -16,7 +16,7 @@ def id2path(id):
     return id.split("::")[0]
 
 
-def focal2result(syncer, repos_root, obj):
+def focal2result(syncer: Synchronizer, repos_root, obj):
     file_path = os.path.join(repos_root, id2path(obj["test_id"]))
     src_lineno, src_col_offset = obj["focal_loc"]
     test_lineno, test_col_offset = obj["test_loc"]
