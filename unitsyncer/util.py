@@ -39,3 +39,8 @@ def parallel_starmap(f, args, jobs=1):
     with ProcessPool(jobs) as p:
         rnt = p.map(lambda x: f(*x), args)
     return rnt
+
+
+def replace_tabs(text: str, n_space=4) -> str:
+    """replace each tab with 4 spaces"""
+    return text.replace("\t", " " * n_space)

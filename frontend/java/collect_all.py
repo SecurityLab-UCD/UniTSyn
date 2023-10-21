@@ -9,6 +9,7 @@ from frontend.parser.langauges import JAVA_LANGUAGE
 from frontend.parser.ast_util import ASTUtil
 from returns.maybe import Maybe, Nothing, Some
 from frontend.java.collect_focal import get_focal_call
+from unitsyncer.util import replace_tabs
 import json
 
 
@@ -57,9 +58,7 @@ def collect_test_funcs(ast_util: ASTUtil) -> Iterable[Node]:
 
 def collect_test_n_focal(file_path: str):
     with open(file_path, "r") as f:
-        ast_util = ASTUtil(f.read().replace("\t", "    "))
-
-    test_funcs = collect_test_funcs(ast_util)
+        ast_util = ASTUtil(replace_tabs(f.read()))
 
     def get_focal_for_test(test_func: Node):
         test_name = ast_util.get_method_name(test_func).value_or(None)

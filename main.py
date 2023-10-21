@@ -48,10 +48,6 @@ def focal2result(syncer: Synchronizer, repos_root, obj):
         case LANGUAGE_IDENTIFIER.PYTHON:
             src_lineno -= 1
             test_lineno -= 1
-        case LANGUAGE_IDENTIFIER.JAVA:
-            # todo: find out why this happens
-            src_col_offset += 5
-            test_col_offset += 5
 
     code, docstring = syncer.get_source_of_call(
         file_path, src_lineno, src_col_offset

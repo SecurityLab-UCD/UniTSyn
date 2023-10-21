@@ -9,7 +9,7 @@ from pylspclient.lsp_structs import (
     TextDocumentIdentifier,
     LANGUAGE_IDENTIFIER,
 )
-from unitsyncer.util import path2uri, uri2path, ReadPipe
+from unitsyncer.util import path2uri, replace_tabs, uri2path, ReadPipe
 from unitsyncer.source_code import get_function_code
 from unitsyncer.common import CAPABILITIES, UNITSYNCER_HOME
 from typing import Optional, Union
@@ -81,7 +81,7 @@ class Synchronizer:
             str: uri of the opened file
         """
         uri = path2uri(file_path)
-        text = open(file_path, "r").read()
+        text = replace_tabs(open(file_path, "r").read())
         version = 1
         self.lsp_client.didOpen(
             pylspclient.lsp_structs.TextDocumentItem(uri, self.langID, version, text)
