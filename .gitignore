@@ -171,3 +171,5 @@ cython_debug/
 
 java-language-server/
 /java-language-server/*
+
+oauth
