@@ -43,10 +43,13 @@ class ASTUtil:
                     modifiers.append(self.get_source_from_node(modifier_child))
         return Some(modifiers)
 
-    def get_all_nodes_of_type(self, root: Node, type: str) -> list[Node]:
+    def get_all_nodes_of_type(self, root: Node, type: str, max_level=50) -> list[Node]:
         nodes = []
+        if max_level == 0:
+            return nodes
+
         for child in root.children:
             if child.type == type:
                 nodes.append(child)
-            nodes += self.get_all_nodes_of_type(child, type)
+            nodes += self.get_all_nodes_of_type(child, type, max_level=max_level - 1)
         return nodes
