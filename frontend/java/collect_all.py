@@ -21,7 +21,7 @@ def has_test(file_path):
     def has_junit5(code):
         return "@Test" in code and "import org.junit.jupiter.api.Test" in code
 
-    with open(file_path, "r") as f:
+    with open(file_path, "r", errors="replace") as f:
         code = f.read()
     return has_junit4(code) or has_junit5(code)
 
@@ -56,7 +56,7 @@ def collect_test_funcs(ast_util: ASTUtil) -> Iterable[Node]:
 
 
 def collect_test_n_focal(file_path: str):
-    with open(file_path, "r") as f:
+    with open(file_path, "r", errors="replace") as f:
         ast_util = ASTUtil(replace_tabs(f.read()))
 
     def get_focal_for_test(test_func: Node):

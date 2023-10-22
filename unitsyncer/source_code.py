@@ -23,7 +23,7 @@ def get_function_code(
     col_offset = func_location.range.start.character
 
     def get_function_code(file_path) -> Maybe[tuple[str, str | None]]:
-        with open(file_path, "r") as file:
+        with open(file_path, "r", errors="replace") as file:
             code = file.read()
 
         match lang:

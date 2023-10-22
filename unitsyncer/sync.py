@@ -81,7 +81,7 @@ class Synchronizer:
             str: uri of the opened file
         """
         uri = path2uri(file_path)
-        text = replace_tabs(open(file_path, "r").read())
+        text = replace_tabs(open(file_path, "r", errors="replace").read())
         version = 1
         self.lsp_client.didOpen(
             pylspclient.lsp_structs.TextDocumentItem(uri, self.langID, version, text)
