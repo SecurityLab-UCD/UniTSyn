@@ -1,9 +1,6 @@
-import ast
 from typing import Iterable
 import fire
 import os
-from pathlib import Path
-from frontend.python.utils import wrap_repo
 from tree_sitter.binding import Node
 from frontend.parser.langauges import JAVA_LANGUAGE
 from frontend.parser.ast_util import ASTUtil
@@ -11,6 +8,8 @@ from returns.maybe import Maybe, Nothing, Some
 from frontend.java.collect_focal import get_focal_call
 from unitsyncer.util import replace_tabs
 import json
+from frontend.util import mp_map_repos, wrap_repo, run_with_timeout
+from collections import Counter
 
 
 def has_test(file_path):
@@ -74,6 +73,7 @@ def collect_test_n_focal(file_path: str):
     return map(get_focal_for_test, collect_test_funcs(ast_util))
 
 
+@run_with_timeout
 def collect_from_repo(repo_id: str, repo_root: str, test_root: str, focal_root: str):
     """collect all test functions in the given project
     return (status, nfile, ntest)
@@ -109,7 +109,7 @@ def collect_from_repo(repo_id: str, repo_root: str, test_root: str, focal_root: 
 
 
 def main(
-    repo_id_list: str = "spring-cloud/spring-cloud-netflix",
+    repo_id: str = "spring-cloud/spring-cloud-netflix",
     repo_root: str = "data/repos/",
     test_root: str = "data/tests/",
     focal_root: str = "data/focal/",
@@ -117,13 +117,35 @@ def main(
     nprocs: int = 0,
     limits: int = -1,
 ):
-    status, nfile, ntest = collect_from_repo(
-        repo_id_list,
-        repo_root,
-        test_root,
-        focal_root,
+    try:
+        repo_id_list = [l.strip() for l in open(repo_id, "r").readlines()]
+    except:
+        repo_id_list = [repo_id]
+    if limits > 0:
+        repo_id_list = repo_id_list[:limits]
+    print(f"Loaded {len(repo_id_list)} repos to be processed")
+
+    # collect focal function from each repo
+    status_ntest_nfocal = mp_map_repos(
+        collect_from_repo,
+        repo_id_list=repo_id_list,
+        nprocs=nprocs,
+        timeout=timeout,
+        repo_root=repo_root,
+        test_root=test_root,
+        focal_root=focal_root,
     )
-    print(status, nfile, ntest)
+
+    filtered_results = [i for i in status_ntest_nfocal if i is not None]
+    if len(filtered_results) < len(status_ntest_nfocal):
+        print(f"{len(status_ntest_nfocal) - len(filtered_results)} repos timeout")
+    status, ntest, nfocal = zip(*filtered_results)
+    status = Counter(status)
+    print(
+        f"Processed {sum(status.values())} repos with {status[3]} skipped, {status[1]} not found, and {status[2]} failed to locate any focal functions"
+    )
+    print(f"Collected {sum(nfocal)} focal functions for {sum(ntest)} tests")
+    print("Done!")
 
 
 if __name__ == "__main__":

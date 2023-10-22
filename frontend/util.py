@@ -108,3 +108,19 @@ def mp_map_repos(handler: Callable, repo_id_list: List[str], nprocs: int = 0, **
                     pbar.set_description(timestamp())
                     pbar.update()
     return results
+
+
+def run_with_timeout(func: Callable):
+    """run a function with timeout"""
+
+    def wrapper(*args, timeout=-1, **kwargs):
+        if timeout <= 0:
+            return func(*args, **kwargs)
+        try:
+            with time_limit(timeout):
+                return func(*args, **kwargs)
+        except TimeoutException:
+            pass
+        return None
+
+    return wrapper

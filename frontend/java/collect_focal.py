@@ -1,12 +1,6 @@
-import ast
-from tokenize import maybe
-from typing import Iterable, Optional
+from typing import Optional
 import fire
-import os
-from pathlib import Path
 import re
-from requests import get
-from frontend.python.utils import wrap_repo
 from tree_sitter.binding import Node
 from frontend.parser.langauges import JAVA_LANGUAGE
 from frontend.parser.ast_util import ASTUtil, ASTLoc

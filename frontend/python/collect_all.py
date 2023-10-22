@@ -4,7 +4,7 @@ import fire
 
 
 def main(
-    repo_id_list: str = "ageitgey/face_recognition",
+    repo_id: str = "ageitgey/face_recognition",
     test_root: str = "data/tests",
     repo_root: str = "data/repos",
     focal_root: str = "data/focal",
@@ -13,7 +13,7 @@ def main(
     limits: int = -1,
 ):
     collect_test.main(
-        repo_id_list=repo_id_list,
+        repo_id=repo_id,
         test_root=test_root,
         repo_root=repo_root,
         timeout=timeout,
@@ -21,7 +21,7 @@ def main(
         limits=limits,
     )
     collect_focal.main(
-        repo_id_list=repo_id_list,
+        repo_id=repo_id,
         test_root=test_root,
         repo_root=repo_root,
         focal_root=focal_root,
