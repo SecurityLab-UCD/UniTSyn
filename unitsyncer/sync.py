@@ -39,7 +39,7 @@ class Synchronizer:
         self.root_uri = path2uri(self.workspace_dir)
         self.workspace_folders = [{"name": "python-lsp", "uri": self.root_uri}]
 
-    def start_lsp_server(self):
+    def start_lsp_server(self, timeout: int = 10):
         lsp_cmd = get_lsp_cmd(self.langID)
         if lsp_cmd is None:
             sys.stderr.write("Language {language} is not supported\n")
@@ -56,7 +56,7 @@ class Synchronizer:
         json_rpc_endpoint = pylspclient.JsonRpcEndpoint(
             self.lsp_proc.stdin, self.lsp_proc.stdout
         )
-        lsp_endpoint = pylspclient.LspEndpoint(json_rpc_endpoint)
+        lsp_endpoint = pylspclient.LspEndpoint(json_rpc_endpoint, timeout=timeout)
         self.lsp_client = pylspclient.LspClient(lsp_endpoint)
 
     def initialize(self):

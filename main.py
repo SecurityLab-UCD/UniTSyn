@@ -29,7 +29,7 @@ def java_workdir_dict(test_ids: list[str]) -> dict[str, list[str]]:
     workdir_dict = {}
     for test_id in test_ids:
         file_path = id2path(test_id)
-        workdir = file_path.rsplit("test", 1)[0]
+        workdir = file_path.split("/test")[0]
         if workdir not in workdir_dict.keys():
             workdir_dict[workdir] = []
         workdir_dict[workdir].append(test_id)
@@ -37,7 +37,10 @@ def java_workdir_dict(test_ids: list[str]) -> dict[str, list[str]]:
 
 
 def focal2result(syncer: Synchronizer, repos_root, obj):
-    file_path = os.path.join(repos_root, id2path(obj["test_id"]))
+    p = id2path(obj["test_id"])
+    if p[0] == "/":
+        p = p[1:]
+    file_path = os.path.join(repos_root, p)
     src_lineno, src_col_offset = obj["focal_loc"]
     test_lineno, test_col_offset = obj["test_loc"]
 
@@ -80,9 +83,11 @@ def focal2result(syncer: Synchronizer, repos_root, obj):
     }
 
 
-def main(focal_file="./data/focal/ageitgey-face_recognition.jsonl", language="python"):
-    repos_root = os.path.abspath("./data/repos")
-
+def process_one_focal_file(
+    repos_root="data/repos",
+    focal_file="./data/focal/ageitgey-face_recognition.jsonl",
+    language="python",
+):
     with open(focal_file) as f:
         objs = [json.loads(line) for line in f.readlines()]
         test_ids = [obj["test_id"] for obj in objs]
@@ -99,11 +104,14 @@ def main(focal_file="./data/focal/ageitgey-face_recognition.jsonl", language="py
             return 1
     results = []
     logging.info(f"number of workdir_dict: {len(wd.keys())}")
-    for workdir, files in tqdm(wd.items()):
-        logging.info(f"workdir: {workdir}")
+    repos_root = os.path.abspath(repos_root)
+    for workdir, _ in tqdm(wd.items()):
+        if workdir[0] == "/":
+            workdir = workdir[1:]
+        full_workdir = os.path.join(repos_root, workdir)
+        logging.info(f"workdir: {full_workdir}")
 
-        syncer = Synchronizer(os.path.join(repos_root, workdir), language)
-
+        syncer = Synchronizer(full_workdir, language)
         syncer.start_lsp_server()
         syncer.initialize()
 
@@ -111,9 +119,21 @@ def main(focal_file="./data/focal/ageitgey-face_recognition.jsonl", language="py
 
         syncer.stop()
 
-    os.makedirs("./data/source", exist_ok=True)
     with jsonlines.open(focal_file.replace("focal", "source"), "w") as f:
         f.write_all(results)
+
+
+def main(repos_root="data/repos", focal_dir="data/focal", language="python", jobs=4):
+    all_focal_files = []
+    for root, dirs, files in os.walk(os.path.abspath(focal_dir)):
+        for file in files:
+            if file.endswith(".jsonl"):
+                all_focal_files.append(os.path.join(root, file))
+
+    logging.info(f"Processing {len(all_focal_files)} focal files")
+    os.makedirs("./data/source", exist_ok=True)
+    with ProcessPool(jobs) as pool:
+        pool.map(process_one_focal_file, all_focal_files, language)
 
 
 if __name__ == "__main__":
