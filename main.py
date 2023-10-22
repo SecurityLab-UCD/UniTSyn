@@ -84,8 +84,8 @@ def focal2result(syncer: Synchronizer, repos_root, obj):
 
 
 def process_one_focal_file(
-    repos_root="data/repos",
     focal_file="./data/focal/ageitgey-face_recognition.jsonl",
+    repos_root="data/repos",
     language="python",
 ):
     with open(focal_file) as f:
@@ -105,7 +105,7 @@ def process_one_focal_file(
     results = []
     logging.info(f"number of workdir_dict: {len(wd.keys())}")
     repos_root = os.path.abspath(repos_root)
-    for workdir, _ in tqdm(wd.items()):
+    for workdir, _ in wd.items():
         if workdir[0] == "/":
             workdir = workdir[1:]
         full_workdir = os.path.join(repos_root, workdir)
@@ -133,7 +133,17 @@ def main(repos_root="data/repos", focal_dir="data/focal", language="python", job
     logging.info(f"Processing {len(all_focal_files)} focal files")
     os.makedirs("./data/source", exist_ok=True)
     with ProcessPool(jobs) as pool:
-        pool.map(process_one_focal_file, all_focal_files, language)
+        _ = list(
+            tqdm(
+                pool.imap(
+                    lambda f: process_one_focal_file(
+                        f, repos_root=repos_root, language=language
+                    ),
+                    all_focal_files,
+                ),
+                total=len(all_focal_files),
+            )
+        )
 
 
 if __name__ == "__main__":
