@@ -15,7 +15,7 @@ from pathlib import Path
 from collections import Counter
 from typing import List, Optional
 
-from utils import wrap_repo, mp_map_repos, time_limit, TimeoutException, Timing
+from ..util import run_with_timeout, wrap_repo, mp_map_repos, TimeoutException
 from navigate import ModuleNavigator, dump_ast_func
 
 
@@ -115,6 +115,7 @@ def collect_test_funcs(module_path: str):
     return test_funcs
 
 
+@run_with_timeout
 def collect_from_repo(repo_id: str, repo_root: str, test_root: str):
     """collect all test functions in the given project
     return (status, nfile, ntest)
@@ -155,19 +156,8 @@ def collect_from_repo(repo_id: str, repo_root: str, test_root: str):
     return 0, len(test_files), len(test_funcs)
 
 
-def collect_from_repo_with_timeout(*args, timeout: int = -1, **kwargs):
-    if timeout <= 0:
-        return collect_from_repo(*args, **kwargs)
-    try:
-        with time_limit(timeout):
-            return collect_from_repo(*args, **kwargs)
-    except TimeoutException:
-        pass
-    return None
-
-
 def main(
-    repo_id_list: str = "ageitgey/face_recognition",
+    repo_id: str = "ageitgey/face_recognition",
     repo_root: str = "data/repos/",
     test_root: str = "data/tests",
     timeout: int = 120,
@@ -177,15 +167,15 @@ def main(
     # if repo_id_list is a file then load lines
     # otherwise it is the id of a specific repo
     try:
-        repo_id_list = [l.strip() for l in open(repo_id_list, "r").readlines()]
+        repo_id_list = [l.strip() for l in open(repo_id, "r").readlines()]
     except:
-        repo_id_list = [repo_id_list]
+        repo_id_list = [repo_id]
     if limits > 0:
         repo_id_list = repo_id_list[:limits]
     print(f"Loaded {len(repo_id_list)} repos to be processed")
 
     status_nfile_ntest = mp_map_repos(
-        collect_from_repo_with_timeout,
+        collect_from_repo,
         repo_id_list=repo_id_list,
         nprocs=nprocs,
         repo_root=repo_root,

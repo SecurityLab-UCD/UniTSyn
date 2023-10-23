@@ -11,7 +11,7 @@ from tqdm import tqdm
 from typing import Optional
 from collections import Counter
 
-from utils import wrap_repo, mp_map_repos, time_limit, TimeoutException
+from ..util import wrap_repo, mp_map_repos, run_with_timeout, TimeoutException
 from navigate import ModuleNavigator, load_ast_func, dump_ast_func, is_assert
 
 
@@ -133,6 +133,7 @@ def collect_focal_func(
     return focal_id, (line, col), (test_func.lineno, test_func.col_offset)
 
 
+@run_with_timeout
 def collect_from_repo(
     repo_id: str = "ageitgey/face_recognition",
     repo_root: str = "data/repos",
@@ -193,19 +194,8 @@ def collect_from_repo(
     return 0, len(test_ids), len(test_ids) - failed
 
 
-def collect_from_repo_with_timeout(*args, timeout: int = -1, **kwargs):
-    if timeout <= 0:
-        return collect_from_repo(*args, **kwargs)
-    try:
-        with time_limit(timeout):
-            return collect_from_repo(*args, **kwargs)
-    except TimeoutException:
-        pass
-    return None
-
-
 def main(
-    repo_id_list: str = "ageitgey/face_recognition",
+    repo_id: str = "ageitgey/face_recognition",
     test_root: str = "data/tests",
     repo_root: str = "data/repos",
     focal_root: str = "data/focal",
@@ -214,16 +204,16 @@ def main(
     limits: int = -1,
 ):
     try:
-        repo_id_list = [l.strip() for l in open(repo_id_list, "r").readlines()]
+        repo_id_list = [l.strip() for l in open(repo_id, "r").readlines()]
     except:
-        repo_id_list = [repo_id_list]
+        repo_id_list = [repo_id]
     if limits > 0:
         repo_id_list = repo_id_list[:limits]
     print(f"Loaded {len(repo_id_list)} repos to be processed")
 
     # collect focal function from each repo
     status_ntest_nfocal = mp_map_repos(
-        collect_from_repo_with_timeout,
+        collect_from_repo,
         repo_id_list=repo_id_list,
         nprocs=nprocs,
         timeout=timeout,

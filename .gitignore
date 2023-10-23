@@ -166,4 +166,11 @@ cython_debug/
 # repository files
 /data/*
 /data/repos/*
-!/data/repos/py_example
+!/data/repos/*_example
+!/data/repo_meta
+
+java-language-server/
+/java-language-server/*
+
+oauth
+debug/

@@ -9,11 +9,14 @@ from pylspclient.lsp_structs import (
     TextDocumentIdentifier,
     LANGUAGE_IDENTIFIER,
 )
-from unitsyncer.util import path2uri, uri2path, ReadPipe
-from unitsyncer.source_code import python_get_function_code
-from unitsyncer.common import CAPABILITIES
+from unitsyncer.util import path2uri, replace_tabs, uri2path, ReadPipe
+from unitsyncer.source_code import get_function_code
+from unitsyncer.common import CAPABILITIES, UNITSYNCER_HOME
 from typing import Optional, Union
 from returns.maybe import Maybe, Nothing, Some
+from returns.result import Result, Success, Failure
+import logging
+from unitsyncer.util import silence
 
 
 def get_lsp_cmd(language: str) -> Optional[list[str]]:
@@ -22,6 +25,11 @@ def get_lsp_cmd(language: str) -> Optional[list[str]]:
             return ["python", "-m", "pylsp"]
         case LANGUAGE_IDENTIFIER.C | LANGUAGE_IDENTIFIER.CPP:
             return ["clangd"]
+        case LANGUAGE_IDENTIFIER.JAVA:
+            return [
+                "bash",
+                f"{UNITSYNCER_HOME}/java-language-server/dist/lang_server_linux.sh",
+            ]
         case _:
             return None
 
@@ -33,7 +41,8 @@ class Synchronizer:
         self.root_uri = path2uri(self.workspace_dir)
         self.workspace_folders = [{"name": "python-lsp", "uri": self.root_uri}]
 
-    def start_lsp_server(self):
+    @silence
+    def start_lsp_server(self, timeout: int = 10):
         lsp_cmd = get_lsp_cmd(self.langID)
         if lsp_cmd is None:
             sys.stderr.write("Language {language} is not supported\n")
@@ -50,9 +59,10 @@ class Synchronizer:
         json_rpc_endpoint = pylspclient.JsonRpcEndpoint(
             self.lsp_proc.stdin, self.lsp_proc.stdout
         )
-        lsp_endpoint = pylspclient.LspEndpoint(json_rpc_endpoint)
+        lsp_endpoint = pylspclient.LspEndpoint(json_rpc_endpoint, timeout=timeout)
         self.lsp_client = pylspclient.LspClient(lsp_endpoint)
 
+    @silence
     def initialize(self):
         self.lsp_client.initialize(
             self.lsp_proc.pid,
@@ -75,7 +85,7 @@ class Synchronizer:
             str: uri of the opened file
         """
         uri = path2uri(file_path)
-        text = open(file_path, "r").read()
+        text = replace_tabs(open(file_path, "r", errors="replace").read())
         version = 1
         self.lsp_client.didOpen(
             pylspclient.lsp_structs.TextDocumentItem(uri, self.langID, version, text)
@@ -83,7 +93,7 @@ class Synchronizer:
         return uri
 
     def get_source_of_call(
-        self, file_path: str, line: int, col: int
+        self, file_path: str, line: int, col: int, verbose: bool = False
     ) -> Maybe[tuple[str, str | None]]:
         """get the source code of a function called at a specific location in a file
 
@@ -95,13 +105,27 @@ class Synchronizer:
         Returns:
             Maybe[tuple[str, str | None]]: the source code and docstring of the called function
         """
-        uri = self.open_file(file_path)
+        try:
+            uri = self.open_file(file_path)
+        except Exception as e:
+            logging.debug(e)
+            return Nothing
+
+        try:
+            goto_def = self.lsp_client.definition
+            if not verbose:
+                goto_def = silence(goto_def)
+
+            response = goto_def(
+                TextDocumentIdentifier(uri),
+                Position(line, col),
+            )
+        except Exception as e:
+            logging.debug(e)
+            return Nothing
 
         def_location: Location
-        match self.lsp_client.definition(
-            TextDocumentIdentifier(uri),
-            Position(line, col),
-        ):
+        match response:
             case None | []:
                 return Nothing
             case [loc, *_]:
@@ -111,7 +135,7 @@ class Synchronizer:
                     def_location = loc
                 else:
                     return Nothing
-        return python_get_function_code(def_location)
+        return get_function_code(def_location, self.langID)
 
     def stop(self):
         self.lsp_client.shutdown()

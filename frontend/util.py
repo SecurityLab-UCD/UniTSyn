@@ -7,9 +7,9 @@ import signal
 import datetime
 import functools
 import contextlib
-import multiprocessing as mp
 from tqdm import tqdm
 from typing import Optional, Callable, List, Any
+from pathos.multiprocessing import ProcessPool
 
 
 class Timing:
@@ -99,12 +99,28 @@ def mp_map_repos(handler: Callable, repo_id_list: List[str], nprocs: int = 0, **
             pbar.set_description(f"{timestamp()} Processing {repo_id}")
             results.append(handler(repo_id, **kwargs))
     else:
-        with mp.Pool(nprocs) as p:
+        with ProcessPool(nprocs) as p:
             with tqdm(total=len(repo_id_list)) as pbar:
-                for status in p.imap_unordered(
+                for status in p.uimap(
                     functools.partial(handler, **kwargs), repo_id_list
                 ):
                     results.append(status)
                     pbar.set_description(timestamp())
                     pbar.update()
     return results
+
+
+def run_with_timeout(func: Callable):
+    """run a function with timeout"""
+
+    def wrapper(*args, timeout=-1, **kwargs):
+        if timeout <= 0:
+            return func(*args, **kwargs)
+        try:
+            with time_limit(timeout):
+                return func(*args, **kwargs)
+        except TimeoutException:
+            pass
+        return None
+
+    return wrapper
