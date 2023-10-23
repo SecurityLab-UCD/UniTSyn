@@ -3,6 +3,8 @@ from unitsyncer.sync import Synchronizer
 from pylspclient.lsp_structs import LANGUAGE_IDENTIFIER, Location, Position, Range
 from returns.maybe import Maybe, Nothing, Some
 from unitsyncer.util import parallel_starmap as starmap, path2uri
+from unitsyncer.common import CORES
+import math
 from unitsyncer.source_code import get_function_code
 import json
 import jsonlines
@@ -103,36 +105,51 @@ def process_one_focal_file(
         case _:
             return 1
     results = []
-    logging.info(f"number of workdir_dict: {len(wd.keys())}")
+    logging.debug(f"number of workdir_dict: {len(wd.keys())}")
     repos_root = os.path.abspath(repos_root)
     for workdir, _ in wd.items():
         if workdir[0] == "/":
             workdir = workdir[1:]
         full_workdir = os.path.join(repos_root, workdir)
-        logging.info(f"workdir: {full_workdir}")
+        logging.debug(f"workdir: {full_workdir}")
 
         syncer = Synchronizer(full_workdir, language)
-        syncer.start_lsp_server()
+        syncer.start_lsp_server(timeout=60)
         syncer.initialize()
 
         results += [focal2result(syncer, repos_root, obj) for obj in objs]
 
         syncer.stop()
 
+    results = [r for r in results if r["code"] is not None]
     with jsonlines.open(focal_file.replace("focal", "source"), "w") as f:
         f.write_all(results)
 
 
-def main(repos_root="data/repos", focal_dir="data/focal", language="python", jobs=4):
+def main(
+    repos_root="data/repos",
+    focal_path="data/focal",
+    language="python",
+    jobs=CORES,
+):
     all_focal_files = []
-    for root, dirs, files in os.walk(os.path.abspath(focal_dir)):
-        for file in files:
-            if file.endswith(".jsonl"):
-                all_focal_files.append(os.path.join(root, file))
+    if os.path.isdir(focal_path):
+        focal_dir = focal_path
+        for root, dirs, files in os.walk(os.path.abspath(focal_dir)):
+            for file in files:
+                if file.endswith(".jsonl"):
+                    all_focal_files.append(os.path.join(root, file))
+    elif os.path.isfile(focal_path):
+        all_focal_files.append(focal_path)
+    else:
+        logging.error(f"{focal_path} is not a valid file or directory")
+        exit(1)
 
     logging.info(f"Processing {len(all_focal_files)} focal files")
     os.makedirs("./data/source", exist_ok=True)
-    with ProcessPool(jobs) as pool:
+
+    # starting jobs / 2 since each job will spawn 2 processes (main and LSP)
+    with ProcessPool(math.ceil(jobs / 2)) as pool:
         _ = list(
             tqdm(
                 pool.imap(

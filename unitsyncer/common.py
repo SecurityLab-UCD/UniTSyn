@@ -1,6 +1,7 @@
 import os
 
 UNITSYNCER_HOME = os.path.abspath(os.getenv("UNITSYNCER_HOME", os.curdir))
+CORES = int(os.getenv("CORES", 1))
 
 CAPABILITIES = {
     "textDocument": {

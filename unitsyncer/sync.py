@@ -14,7 +14,9 @@ from unitsyncer.source_code import get_function_code
 from unitsyncer.common import CAPABILITIES, UNITSYNCER_HOME
 from typing import Optional, Union
 from returns.maybe import Maybe, Nothing, Some
+from returns.result import Result, Success, Failure
 import logging
+from unitsyncer.util import silence
 
 
 def get_lsp_cmd(language: str) -> Optional[list[str]]:
@@ -39,6 +41,7 @@ class Synchronizer:
         self.root_uri = path2uri(self.workspace_dir)
         self.workspace_folders = [{"name": "python-lsp", "uri": self.root_uri}]
 
+    @silence
     def start_lsp_server(self, timeout: int = 10):
         lsp_cmd = get_lsp_cmd(self.langID)
         if lsp_cmd is None:
@@ -59,6 +62,7 @@ class Synchronizer:
         lsp_endpoint = pylspclient.LspEndpoint(json_rpc_endpoint, timeout=timeout)
         self.lsp_client = pylspclient.LspClient(lsp_endpoint)
 
+    @silence
     def initialize(self):
         self.lsp_client.initialize(
             self.lsp_proc.pid,
@@ -89,7 +93,7 @@ class Synchronizer:
         return uri
 
     def get_source_of_call(
-        self, file_path: str, line: int, col: int
+        self, file_path: str, line: int, col: int, verbose: bool = False
     ) -> Maybe[tuple[str, str | None]]:
         """get the source code of a function called at a specific location in a file
 
@@ -101,18 +105,23 @@ class Synchronizer:
         Returns:
             Maybe[tuple[str, str | None]]: the source code and docstring of the called function
         """
-        uri = self.open_file(file_path)
+        try:
+            uri = self.open_file(file_path)
+        except Exception as e:
+            logging.debug(e)
+            return Nothing
 
         try:
-            response = self.lsp_client.definition(
+            goto_def = self.lsp_client.definition
+            if not verbose:
+                goto_def = silence(goto_def)
+
+            response = goto_def(
                 TextDocumentIdentifier(uri),
                 Position(line, col),
             )
-        except TimeoutError:
-            logging.error("TimeoutError", uri, line, col)
-            return Nothing
         except Exception as e:
-            logging.error(e)
+            logging.debug(e)
             return Nothing
 
         def_location: Location
