@@ -18,30 +18,29 @@ def id2path(id):
     return id.split("::")[0]
 
 
-def java_workdir_dict(test_ids: list[str]) -> dict[str, list[str]]:
+def java_workdir_dict(objs: list[dict]) -> dict[str, list[dict]]:
     """split a list of test ids into a dict of workdir to file path
     this solves the LSP TimeoutError for JAVA with too much subdirectories
 
     Args:
-        test_ids (list[str]): [path/to/test/file::test_func_name]
+        objs (list[dict]): [focal_ids parsed into dict]
 
     Returns:
-        dict[str, list[str]]: {workdir: [test_id, ...], ...}
+        dict[str, list[dict]]: {workdir: [corresponding focal objects, ...], ...}
     """
     workdir_dict = {}
-    for test_id in test_ids:
+    for obj in objs:
+        test_id = obj["test_id"]
         file_path = id2path(test_id)
         workdir = file_path.split("/test")[0]
         if workdir not in workdir_dict.keys():
             workdir_dict[workdir] = []
-        workdir_dict[workdir].append(test_id)
+        workdir_dict[workdir].append(obj)
     return workdir_dict
 
 
 def focal2result(syncer: Synchronizer, repos_root, obj):
     p = id2path(obj["test_id"])
-    if p[0] == "/":
-        p = p[1:]
     file_path = os.path.join(repos_root, p)
     src_lineno, src_col_offset = obj["focal_loc"]
     test_lineno, test_col_offset = obj["test_loc"]
@@ -92,42 +91,49 @@ def process_one_focal_file(
 ):
     with open(focal_file) as f:
         objs = [json.loads(line) for line in f.readlines()]
-        test_ids = [obj["test_id"] for obj in objs]
 
+    n_focal = len(objs)
     match language:
         case LANGUAGE_IDENTIFIER.PYTHON:
-            workdir = "/".join(id2path(test_ids[0]).split("/")[:2])
+            first_test_id = objs[0]["test_id"]
+            workdir = "/".join(id2path(first_test_id).split("/")[:2])
             wd = {
-                workdir: None,
+                workdir: objs,
             }
         case LANGUAGE_IDENTIFIER.JAVA:
-            wd = java_workdir_dict(test_ids)
+            wd = java_workdir_dict(objs)
         case _:
-            return 1
+            logging.debug(f"language {language} not supported")
+            return n_focal, 0
+
     results = []
     logging.debug(f"number of workdir_dict: {len(wd.keys())}")
     repos_root = os.path.abspath(repos_root)
-    for workdir, _ in wd.items():
-        if workdir[0] == "/":
-            workdir = workdir[1:]
-        full_workdir = os.path.join(repos_root, workdir)
-        logging.debug(f"workdir: {full_workdir}")
+    for workdir, workdir_objs in wd.items():
+        try:
+            full_workdir = os.path.join(repos_root, workdir)
+            logging.debug(f"workdir: {full_workdir}")
 
-        syncer = Synchronizer(full_workdir, language)
-        syncer.start_lsp_server(timeout=60)
-        syncer.initialize()
+            syncer = Synchronizer(full_workdir, language)
+            syncer.start_lsp_server(timeout=60)
+            syncer.initialize()
 
-        results += [focal2result(syncer, repos_root, obj) for obj in objs]
+            results += [focal2result(syncer, repos_root, obj) for obj in workdir_objs]
 
-        syncer.stop()
+            syncer.stop()
+        except Exception as e:
+            logging.debug(e)
+            continue
 
     results = [r for r in results if r["code"] is not None]
     with jsonlines.open(focal_file.replace("focal", "source"), "w") as f:
         f.write_all(results)
 
+    return n_focal, len(results)
+
 
 def main(
-    repos_root="data/repos",
+    repos_root="data/repos_tarball",
     focal_path="data/focal",
     language="python",
     jobs=CORES,
@@ -150,7 +156,7 @@ def main(
 
     # starting jobs / 2 since each job will spawn 2 processes (main and LSP)
     with ProcessPool(math.ceil(jobs / 2)) as pool:
-        _ = list(
+        rnt = list(
             tqdm(
                 pool.imap(
                     lambda f: process_one_focal_file(
@@ -161,6 +167,10 @@ def main(
                 total=len(all_focal_files),
             )
         )
+    nfocal, ncode = zip(*rnt)
+    logging.info(
+        f"Processed {sum(ncode)} have source code in {sum(nfocal)} focal functions"
+    )
 
 
 if __name__ == "__main__":
