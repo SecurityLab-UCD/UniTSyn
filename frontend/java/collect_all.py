@@ -94,18 +94,21 @@ def collect_from_repo(repo_id: str, repo_root: str, test_root: str, focal_root: 
         funcs = collect_test_n_focal(f)
         tests[f] = funcs
     if len(tests.keys()) == 0:
-        return 2, len(tests.keys()), sum(len(list(v)) for v in tests.values())
+        return 2, 0, sum(len(list(v)) for v in tests.values())
     # save to disk
     n_test_func = 0
+    n_focal_func = 0
     with open(focal_path, "w") as outfile:
         for k in tests.keys():
             for d in tests[k]:
-                d["test_id"] = f"{k.removeprefix(repo_root)}::{d['test_id']}"
+                test_id = f"{k.removeprefix(repo_root)}::{d['test_id']}"
+                d["test_id"] = test_id[1:] if test_id[0] == "/" else test_id
                 if d["focal_loc"] is None:
                     continue
                 outfile.write(json.dumps(d) + "\n")
-                n_test_func += 1
-    return 0, len(tests.keys()), n_test_func
+                n_test_func += int(d["test_loc"] is not None)
+                n_focal_func += int(d["focal_loc"] is not None)
+    return 0, n_test_func, n_focal_func
 
 
 def main(
