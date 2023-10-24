@@ -9,7 +9,7 @@ from tree_sitter.binding import Node
 
 def get_function_code(
     func_location: Location, lang: str
-) -> Maybe[tuple[str, str | None]]:
+) -> Maybe[tuple[str, str | None, str | None]]:
     """Extract the source code of a function from a Location LSP response
 
     Args:
@@ -17,12 +17,12 @@ def get_function_code(
         lang (str): language of the file as in LANGUAGE_IDENTIFIER
 
     Returns:
-        Maybe[tuple[str, str | None]]: source code of function, its docstring
+        Maybe[tuple[str, str | None, str | None]]: source code of function, its docstring, code_id
     """
     lineno = func_location.range.start.line
     col_offset = func_location.range.start.character
 
-    def get_function_code(file_path) -> Maybe[tuple[str, str | None]]:
+    def get_function_code(file_path) -> Maybe[tuple[str, str | None, str | None]]:
         with open(file_path, "r", errors="replace") as file:
             code = file.read()
 
@@ -30,13 +30,17 @@ def get_function_code(
             case LANGUAGE_IDENTIFIER.PYTHON:
                 node = ast.parse(code, filename=file_path)
                 return py_get_def(node, lineno).map(
-                    lambda node: (ast.unparse(node), ast.get_docstring(node))
+                    lambda node: (ast.unparse(node), ast.get_docstring(node), None)
                 )
             case LANGUAGE_IDENTIFIER.JAVA:
                 ast_util = ASTUtil(code.replace("\t", "    "))
                 tree = ast_util.tree(JAVA_LANGUAGE)
                 return java_get_def(tree.root_node, lineno, ast_util).map(
-                    lambda node: (ast_util.get_source_from_node(node), None)
+                    lambda node: (
+                        ast_util.get_source_from_node(node),
+                        None,
+                        f"{file_path}::{ast_util.get_method_name(node).unwrap()}",
+                    )
                 )
             case _:
                 return Nothing

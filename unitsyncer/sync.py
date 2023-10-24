@@ -95,7 +95,7 @@ class Synchronizer:
 
     def get_source_of_call(
         self, file_path: str, line: int, col: int, verbose: bool = False
-    ) -> Result[tuple[str, str | None], str]:
+    ) -> Result[tuple[str, str | None, str | None], str]:
         """get the source code of a function called at a specific location in a file
 
         Args:
@@ -109,7 +109,7 @@ class Synchronizer:
         try:
             uri = self.open_file(file_path)
         except Exception as e:
-            return Failure(e)
+            return Failure(str(e))
 
         try:
             goto_def = self.lsp_client.definition
@@ -121,7 +121,7 @@ class Synchronizer:
                 Position(line, col),
             )
         except Exception as e:
-            return Failure(e)
+            return Failure(str(e))
 
         def_location: Location
         match response:
@@ -135,8 +135,9 @@ class Synchronizer:
                 else:
                     return Failure(f"Unexpected response from LSP server: {loc}")
 
-        def not_found_error(e):
-            file_path = uri2path(def_location.uri).value_or(def_location.uri)
+        file_path = uri2path(def_location.uri).value_or(str(def_location.uri))
+
+        def not_found_error(_):
             lineno = def_location.range.start.line
             col_offset = def_location.range.start.character
             return f"Source code not found: {file_path}:{lineno}:{col_offset}"

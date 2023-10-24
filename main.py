@@ -65,27 +65,26 @@ def focal2result(syncer: Synchronizer, repos_root, obj):
                 Position(test_lineno, test_col_offset + 1),
             ),
         )
-        test, _ = get_function_code(fake_loc, syncer.langID).value_or((None, None))
-
-    if "focal_id" in obj.keys():
-        code_id = obj["focal_id"]
-    else:
-        code_id = None
+        test, _, _ = get_function_code(fake_loc, syncer.langID).unwrap()
 
     result = {
         "test_id": obj["test_id"],
         "test": test,
-        "code_id": code_id,
     }
 
     # todo: conform return format when Failure
     match syncer.get_source_of_call(file_path, src_lineno, src_col_offset):
-        case Success((code, docstring)):
+        case Success((code, docstring, code_id)):
+            result["code_id"] = (
+                obj["focal_id"]
+                if code_id is None
+                else code_id.removeprefix(repos_root + "/")
+            )
             result["code"] = code
             result["docstring"] = docstring
         case Failure(e):
             logging.debug(e)
-            result["error"] = str(e)
+            result["error"] = e
 
     return result
 
