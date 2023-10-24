@@ -15,6 +15,7 @@ from unitsyncer.common import CAPABILITIES, UNITSYNCER_HOME
 from typing import Optional, Union
 from returns.maybe import Maybe, Nothing, Some
 from returns.result import Result, Success, Failure
+from returns.converters import maybe_to_result
 import logging
 from unitsyncer.util import silence
 
@@ -94,7 +95,7 @@ class Synchronizer:
 
     def get_source_of_call(
         self, file_path: str, line: int, col: int, verbose: bool = False
-    ) -> Maybe[tuple[str, str | None]]:
+    ) -> Result[tuple[str, str | None], str]:
         """get the source code of a function called at a specific location in a file
 
         Args:
@@ -108,8 +109,7 @@ class Synchronizer:
         try:
             uri = self.open_file(file_path)
         except Exception as e:
-            logging.debug(e)
-            return Nothing
+            return Failure(e)
 
         try:
             goto_def = self.lsp_client.definition
@@ -121,21 +121,29 @@ class Synchronizer:
                 Position(line, col),
             )
         except Exception as e:
-            logging.debug(e)
-            return Nothing
+            return Failure(e)
 
         def_location: Location
         match response:
             case None | []:
-                return Nothing
+                return Failure("No definition found")
             case [loc, *_]:
                 def_location = loc
             case loc:
                 if isinstance(loc, Location):
                     def_location = loc
                 else:
-                    return Nothing
-        return get_function_code(def_location, self.langID)
+                    return Failure(f"Unexpected response from LSP server: {loc}")
+
+        def not_found_error(e):
+            file_path = uri2path(def_location.uri).value_or(def_location.uri)
+            lineno = def_location.range.start.line
+            col_offset = def_location.range.start.character
+            return f"Source code not found: {file_path}:{lineno}:{col_offset}"
+
+        return maybe_to_result(get_function_code(def_location, self.langID)).alt(
+            not_found_error
+        )
 
     def stop(self):
         self.lsp_client.shutdown()

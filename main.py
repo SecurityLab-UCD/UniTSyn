@@ -2,6 +2,7 @@ from tqdm import tqdm
 from unitsyncer.sync import Synchronizer
 from pylspclient.lsp_structs import LANGUAGE_IDENTIFIER, Location, Position, Range
 from returns.maybe import Maybe, Nothing, Some
+from returns.result import Result, Success, Failure
 from unitsyncer.util import parallel_starmap as starmap, path2uri
 from unitsyncer.common import CORES
 import math
@@ -53,10 +54,6 @@ def focal2result(syncer: Synchronizer, repos_root, obj):
             src_lineno -= 1
             test_lineno -= 1
 
-    code, docstring = syncer.get_source_of_call(
-        file_path, src_lineno, src_col_offset
-    ).value_or((None, None))
-
     # since the test's delc node is already capture by frontend, it can store the test code
     if "test" in obj.keys():
         test = obj["test"]
@@ -75,13 +72,22 @@ def focal2result(syncer: Synchronizer, repos_root, obj):
     else:
         code_id = None
 
-    return {
+    result = {
         "test_id": obj["test_id"],
         "test": test,
         "code_id": code_id,
-        "code": code,
-        "docstring": docstring,
     }
+
+    # todo: conform return format when Failure
+    match syncer.get_source_of_call(file_path, src_lineno, src_col_offset):
+        case Success((code, docstring)):
+            result["code"] = code
+            result["docstring"] = docstring
+        case Failure(e):
+            logging.debug(e)
+            result["error"] = str(e)
+
+    return result
 
 
 def process_one_focal_file(
@@ -125,11 +131,10 @@ def process_one_focal_file(
             logging.debug(e)
             continue
 
-    results = [r for r in results if r["code"] is not None]
     with jsonlines.open(focal_file.replace("focal", "source"), "w") as f:
         f.write_all(results)
 
-    return n_focal, len(results)
+    return n_focal, sum(1 for r in results if "code" in r)
 
 
 def main(
