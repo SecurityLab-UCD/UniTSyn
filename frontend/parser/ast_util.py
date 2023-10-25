@@ -21,8 +21,9 @@ class ASTUtil:
             case "method_declaration":
                 start = node.start_point[0]
                 end = node.end_point[0]
-                src = "\n".join(self.src.splitlines()[start:end])
-                return remove_leading_spaces(src)
+                src_lines = self.src.splitlines()[start : end + 1]
+                src_lines = remove_leading_spaces(src_lines)
+                return "\n".join(src_lines)
             case _:
                 start = node.start_byte
                 end = node.end_byte
@@ -62,8 +63,7 @@ class ASTUtil:
         return nodes
 
 
-def remove_leading_spaces(code: str) -> str:
+def remove_leading_spaces(lines: list[str]) -> list[str]:
     """remove leading spaces from each line"""
-    lines = code.split("\n")
     space_idx = len(lines[0]) - len(lines[0].lstrip())
-    return "\n".join(map(lambda s: s[space_idx:], lines))
+    return [s[space_idx:] for s in lines]
