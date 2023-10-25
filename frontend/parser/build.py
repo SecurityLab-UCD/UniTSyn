@@ -3,12 +3,17 @@ import subprocess
 import os
 import logging
 import tqdm
+import fire
 
-SUPPORTED = ["java"]
+SUPPORTED = ["java", "javascript"]
 
 
-def main():
+def main(force=False):
     tree_sitter_dirs = [f"tree-sitter-{lang}" for lang in SUPPORTED]
+    if force:
+        logging.info("Removing languages.so")
+        os.remove("languages.so")
+
     if not os.path.exists("languages.so"):
         logging.info("Downloading tree-sitter to build languages.so")
 
@@ -32,4 +37,4 @@ def main():
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    main()
+    fire.Fire(main)
