@@ -142,8 +142,10 @@ class Synchronizer:
             col_offset = def_location.range.start.character
             return f"Source code not found: {file_path}:{lineno}:{col_offset}"
 
-        return maybe_to_result(get_function_code(def_location, self.langID)).alt(
-            not_found_error
+        return (
+            maybe_to_result(get_function_code(def_location, self.langID))
+            .alt(not_found_error)
+            .bind(lambda t: Failure("Empty Source Code") if t[0] == "" else Success(t))
         )
 
     def stop(self):
