@@ -17,15 +17,16 @@ class ASTUtil:
         return parser.parse(bytes(self.src, "utf8"))
 
     def get_source_from_node(self, node: Node) -> str:
-        start = node.start_byte
-        end = node.end_byte
-
-        if node.type == "method_declaration":
-            # move the start byte to the beginning of the line
-            while start > 0 and self.src[start - 1] != "\n":
-                start -= 1
-            return remove_leading_spaces(self.src[start:end])
-        return self.src[start:end]
+        match node.type:
+            case "method_declaration":
+                start = node.start_point[0]
+                end = node.end_point[0]
+                src = "\n".join(self.src.splitlines()[start:end])
+                return remove_leading_spaces(src)
+            case _:
+                start = node.start_byte
+                end = node.end_byte
+                return self.src[start:end]
 
     def get_method_name(self, method_node: Node) -> Maybe[str]:
         if method_node.type != "method_declaration":
