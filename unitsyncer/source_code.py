@@ -1,15 +1,16 @@
 import ast
 from pylspclient.lsp_structs import Location, LANGUAGE_IDENTIFIER
-from unitsyncer.util import uri2path
+from unitsyncer.util import replace_tabs, uri2path
 from returns.maybe import Maybe, Nothing, Some
 from frontend.parser.ast_util import ASTUtil
 from frontend.parser.langauges import JAVA_LANGUAGE
 from tree_sitter.binding import Node
+from frontend.parser.ast_util import remove_leading_spaces
 
 
 def get_function_code(
     func_location: Location, lang: str
-) -> Maybe[tuple[str, str | None]]:
+) -> Maybe[tuple[str, str | None, str | None]]:
     """Extract the source code of a function from a Location LSP response
 
     Args:
@@ -17,12 +18,12 @@ def get_function_code(
         lang (str): language of the file as in LANGUAGE_IDENTIFIER
 
     Returns:
-        Maybe[tuple[str, str | None]]: source code of function, its docstring
+        Maybe[tuple[str, str | None, str | None]]: source code of function, its docstring, code_id
     """
     lineno = func_location.range.start.line
     col_offset = func_location.range.start.character
 
-    def get_function_code(file_path) -> Maybe[tuple[str, str | None]]:
+    def get_function_code(file_path) -> Maybe[tuple[str, str | None, str | None]]:
         with open(file_path, "r", errors="replace") as file:
             code = file.read()
 
@@ -30,13 +31,17 @@ def get_function_code(
             case LANGUAGE_IDENTIFIER.PYTHON:
                 node = ast.parse(code, filename=file_path)
                 return py_get_def(node, lineno).map(
-                    lambda node: (ast.unparse(node), ast.get_docstring(node))
+                    lambda node: (ast.unparse(node), ast.get_docstring(node), None)
                 )
             case LANGUAGE_IDENTIFIER.JAVA:
-                ast_util = ASTUtil(code.replace("\t", "    "))
+                ast_util = ASTUtil(replace_tabs(code))
                 tree = ast_util.tree(JAVA_LANGUAGE)
                 return java_get_def(tree.root_node, lineno, ast_util).map(
-                    lambda node: (ast_util.get_source_from_node(node), None)
+                    lambda node: (
+                        ast_util.get_source_from_node(node),
+                        None,
+                        f"{file_path}::{ast_util.get_method_name(node).unwrap()}",
+                    )
                 )
             case _:
                 return Nothing
@@ -62,8 +67,14 @@ def py_get_def(node: ast.AST, lineno: int) -> Maybe[ast.FunctionDef]:
 
 
 def java_get_def(node: Node, lineno: int, ast_util: ASTUtil) -> Maybe[Node]:
+    def in_modifier_range(method_node: Node, lineno: int) -> bool:
+        n_modifier = ast_util.get_method_modifiers(method_node).map(len).value_or(0)
+        defn_lineno = method_node.start_point[0]
+        return defn_lineno + n_modifier >= lineno
+
     for defn in ast_util.get_all_nodes_of_type(node, "method_declaration"):
         # tree-sitter AST is 0-indexed
-        if defn.start_point[0] == lineno:
+        defn_lineno = defn.start_point[0]
+        if defn_lineno == lineno or in_modifier_range(defn, lineno):
             return Some(defn)
     return Nothing

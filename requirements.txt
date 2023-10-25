@@ -3,7 +3,7 @@ python-lsp-server>=1.8.2
 jedi>=0.19.1
 returns>=0.16.1
 jsonlines>=4.0.0
-tree-sitter==0.0.6
+tree-sitter==0.20.1
 tqdm>=4.64.1
 lambdas>=0.2.0
 pygithub

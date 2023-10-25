@@ -17,9 +17,17 @@ class ASTUtil:
         return parser.parse(bytes(self.src, "utf8"))
 
     def get_source_from_node(self, node: Node) -> str:
-        start = node.start_byte
-        end = node.end_byte
-        return self.src[start:end]
+        match node.type:
+            case "method_declaration":
+                start = node.start_point[0]
+                end = node.end_point[0]
+                src_lines = self.src.splitlines()[start : end + 1]
+                src_lines = remove_leading_spaces(src_lines)
+                return "\n".join(src_lines)
+            case _:
+                start = node.start_byte
+                end = node.end_byte
+                return self.src[start:end]
 
     def get_method_name(self, method_node: Node) -> Maybe[str]:
         if method_node.type != "method_declaration":
@@ -53,3 +61,9 @@ class ASTUtil:
                 nodes.append(child)
             nodes += self.get_all_nodes_of_type(child, type, max_level=max_level - 1)
         return nodes
+
+
+def remove_leading_spaces(lines: list[str]) -> list[str]:
+    """remove leading spaces from each line"""
+    space_idx = len(lines[0]) - len(lines[0].lstrip())
+    return [s[space_idx:] for s in lines]

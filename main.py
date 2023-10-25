@@ -2,6 +2,7 @@ from tqdm import tqdm
 from unitsyncer.sync import Synchronizer
 from pylspclient.lsp_structs import LANGUAGE_IDENTIFIER, Location, Position, Range
 from returns.maybe import Maybe, Nothing, Some
+from returns.result import Result, Success, Failure
 from unitsyncer.util import parallel_starmap as starmap, path2uri
 from unitsyncer.common import CORES
 import math
@@ -53,10 +54,6 @@ def focal2result(syncer: Synchronizer, repos_root, obj):
             src_lineno -= 1
             test_lineno -= 1
 
-    code, docstring = syncer.get_source_of_call(
-        file_path, src_lineno, src_col_offset
-    ).value_or((None, None))
-
     # since the test's delc node is already capture by frontend, it can store the test code
     if "test" in obj.keys():
         test = obj["test"]
@@ -68,20 +65,28 @@ def focal2result(syncer: Synchronizer, repos_root, obj):
                 Position(test_lineno, test_col_offset + 1),
             ),
         )
-        test, _ = get_function_code(fake_loc, syncer.langID).value_or((None, None))
+        test, _, _ = get_function_code(fake_loc, syncer.langID).unwrap()
 
-    if "focal_id" in obj.keys():
-        code_id = obj["focal_id"]
-    else:
-        code_id = None
-
-    return {
+    result = {
         "test_id": obj["test_id"],
         "test": test,
-        "code_id": code_id,
-        "code": code,
-        "docstring": docstring,
     }
+
+    # todo: conform return format when Failure
+    match syncer.get_source_of_call(file_path, src_lineno, src_col_offset):
+        case Success((code, docstring, code_id)):
+            result["code_id"] = (
+                obj["focal_id"]
+                if code_id is None
+                else code_id.removeprefix(repos_root + "/")
+            )
+            result["code"] = code
+            result["docstring"] = docstring
+        case Failure(e):
+            logging.debug(e)
+            result["error"] = e
+
+    return result
 
 
 def process_one_focal_file(
@@ -107,6 +112,7 @@ def process_one_focal_file(
             return n_focal, 0
 
     results = []
+    source_file = focal_file.replace("focal", "source")
     logging.debug(f"number of workdir_dict: {len(wd.keys())}")
     repos_root = os.path.abspath(repos_root)
     for workdir, workdir_objs in wd.items():
@@ -125,11 +131,11 @@ def process_one_focal_file(
             logging.debug(e)
             continue
 
-    results = [r for r in results if r["code"] is not None]
-    with jsonlines.open(focal_file.replace("focal", "source"), "w") as f:
-        f.write_all(results)
+        # append to source file in loop to avoid losing data
+        with jsonlines.open(source_file, "a") as f:
+            f.write_all(results)
 
-    return n_focal, len(results)
+    return n_focal, sum(1 for r in results if "code" in r)
 
 
 def main(

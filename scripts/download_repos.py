@@ -11,7 +11,7 @@ from tqdm import tqdm
 from github import Github, Repository, Auth
 from typing import Tuple, Union, Optional
 
-from frontend.python.utils import log_or_skip, wrap_repo, time_limit, TimeoutException
+from frontend.util import log_or_skip, wrap_repo, time_limit, TimeoutException
 
 
 def fetch_repo(repo_id: str, timeout: int, hub: Optional[Github]):

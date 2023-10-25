@@ -46,10 +46,15 @@ def get_focal_call(ast_util: ASTUtil, func: Node) -> Maybe[tuple[str, ASTLoc]]:
     func_calls = [ast_util.get_source_from_node(call) for call in calls]
     test_func_name = fuzzy_focal_name(ast_util.get_method_name(func).value_or(""))
     calls_before_assert = []
+    has_assert = False
     for call in reversed(func_calls):
         if "assert" in call:
+            has_assert = True
             break
         calls_before_assert.append(call)
+
+    if not has_assert:
+        return Nothing
 
     def get_loc(call: str) -> tuple[str, ASTLoc]:
         idx = func_calls.index(call)
