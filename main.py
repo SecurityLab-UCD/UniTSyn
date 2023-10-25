@@ -112,6 +112,7 @@ def process_one_focal_file(
             return n_focal, 0
 
     results = []
+    source_file = focal_file.replace("focal", "source")
     logging.debug(f"number of workdir_dict: {len(wd.keys())}")
     repos_root = os.path.abspath(repos_root)
     for workdir, workdir_objs in wd.items():
@@ -130,8 +131,9 @@ def process_one_focal_file(
             logging.debug(e)
             continue
 
-    with jsonlines.open(focal_file.replace("focal", "source"), "w") as f:
-        f.write_all(results)
+        # append to source file in loop to avoid losing data
+        with jsonlines.open(source_file, "a") as f:
+            f.write_all(results)
 
     return n_focal, sum(1 for r in results if "code" in r)
 
