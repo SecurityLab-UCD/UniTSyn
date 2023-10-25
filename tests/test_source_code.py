@@ -30,7 +30,7 @@ class TestSourceCode(unittest.TestCase):
         range_ = Range(Position(17, 22), Position(17, 23))
         loc = Location(uri, range_)
 
-        add_src = "public static int add(int a, int b) {\n        return a + b;\n    }"
+        add_src = "public static int add(int a, int b) {\n    return a + b;\n}"
 
         self.assertEqual(get_function_code(loc, "java").unwrap()[0], add_src)
 
@@ -38,7 +38,9 @@ class TestSourceCode(unittest.TestCase):
         uri = f"file://{os.getcwd()}/data/repos/java_example/Add.java"
         range_ = Range(Position(22, 3), Position(22, 4))
         loc = Location(uri, range_)
-        sub_src = "@Deprecated\n    public static int sub(int a, int b) {\n        return a - b;\n    }"
+        sub_src = (
+            "@Deprecated\npublic static int sub(int a, int b) {\n    return a - b;\n}"
+        )
 
         self.assertEqual(get_function_code(loc, "java").unwrap()[0], sub_src)
 

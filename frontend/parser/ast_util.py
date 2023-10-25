@@ -19,6 +19,13 @@ class ASTUtil:
     def get_source_from_node(self, node: Node) -> str:
         start = node.start_byte
         end = node.end_byte
+
+        # move the start byte to the beginning of the line
+        while start > 0 and self.src[start - 1] != "\n":
+            start -= 1
+
+        if node.type == "method_declaration":
+            return remove_leading_spaces(self.src[start:end])
         return self.src[start:end]
 
     def get_method_name(self, method_node: Node) -> Maybe[str]:
@@ -53,3 +60,10 @@ class ASTUtil:
                 nodes.append(child)
             nodes += self.get_all_nodes_of_type(child, type, max_level=max_level - 1)
         return nodes
+
+
+def remove_leading_spaces(code: str) -> str:
+    """remove leading spaces from each line"""
+    lines = code.split("\n")
+    space_idx = len(lines[0]) - len(lines[0].lstrip())
+    return "\n".join(map(lambda s: s[space_idx:], lines))
