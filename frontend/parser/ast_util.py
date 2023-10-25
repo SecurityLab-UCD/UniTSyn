@@ -20,11 +20,10 @@ class ASTUtil:
         start = node.start_byte
         end = node.end_byte
 
-        # move the start byte to the beginning of the line
-        while start > 0 and self.src[start - 1] != "\n":
-            start -= 1
-
         if node.type == "method_declaration":
+            # move the start byte to the beginning of the line
+            while start > 0 and self.src[start - 1] != "\n":
+                start -= 1
             return remove_leading_spaces(self.src[start:end])
         return self.src[start:end]
 
