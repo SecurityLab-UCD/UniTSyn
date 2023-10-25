@@ -19,9 +19,18 @@ public class Add {
         return a + b;
     }
 
+    @Deprecated
+    public static int sub(int a, int b) {
+        return a - b;
+    }
+
+
     @Test
     public void testAdd() {
         Assertions.assertEquals(30, add(10, 20));
     }
 
+    public void testSub() {
+        Assertions.assertEquals(10, sub(20, 10));
+    }
 }
