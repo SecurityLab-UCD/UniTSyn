@@ -13,6 +13,7 @@ import os
 from pathos.multiprocessing import ProcessPool
 import logging
 import fire
+from itertools import groupby
 
 
 def id2path(id):
@@ -111,11 +112,17 @@ def process_one_focal_file(
             logging.debug(f"language {language} not supported")
             return n_focal, 0
 
-    results = []
+    success_results = []
+    failure_results = []
     source_file = focal_file.replace("focal", "source")
+    success_file = source_file.replace(".jsonl", ".success.jsonl")
+    fauilure_file = source_file.replace(".jsonl", ".failure.jsonl")
+
     logging.debug(f"number of workdir_dict: {len(wd.keys())}")
     repos_root = os.path.abspath(repos_root)
     for workdir, workdir_objs in wd.items():
+        succ = []
+        fail = []
         try:
             full_workdir = os.path.join(repos_root, workdir)
             logging.debug(f"workdir: {full_workdir}")
@@ -124,7 +131,12 @@ def process_one_focal_file(
             syncer.start_lsp_server(timeout=60)
             syncer.initialize()
 
-            results += [focal2result(syncer, repos_root, obj) for obj in workdir_objs]
+            for obj in workdir_objs:
+                result = focal2result(syncer, repos_root, obj)
+                if "error" in result.keys():
+                    fail.append(result)
+                else:
+                    succ.append(result)
 
             syncer.stop()
         except Exception as e:
@@ -132,10 +144,15 @@ def process_one_focal_file(
             continue
 
         # append to source file in loop to avoid losing data
-        with jsonlines.open(source_file, "a") as f:
-            f.write_all(results)
+        with jsonlines.open(success_file, "a") as f:
+            f.write_all(succ)
+        with jsonlines.open(fauilure_file, "a") as f:
+            f.write_all(fail)
 
-    return n_focal, sum(1 for r in results if "code" in r)
+        success_results.extend(succ)
+        failure_results.extend(fail)
+
+    return n_focal, len(success_results)
 
 
 def main(
