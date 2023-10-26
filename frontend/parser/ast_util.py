@@ -40,6 +40,13 @@ class ASTUtil:
 
         return Nothing
 
+    def get_name(self, node: Node) -> Maybe[str]:
+        for child in node.children:
+            if child.type == "identifier":
+                return Some(self.get_source_from_node(child))
+
+        return Nothing
+
     def get_method_modifiers(self, method_node: Node) -> Maybe[list[str]]:
         if method_node.type != "method_declaration":
             return Nothing
