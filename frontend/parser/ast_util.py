@@ -40,6 +40,13 @@ class ASTUtil:
 
         return Nothing
 
+    def get_name(self, node: Node) -> Maybe[str]:
+        for child in node.children:
+            if child.type == "identifier":
+                return Some(self.get_source_from_node(child))
+
+        return Nothing
+
     def get_method_modifiers(self, method_node: Node) -> Maybe[list[str]]:
         if method_node.type != "method_declaration":
             return Nothing
@@ -51,13 +58,25 @@ class ASTUtil:
                     modifiers.append(self.get_source_from_node(modifier_child))
         return Some(modifiers)
 
-    def get_all_nodes_of_type(self, root: Node, type: str, max_level=50) -> list[Node]:
+    def get_all_nodes_of_type(
+        self, root: Node, type: str | None, max_level=50
+    ) -> list[Node]:
+        """walk on AST and collect all nodes of the given type
+
+        Args:
+            root (Node): root node of tree
+            type (str | None): type of node to collect, if None collect all Node
+            max_level (int, optional): maximum recursion level. Defaults to 50.
+
+        Returns:
+            list[Node]: collected nodes
+        """
         nodes = []
         if max_level == 0:
             return nodes
 
         for child in root.children:
-            if child.type == type:
+            if type is None or child.type == type:
                 nodes.append(child)
             nodes += self.get_all_nodes_of_type(child, type, max_level=max_level - 1)
         return nodes

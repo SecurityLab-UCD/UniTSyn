@@ -31,6 +31,8 @@ def get_lsp_cmd(language: str) -> Optional[list[str]]:
                 "bash",
                 f"{UNITSYNCER_HOME}/java-language-server/dist/lang_server_linux.sh",
             ]
+        case LANGUAGE_IDENTIFIER.JAVASCRIPT:
+            return ["typescript-language-server", "--stdio"]
         case _:
             return None
 
@@ -136,6 +138,7 @@ class Synchronizer:
                     return Failure(f"Unexpected response from LSP server: {loc}")
 
         file_path = uri2path(def_location.uri).value_or(str(def_location.uri))
+        logging.debug(file_path)
 
         def not_found_error(_):
             lineno = def_location.range.start.line

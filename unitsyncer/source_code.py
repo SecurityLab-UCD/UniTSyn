@@ -3,7 +3,7 @@ from pylspclient.lsp_structs import Location, LANGUAGE_IDENTIFIER
 from unitsyncer.util import replace_tabs, uri2path
 from returns.maybe import Maybe, Nothing, Some
 from frontend.parser.ast_util import ASTUtil
-from frontend.parser.langauges import JAVA_LANGUAGE
+from frontend.parser.langauges import JAVA_LANGUAGE, JAVASCRIPT_LANGUAGE
 from tree_sitter.binding import Node
 from frontend.parser.ast_util import remove_leading_spaces
 
@@ -43,6 +43,19 @@ def get_function_code(
                         f"{file_path}::{ast_util.get_method_name(node).unwrap()}",
                     )
                 )
+            case LANGUAGE_IDENTIFIER.JAVASCRIPT:
+                ast_util = ASTUtil(replace_tabs(code))
+                tree = ast_util.tree(JAVASCRIPT_LANGUAGE)
+
+                return js_get_def(tree.root_node, lineno, ast_util).map(
+                    lambda node: (
+                        ast_util.get_source_from_node(node),
+                        None,
+                        # js focal may not be a function, so directly unwrap may fail
+                        f"{file_path}::{ast_util.get_name(node).value_or(None)}",
+                    )
+                )
+
             case _:
                 return Nothing
 
@@ -76,5 +89,14 @@ def java_get_def(node: Node, lineno: int, ast_util: ASTUtil) -> Maybe[Node]:
         # tree-sitter AST is 0-indexed
         defn_lineno = defn.start_point[0]
         if defn_lineno == lineno or in_modifier_range(defn, lineno):
+            return Some(defn)
+    return Nothing
+
+
+def js_get_def(node: Node, lineno: int, ast_util: ASTUtil) -> Maybe[Node]:
+    for defn in ast_util.get_all_nodes_of_type(node, None):
+        # tree-sitter AST is 0-indexed
+        defn_lineno = defn.start_point[0]
+        if defn_lineno == lineno:
             return Some(defn)
     return Nothing
