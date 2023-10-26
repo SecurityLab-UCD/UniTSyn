@@ -1,7 +1,6 @@
 from typing import Iterable
 import fire
 import os
-from sympy import root
 from tree_sitter.binding import Node
 from frontend.parser.langauges import JAVASCRIPT_LANGUAGE
 from frontend.parser.ast_util import ASTUtil

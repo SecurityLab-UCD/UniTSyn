@@ -99,7 +99,7 @@ def process_one_focal_file(
 
     n_focal = len(objs)
     match language:
-        case LANGUAGE_IDENTIFIER.PYTHON:
+        case LANGUAGE_IDENTIFIER.PYTHON | LANGUAGE_IDENTIFIER.JAVASCRIPT:
             first_test_id = objs[0]["test_id"]
             workdir = "/".join(id2path(first_test_id).split("/")[:2])
             wd = {

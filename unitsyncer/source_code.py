@@ -33,7 +33,7 @@ def get_function_code(
                 return py_get_def(node, lineno).map(
                     lambda node: (ast.unparse(node), ast.get_docstring(node), None)
                 )
-            case LANGUAGE_IDENTIFIER.JAVA:
+            case LANGUAGE_IDENTIFIER.JAVA | LANGUAGE_IDENTIFIER.JAVASCRIPT:
                 ast_util = ASTUtil(replace_tabs(code))
                 tree = ast_util.tree(JAVA_LANGUAGE)
                 return java_get_def(tree.root_node, lineno, ast_util).map(
@@ -67,6 +67,20 @@ def py_get_def(node: ast.AST, lineno: int) -> Maybe[ast.FunctionDef]:
 
 
 def java_get_def(node: Node, lineno: int, ast_util: ASTUtil) -> Maybe[Node]:
+    def in_modifier_range(method_node: Node, lineno: int) -> bool:
+        n_modifier = ast_util.get_method_modifiers(method_node).map(len).value_or(0)
+        defn_lineno = method_node.start_point[0]
+        return defn_lineno + n_modifier >= lineno
+
+    for defn in ast_util.get_all_nodes_of_type(node, "method_declaration"):
+        # tree-sitter AST is 0-indexed
+        defn_lineno = defn.start_point[0]
+        if defn_lineno == lineno or in_modifier_range(defn, lineno):
+            return Some(defn)
+    return Nothing
+
+
+def js_get_def(node: Node, lineno: int, ast_util: ASTUtil) -> Maybe[Node]:
     def in_modifier_range(method_node: Node, lineno: int) -> bool:
         n_modifier = ast_util.get_method_modifiers(method_node).map(len).value_or(0)
         defn_lineno = method_node.start_point[0]
