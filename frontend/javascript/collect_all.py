@@ -18,8 +18,11 @@ def has_test(file_path):
     def has_chai(code):
         return "require('chai')" in code or 'require("chai")' in code
 
-    with open(file_path, "r", errors="replace") as f:
-        code = f.read()
+    try:
+        with open(file_path, "r", errors="replace") as f:
+            code = f.read()
+    except FileNotFoundError:
+        return False
     return has_chai(code)
 
 
@@ -33,6 +36,8 @@ def collect_test_files(root: str):
         # find js test dir
         if "test" not in os.path.relpath(dirpath, root):
             continue
+        if "node_modules" in os.path.relpath(dirpath, root):
+            continue
 
         for filename in filenames:
             if filename.endswith(".js"):
@@ -40,7 +45,7 @@ def collect_test_files(root: str):
                     yield p
 
 
-def collect_test_funcs(ast_util: ASTUtil) -> Iterable[tuple[str, Node]]:
+def collect_test_funcs(ast_util: ASTUtil) -> Iterable[Maybe[tuple[str, Node]]]:
     """collect testing functions from the target file"""
 
     tree = ast_util.tree(JAVASCRIPT_LANGUAGE)
@@ -53,7 +58,7 @@ def collect_test_funcs(ast_util: ASTUtil) -> Iterable[tuple[str, Node]]:
         return ast_util.get_name(node).map(lambda n: n == "describe").value_or(False)
 
     return map(
-        lambda node: js_get_test_args(ast_util, node).unwrap(),
+        lambda node: js_get_test_args(ast_util, node),
         filter(is_call_to_test, call_exprs),
     )
 
@@ -62,18 +67,23 @@ def collect_test_n_focal(file_path: str):
     with open(file_path, "r", errors="replace") as f:
         ast_util = ASTUtil(replace_tabs(f.read()))
 
-    def get_focal_for_test(test_func_pair: tuple[str, Node]):
-        test_name, test_func = test_func_pair
-        focal, focal_loc = get_focal_call(ast_util, test_func).value_or((None, None))
-        return {
-            "test_id": test_name,
-            "test_loc": test_func.start_point,
-            "test": ast_util.get_source_from_node(test_func),
-            "focal_id": focal,
-            "focal_loc": focal_loc,
-        }
+    def get_focal_for_test(test_func_pair: Maybe[tuple[str, Node]]):
+        match test_func_pair:
+            case Some((test_name, test_func)):
+                focal, focal_loc = get_focal_call(ast_util, test_func).value_or(
+                    (None, None)
+                )
+                return {
+                    "test_id": test_name,
+                    "test_loc": test_func.start_point,
+                    "test": ast_util.get_source_from_node(test_func),
+                    "focal_id": focal,
+                    "focal_loc": focal_loc,
+                }
+            case Nothing:
+                return None
 
-    return map(get_focal_for_test, collect_test_funcs(ast_util))
+    return filter(None, map(get_focal_for_test, collect_test_funcs(ast_util)))
 
 
 @run_with_timeout
