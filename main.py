@@ -100,17 +100,14 @@ def process_one_focal_file(
 
     n_focal = len(objs)
     match language:
-        case LANGUAGE_IDENTIFIER.PYTHON | LANGUAGE_IDENTIFIER.JAVASCRIPT:
+        case LANGUAGE_IDENTIFIER.JAVA:
+            wd = java_workdir_dict(objs)
+        case _:
             first_test_id = objs[0]["test_id"]
             workdir = "/".join(id2path(first_test_id).split("/")[:2])
             wd = {
                 workdir: objs,
             }
-        case LANGUAGE_IDENTIFIER.JAVA:
-            wd = java_workdir_dict(objs)
-        case _:
-            logging.debug(f"language {language} not supported")
-            return n_focal, 0
 
     success_results = []
     failure_results = []
@@ -197,5 +194,5 @@ def main(
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=logging.DEBUG)
     fire.Fire(main)

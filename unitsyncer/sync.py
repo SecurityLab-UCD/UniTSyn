@@ -33,6 +33,8 @@ def get_lsp_cmd(language: str) -> Optional[list[str]]:
             ]
         case LANGUAGE_IDENTIFIER.JAVASCRIPT:
             return ["typescript-language-server", "--stdio"]
+        case LANGUAGE_IDENTIFIER.RUST:
+            return ["rust-analyzer"]
         case _:
             return None
 
