@@ -46,8 +46,8 @@ def collect_test_n_focal(file_path: str):
         ast_util = ASTUtil(replace_tabs(f.read()))
 
     def get_focal_for_test(test_func: Node):
-        test_name = ast_util.get_method_name(test_func).value_or(None)
-        focal, focal_loc = get_focal_call(ast_util, test_func)
+        test_name = ast_util.get_name(test_func).value_or(None)
+        focal, focal_loc = get_focal_call(ast_util, test_func).value_or((None, None))
         return {
             "test_id": test_name,
             "test_loc": test_func.start_point,

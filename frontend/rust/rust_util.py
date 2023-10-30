@@ -28,9 +28,54 @@ def get_test_functions(ast_util: ASTUtil, root_node: Node) -> list[Node]:
     return function_items
 
 
-# todo
-def get_focal_call(ast_util: ASTUtil, test_func: Node):
-    return None, None
+def get_first_assert(ast_util: ASTUtil, test_func: Node) -> Maybe[Node]:
+    macro_invocations = ast_util.get_all_nodes_of_type(test_func, "macro_invocation")
+
+    for macro_invocation in macro_invocations:
+        if (
+            ast_util.get_name(macro_invocation)
+            .map(lambda name: "assert" in name)
+            .value_or(False)
+        ):
+            return Some(macro_invocation)
+    return Nothing
+
+
+def get_focal_call(ast_util: ASTUtil, test_func: Node) -> Maybe[tuple[str, ASTLoc]]:
+    """Get the focal call from the given test function
+
+    Heuristic:
+        1. find the first assert macro
+        2. expand the macro and find the first call expression in the macro
+        3. if no call expression in the macro, back track to find the last call before assert
+    """
+
+    def expand_assert_and_get_call(assert_macro: Node) -> Maybe[tuple[str, ASTLoc]]:
+        token_tree = ast_util.get_all_nodes_of_type(assert_macro, "token_tree")[0]
+        code = ast_util.get_source_from_node(token_tree)
+        assert_ast_util = ASTUtil(code)
+        assert_ast = assert_ast_util.tree(RUST_LANGUAGE)
+        assert_root = assert_ast.root_node
+
+        match assert_ast_util.get_all_nodes_of_type(assert_root, "call_expression"):
+            case []:
+                # todo: no call expression in assert macro,
+                # back track to find the last call before assert
+                return Nothing
+            case [call, *_]:
+                name = assert_ast_util.get_source_from_node(call)
+                lineno = call.start_point[0] + assert_macro.start_point[0]
+                col = call.start_point[1]
+                match name.split("."):
+                    case [obj_name, *_, method_name]:
+                        offset = len(name) - len(method_name)
+                        return Some((method_name, (lineno, col + offset)))
+                    case _:
+                        return Some((name, (lineno, col)))
+
+        return Nothing
+
+    return get_first_assert(ast_util, test_func).bind(expand_assert_and_get_call)
 
 
 def main():
@@ -57,12 +102,8 @@ fn encode_all_bytes_url() {
     func = test_funcs[0]
     print(ast_util.get_source_from_node(func))
 
-    # focal = list(filter(is_call_to_test, call_exprs))[0]
-    # test_name, test_func = js_get_test_args(ast_util, focal).unwrap()
-    # print(test_name)
-    # print(ast_util.get_source_from_node(test_func))
-
-    # print(get_focal_call(ast_util, test_func))
+    focal_call = get_focal_call(ast_util, func)
+    print(focal_call)
 
 
 if __name__ == "__main__":
