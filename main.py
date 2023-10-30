@@ -113,7 +113,7 @@ def process_one_focal_file(
     failure_results = []
     source_file = focal_file.replace("focal", "source")
     success_file = source_file.replace(".jsonl", ".success.jsonl")
-    fauilure_file = source_file.replace(".jsonl", ".failure.jsonl")
+    failure_file = source_file.replace(".jsonl", ".failure.jsonl")
 
     logging.debug(f"number of workdir_dict: {len(wd.keys())}")
     repos_root = os.path.abspath(repos_root)
@@ -143,7 +143,7 @@ def process_one_focal_file(
         # append to source file in loop to avoid losing data
         with jsonlines.open(success_file, "a") as f:
             f.write_all(succ)
-        with jsonlines.open(fauilure_file, "a") as f:
+        with jsonlines.open(failure_file, "a") as f:
             f.write_all(fail)
 
         success_results.extend(succ)
@@ -194,5 +194,5 @@ def main(
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=logging.DEBUG)
     fire.Fire(main)
