@@ -1,3 +1,4 @@
+marshallpierce/rust-base64
 dtolnay/syn
 dtolnay/proc-macro2
 dtolnay/itoa
@@ -48,4 +49,3 @@ image-rs/image
 MarcusGrass/http-range-header
 raphlinus/pulldown-cmark
 image-rs/jpeg-decoder
-
