@@ -120,11 +120,11 @@ def process_one_focal_file(
     for workdir, workdir_objs in wd.items():
         succ = []
         fail = []
-        try:
-            full_workdir = os.path.join(repos_root, workdir)
-            logging.debug(f"workdir: {full_workdir}")
+        full_workdir = os.path.join(repos_root, workdir)
+        logging.debug(f"workdir: {full_workdir}")
+        syncer = Synchronizer(full_workdir, language)
 
-            syncer = Synchronizer(full_workdir, language)
+        try:
             syncer.start_lsp_server(timeout=60)
             syncer.initialize()
 
