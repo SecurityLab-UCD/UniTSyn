@@ -138,6 +138,7 @@ def process_one_focal_file(
             syncer.stop()
         except Exception as e:
             logging.debug(e)
+            syncer.stop()
             continue
 
         # append to source file in loop to avoid losing data
@@ -194,5 +195,5 @@ def main(
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.DEBUG)
+    logging.basicConfig(level=logging.INFO)
     fire.Fire(main)
