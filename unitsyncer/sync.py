@@ -150,6 +150,10 @@ class Synchronizer:
         file_path = uri2path(def_location.uri).value_or(str(def_location.uri))
         logging.debug(file_path)
 
+        # check if file path is relative to workspace root
+        if not file_path.startswith(self.workspace_dir):
+            return Failure(f"Source code not in workspace: {file_path}")
+
         def not_found_error(_):
             lineno = def_location.range.start.line
             col_offset = def_location.range.start.character
