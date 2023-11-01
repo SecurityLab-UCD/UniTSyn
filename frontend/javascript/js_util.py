@@ -1,7 +1,7 @@
 from typing import Iterable
 from tree_sitter.binding import Node
 from frontend.parser.langauges import JAVASCRIPT_LANGUAGE
-from frontend.parser.ast_util import ASTUtil, ASTLoc
+from frontend.parser.ast_util import ASTUtil, ASTLoc, flatten_postorder
 from returns.maybe import Maybe, Nothing, Some
 from unitsyncer.util import replace_tabs
 
@@ -42,7 +42,7 @@ def js_get_test_args(
 
 
 def get_focal_call(ast_util: ASTUtil, test_func: Node) -> Maybe[tuple[str, ASTLoc]]:
-    calls = ast_util.get_all_nodes_of_type(test_func, "call_expression")
+    calls = flatten_postorder(test_func, "call_expression")
 
     func_calls = [ast_util.get_source_from_node(call) for call in calls]
     calls_before_expect = []
