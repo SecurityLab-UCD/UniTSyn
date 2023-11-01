@@ -5,7 +5,7 @@ import logging
 import tqdm
 import fire
 
-SUPPORTED = ["java", "javascript"]
+SUPPORTED = ["java", "javascript", "rust"]
 
 
 def main(force=False):

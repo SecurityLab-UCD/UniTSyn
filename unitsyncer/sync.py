@@ -11,13 +11,19 @@ from pylspclient.lsp_structs import (
 )
 from unitsyncer.util import path2uri, replace_tabs, uri2path, ReadPipe
 from unitsyncer.source_code import get_function_code
-from unitsyncer.common import CAPABILITIES, UNITSYNCER_HOME
+from unitsyncer.common import (
+    CAPABILITIES,
+    UNITSYNCER_HOME,
+    RUST_CAPABILITIES,
+    RUST_INIT_OPTIONS,
+)
 from typing import Optional, Union
 from returns.maybe import Maybe, Nothing, Some
 from returns.result import Result, Success, Failure
 from returns.converters import maybe_to_result
 import logging
 from unitsyncer.util import silence
+import json
 
 
 def get_lsp_cmd(language: str) -> Optional[list[str]]:
@@ -33,6 +39,8 @@ def get_lsp_cmd(language: str) -> Optional[list[str]]:
             ]
         case LANGUAGE_IDENTIFIER.JAVASCRIPT:
             return ["typescript-language-server", "--stdio"]
+        case LANGUAGE_IDENTIFIER.RUST:
+            return ["rust-analyzer"]
         case _:
             return None
 
@@ -42,7 +50,8 @@ class Synchronizer:
         self.workspace_dir = os.path.abspath(workspace_dir)
         self.langID = language
         self.root_uri = path2uri(self.workspace_dir)
-        self.workspace_folders = [{"name": "python-lsp", "uri": self.root_uri}]
+        workspace_name = os.path.basename(self.workspace_dir)
+        self.workspace_folders = [{"name": workspace_name, "uri": self.root_uri}]
 
     @silence
     def start_lsp_server(self, timeout: int = 10):
@@ -67,7 +76,7 @@ class Synchronizer:
 
     @silence
     def initialize(self):
-        self.lsp_client.initialize(
+        response = self.lsp_client.initialize(
             self.lsp_proc.pid,
             self.workspace_dir,
             self.root_uri,
@@ -76,6 +85,7 @@ class Synchronizer:
             "off",
             self.workspace_folders,
         )
+        logging.debug(json.dumps(response))
         self.lsp_client.initialized()
 
     def open_file(self, file_path: str) -> str:

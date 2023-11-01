@@ -174,3 +174,4 @@ java-language-server/
 
 oauth
 debug/
+**/target/
