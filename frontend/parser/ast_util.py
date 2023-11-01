@@ -3,6 +3,7 @@ from tree_sitter.binding import Node
 from returns.maybe import Maybe, Nothing, Some
 from unitsyncer.common import UNITSYNCER_HOME
 from frontend.parser.langauges import JAVA_LANGUAGE
+from typing import Optional, Tuple
 
 ASTLoc = tuple[int, int]
 
@@ -86,3 +87,21 @@ def remove_leading_spaces(lines: list[str]) -> list[str]:
     """remove leading spaces from each line"""
     space_idx = len(lines[0]) - len(lines[0].lstrip())
     return [s[space_idx:] for s in lines]
+
+
+def flatten_postorder(root: Node, type: Optional[str] = None) -> list[Node]:
+    """flatten a tree in postorder
+
+    Args:
+        root (Node): root of tree
+
+    Returns:
+        list[Node]: flattened tree
+    """
+    nodes = []
+    for child in root.children:
+        nodes += flatten_postorder(child, type)
+
+    if type is None or root.type == type:
+        nodes.append(root)
+    return nodes
