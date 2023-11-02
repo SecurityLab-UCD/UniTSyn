@@ -78,8 +78,8 @@ def check_requirements(
     # Format of metadata:
     # {
     #   'data': {
-    #       'rateLimit': {'cost': ${cost}, 'remaining': ${remaining}, 'resetAt': ${ISO-8601 datetime}},
-    #       'repository': {'primaryLanguage': ${language}, 'pushedAt': ${ISO-8601 datetime}, 'stargazerCount': ${num_stars}}
+    #       'rateLimit': {'cost': <cost>, 'remaining': <remaining>, 'resetAt': <ISO-8601 datetime>},
+    #       'repository': {'primaryLanguage': <language>, 'pushedAt': <ISO-8601 datetime>, 'stargazerCount': <num_stars>}
     #   }
     # }
     metadata: dict = get_graphql_data(gql_format % (repo_query[1], repo_query[0]))
@@ -91,7 +91,7 @@ def check_requirements(
     return True
 
 
-# Pass checks_list and reqs with this template: --checks_list='${list}' --reqs='${list}'
+# Pass checks_list and reqs with this template: --checks_list='<list>' --reqs='<list>'
 def main(
     repo_id_list: str = "ethanbwang/test",
     checks_list: list[str] = ["stars", "latest commit"],
