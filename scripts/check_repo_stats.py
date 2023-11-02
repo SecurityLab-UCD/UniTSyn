@@ -1,7 +1,6 @@
 """
-Point of this script is only to check if a repo fulfills certain requirements
-
-Use another script to automate getting repos
+This script checks if a repo fulfills certain requirements
+Can customize what requirements to check and values to check against
 
 
 References
@@ -10,19 +9,18 @@ Parts 1 and 2 of a medium blog explaining the query:
 https://fabiomolinar.medium.com/using-githubs-graphql-to-retrieve-a-list-of-repositories-their-commits-and-some-other-stuff-ccbbb4e96d78
 https://fabiomolinar.medium.com/using-githubs-graphql-to-retrieve-a-list-of-repositories-their-commits-and-some-other-stuff-ce2f73432f7
 
-Github Ranking Repo:
-https://github.com/EvanLi/Github-Ranking/blob/master/source/
-
 Repository Object:
 https://docs.github.com/en/graphql/reference/objects#repository
 
 """
 from datetime import datetime
 import fire
+import sys
 
 from common import get_graphql_data
 
 
+#### Requirement Callables ####
 def req_enough_stars(metadata: dict, req_stars: str = "10") -> bool:
     """Checks if Github repository has enough stars"""
     if metadata["stargazerCount"] >= int(req_stars):
@@ -38,6 +36,9 @@ def req_latest_commit(metadata: dict, date_str: str = "2020-1-1") -> bool:
     if latest_commit_date.date() > req_date.date():
         return True
     return False
+
+
+#### End Requirement Callables ####
 
 
 def check_requirements(
@@ -67,6 +68,11 @@ def check_requirements(
             resetAt
         }
         repository(name:"%s", owner:"%s"){
+            id
+            owner {
+                login
+            }
+            name
             primaryLanguage {
                 name
             }
@@ -83,6 +89,10 @@ def check_requirements(
     #   }
     # }
     metadata: dict = get_graphql_data(gql_format % (repo_query[1], repo_query[0]))
+    if "errors" in metadata:
+        sys.exit(f"Fetching repo metadata error: {metadata['errors']}")
+
+    print(f"{repo} metadata: {metadata}")
 
     # Check requirements
     for i in range(len(requirements)):
@@ -92,10 +102,11 @@ def check_requirements(
 
 
 # Pass checks_list and reqs with this template: --checks_list='<list>' --reqs='<list>'
+# Ex. --reqs='["0", "2020-1-1"]'
 def main(
     repo_id_list: str = "ethanbwang/test",
     checks_list: list[str] = ["stars", "latest commit"],
-    reqs: list[str] = ["10", "2020-1-1"],
+    reqs: list[str] = ["10", "2020-1-1"],  # Year format should be <year>-<month>-<day>
 ):
     # if repo_id_list is a file then load lines
     # otherwise it is the id of a specific repo
@@ -103,6 +114,7 @@ def main(
         repo_id_list = [l.strip() for l in open(repo_id_list, "r").readlines()]
     except:
         repo_id_list = [repo_id_list]
+
     # Map elements of checks_list to callables
     check_map = {"stars": req_enough_stars, "latest commit": req_latest_commit}
     checks = [check_map[check] for check in checks_list]

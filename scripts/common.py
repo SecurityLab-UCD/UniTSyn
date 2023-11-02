@@ -1,6 +1,10 @@
-import json
 import requests
 import time
+
+"""
+Functions from github ranking repo:
+https://github.com/EvanLi/Github-Ranking/blob/master/source/
+"""
 
 
 def get_access_token():
