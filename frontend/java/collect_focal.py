@@ -3,7 +3,7 @@ import fire
 import re
 from tree_sitter.binding import Node
 from frontend.parser.langauges import JAVA_LANGUAGE
-from frontend.parser.ast_util import ASTUtil, ASTLoc
+from frontend.parser.ast_util import ASTUtil, ASTLoc, flatten_postorder
 from returns.maybe import Maybe, Nothing, Some, maybe
 from fuzzywuzzy import process
 
@@ -41,19 +41,19 @@ def get_focal_call(ast_util: ASTUtil, func: Node) -> Maybe[tuple[str, ASTLoc]]:
 
     # todo: find better heuristic to match object on imports
     """get the focal call from the given function"""
-    calls = ast_util.get_all_nodes_of_type(func, "method_invocation")
+    calls = flatten_postorder(func, "method_invocation")
+
     # reverse for postorder
     func_calls = [ast_util.get_source_from_node(call) for call in calls]
-    test_func_name = fuzzy_focal_name(ast_util.get_method_name(func).value_or(""))
-    calls_before_assert = []
+    calls_before_assert: list[str] = []
     has_assert = False
-    for call in reversed(func_calls):
+    for call in func_calls:
         if "assert" in call:
             has_assert = True
             break
         calls_before_assert.append(call)
 
-    if not has_assert:
+    if not has_assert or calls_before_assert == []:
         return Nothing
 
     def get_loc(call: str) -> tuple[str, ASTLoc]:
@@ -67,7 +67,7 @@ def get_focal_call(ast_util: ASTUtil, func: Node) -> Maybe[tuple[str, ASTLoc]]:
             case _:
                 return call, (lineno, col)
 
-    return closest_match(test_func_name, calls_before_assert).map(get_loc)
+    return Some(get_loc(calls_before_assert[-1]))
 
 
 def main():

@@ -98,6 +98,9 @@ def process_one_focal_file(
     with open(focal_file) as f:
         objs = [json.loads(line) for line in f.readlines()]
 
+    if len(objs) == 0:
+        return 0, 0
+
     n_focal = len(objs)
     match language:
         case LANGUAGE_IDENTIFIER.JAVA:

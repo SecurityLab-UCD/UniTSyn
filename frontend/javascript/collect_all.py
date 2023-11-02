@@ -18,12 +18,15 @@ def has_test(file_path):
     def has_chai(code):
         return "require('chai')" in code or 'require("chai")' in code
 
+    def has_jest(code):
+        return "from '@jest/globals'" in code
+
     try:
         with open(file_path, "r", errors="replace") as f:
             code = f.read()
     except FileNotFoundError:
         return False
-    return has_chai(code)
+    return has_chai(code) or has_jest(code) or "describe(" in code
 
 
 def collect_test_files(root: str):

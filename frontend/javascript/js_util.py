@@ -1,7 +1,7 @@
 from typing import Iterable
 from tree_sitter.binding import Node
 from frontend.parser.langauges import JAVASCRIPT_LANGUAGE
-from frontend.parser.ast_util import ASTUtil, ASTLoc
+from frontend.parser.ast_util import ASTUtil, ASTLoc, flatten_postorder
 from returns.maybe import Maybe, Nothing, Some
 from unitsyncer.util import replace_tabs
 
@@ -31,24 +31,20 @@ def js_get_test_args(
     # args_node.childre should be a list of 5 nodes:
     # "(", "test_name", ",", "test_func", ")
     args = args_node.children
-    if (
-        len(args) != 5
-        and args[1].type != "string_fragment"
-        and args[3].type != "function"
-    ):
+    if len(args) != 5 or args[1].type != "string" or args[3].type != "function":
         return Nothing
 
     return Some((ast_util.get_source_from_node(args[1]), args[3]))
 
 
 def get_focal_call(ast_util: ASTUtil, test_func: Node) -> Maybe[tuple[str, ASTLoc]]:
-    calls = ast_util.get_all_nodes_of_type(test_func, "call_expression")
+    calls = flatten_postorder(test_func, "call_expression")
 
     func_calls = [ast_util.get_source_from_node(call) for call in calls]
     calls_before_expect = []
     has_expect = False
     for call in func_calls:
-        if "expect" in call:
+        if "expect" in call or "test" in call:
             has_expect = True
             break
         calls_before_expect.append(call)
