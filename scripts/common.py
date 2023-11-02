@@ -3,7 +3,13 @@ import requests
 import time
 
 
-def get_graphql_data(GQL):
+def get_access_token():
+    with open("./oauth", "r") as f:
+        access_token = f.read().strip()
+    return access_token
+
+
+def get_graphql_data(GQL: str) -> dict:
     """
     use graphql to get data
     """
