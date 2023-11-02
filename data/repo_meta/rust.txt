@@ -48,3 +48,4 @@ image-rs/image
 MarcusGrass/http-range-header
 raphlinus/pulldown-cmark
 image-rs/jpeg-decoder
+

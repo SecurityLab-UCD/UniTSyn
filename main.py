@@ -100,34 +100,31 @@ def process_one_focal_file(
 
     n_focal = len(objs)
     match language:
-        case LANGUAGE_IDENTIFIER.PYTHON | LANGUAGE_IDENTIFIER.JAVASCRIPT:
+        case LANGUAGE_IDENTIFIER.JAVA:
+            wd = java_workdir_dict(objs)
+        case _:
             first_test_id = objs[0]["test_id"]
             workdir = "/".join(id2path(first_test_id).split("/")[:2])
             wd = {
                 workdir: objs,
             }
-        case LANGUAGE_IDENTIFIER.JAVA:
-            wd = java_workdir_dict(objs)
-        case _:
-            logging.debug(f"language {language} not supported")
-            return n_focal, 0
 
     success_results = []
     failure_results = []
     source_file = focal_file.replace("focal", "source")
     success_file = source_file.replace(".jsonl", ".success.jsonl")
-    fauilure_file = source_file.replace(".jsonl", ".failure.jsonl")
+    failure_file = source_file.replace(".jsonl", ".failure.jsonl")
 
     logging.debug(f"number of workdir_dict: {len(wd.keys())}")
     repos_root = os.path.abspath(repos_root)
     for workdir, workdir_objs in wd.items():
         succ = []
         fail = []
-        try:
-            full_workdir = os.path.join(repos_root, workdir)
-            logging.debug(f"workdir: {full_workdir}")
+        full_workdir = os.path.join(repos_root, workdir)
+        logging.debug(f"workdir: {full_workdir}")
+        syncer = Synchronizer(full_workdir, language)
 
-            syncer = Synchronizer(full_workdir, language)
+        try:
             syncer.start_lsp_server(timeout=60)
             syncer.initialize()
 
@@ -141,12 +138,13 @@ def process_one_focal_file(
             syncer.stop()
         except Exception as e:
             logging.debug(e)
+            syncer.stop()
             continue
 
         # append to source file in loop to avoid losing data
         with jsonlines.open(success_file, "a") as f:
             f.write_all(succ)
-        with jsonlines.open(fauilure_file, "a") as f:
+        with jsonlines.open(failure_file, "a") as f:
             f.write_all(fail)
 
         success_results.extend(succ)
