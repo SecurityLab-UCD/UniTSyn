@@ -60,13 +60,13 @@ class ASTUtil:
         return Some(modifiers)
 
     def get_all_nodes_of_type(
-        self, root: Node, type: str | None, max_level=50
+        self, root: Node, node_type: str | None, max_level=50
     ) -> list[Node]:
         """walk on AST and collect all nodes of the given type
 
         Args:
             root (Node): root node of tree
-            type (str | None): type of node to collect, if None collect all Node
+            node_type (str | None): type of node to collect, if None collect all Node
             max_level (int, optional): maximum recursion level. Defaults to 50.
 
         Returns:
@@ -77,9 +77,11 @@ class ASTUtil:
             return nodes
 
         for child in root.children:
-            if type is None or child.type == type:
+            if type is None or child.type == node_type:
                 nodes.append(child)
-            nodes += self.get_all_nodes_of_type(child, type, max_level=max_level - 1)
+            nodes += self.get_all_nodes_of_type(
+                child, node_type, max_level=max_level - 1
+            )
         return nodes
 
 
@@ -89,19 +91,23 @@ def remove_leading_spaces(lines: list[str]) -> list[str]:
     return [s[space_idx:] for s in lines]
 
 
-def flatten_postorder(root: Node, type: Optional[str] = None) -> list[Node]:
+def flatten_postorder(
+    root: Node, node_type: Optional[str] = None, max_level=50
+) -> list[Node]:
     """flatten a tree in postorder
 
     Args:
         root (Node): root of tree
+        node_type (str | None): type of node to collect, if None collect all Node
+        max_level (int, optional): maximum recursion level. Defaults to 50.
 
     Returns:
         list[Node]: flattened tree
     """
     nodes = []
     for child in root.children:
-        nodes += flatten_postorder(child, type)
+        nodes += flatten_postorder(child, node_type, max_level - 1)
 
-    if type is None or root.type == type:
+    if type is None or root.type == node_type:
         nodes.append(root)
     return nodes
