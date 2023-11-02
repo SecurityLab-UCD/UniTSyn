@@ -8,8 +8,20 @@ import datetime
 import functools
 import contextlib
 from tqdm import tqdm
-from typing import Optional, Callable, List, Any
+from typing import (
+    Optional,
+    Callable,
+    List,
+    Any,
+    Dict,
+    Iterable,
+    Optional,
+    Set,
+    Tuple,
+    TypeVar,
+)
 from pathos.multiprocessing import ProcessPool
+import subprocess
 
 
 class Timing:
@@ -124,3 +136,48 @@ def run_with_timeout(func: Callable):
         return None
 
     return wrapper
+
+
+__T = TypeVar("__T")
+__R = TypeVar("__R")
+
+
+def parallel_subprocess(
+    iter: Iterable[__T],
+    jobs: int,
+    subprocess_creator: Callable[[__T], subprocess.Popen],
+    on_exit: Optional[Callable[[subprocess.Popen], __R]] = None,
+    use_tqdm=True,
+    tqdm_leave=True,
+    tqdm_msg="",
+) -> Dict[__T, __R]:
+    """
+    Creates `jobs` subprocesses that run in parallel.
+    `iter` contains input that is send to each subprocess.
+    `subprocess_creator` creates the subprocess and returns a `Popen`.
+    After each subprocess ends, `on_exit` will go collect user defined input and return.
+    The return valus is a dictionary of inputs and outputs.
+
+    User has to guarantee elements in `iter` is unique, or the output may be incorrect.
+    """
+    ret = {}
+    processes: Set[Tuple[subprocess.Popen, __T]] = set()
+    if use_tqdm:
+        iter = tqdm(iter, leave=tqdm_leave, desc=tqdm_msg)
+    for input in iter:
+        processes.add((subprocess_creator(input), input))
+        if len(processes) >= jobs:
+            # wait for a child process to exit
+            os.wait()
+            exited_processes = [(p, i) for p, i in processes if p.poll() is not None]
+            for p, i in exited_processes:
+                processes.remove((p, i))
+                if on_exit is not None:
+                    ret[i] = on_exit(p)
+    # wait for remaining processes to exit
+    for p, i in processes:
+        p.wait()
+        # let `on_exit` to decide wait for or kill the process
+        if on_exit is not None:
+            ret[i] = on_exit(p)
+    return ret
