@@ -17,15 +17,13 @@ from datetime import datetime
 import fire
 import sys
 
-from common import get_graphql_data
+from scripts.common import get_graphql_data
 
 
 #### Requirement Callables ####
 def req_enough_stars(metadata: dict, req_stars: str = "10") -> bool:
     """Checks if Github repository has enough stars"""
-    if metadata["stargazerCount"] >= int(req_stars):
-        return True
-    return False
+    return metadata["stargazerCount"] >= int(req_stars)
 
 
 def req_latest_commit(metadata: dict, date_str: str = "2020-1-1") -> bool:
@@ -33,17 +31,23 @@ def req_latest_commit(metadata: dict, date_str: str = "2020-1-1") -> bool:
     latest_commit_date = datetime.fromisoformat(metadata["pushedAt"])
     date = date_str.split("-")
     req_date = datetime(int(date[0]), int(date[1]), int(date[2]))
-    if latest_commit_date.date() > req_date.date():
-        return True
-    return False
+    return latest_commit_date.date() > req_date.date()
 
-def req_fuzz_repos(metadata: dict) -> bool:
-    """"Checks if Github repository of Rust has fuzz file"""
-    contents = metadata['object']['entries']
+
+def req_language(metadata: dict, language: str = "java") -> bool:
+    """Checks if Github repository has correct language"""
+    return metadata["primaryLanguage"] == language
+
+
+def req_fuzzers(metadata: dict) -> bool:
+    """ "Checks if Github repository of Rust has fuzz file"""
+    contents = metadata["object"]["entries"]
     for item in contents:
-        if item['name'] == "fuzz" and item['type'] == 'tree':
+        if item["name"] == "fuzz" and item["type"] == "tree":
             return True
     return False
+
+
 #### End Requirement Callables ####
 
 
@@ -65,7 +69,6 @@ def check_requirements(
     repo_query = repo.split("/")
 
     # Get repo data
-    # Query currently returns the language, last commit, and number of stars of repo
     gql_format = """
     query {
         rateLimit {
@@ -79,6 +82,7 @@ def check_requirements(
                 login
             }
             name
+            url
             primaryLanguage {
                 name
             }
@@ -95,7 +99,7 @@ def check_requirements(
         }
     }
     """
-    # Format of metadata:
+    # Example of format of metadata:
     # {
     #   'data': {
     #       'rateLimit': {'cost': <cost>, 'remaining': <remaining>, 'resetAt': <ISO-8601 datetime>},
@@ -109,19 +113,23 @@ def check_requirements(
     print(f"{repo} metadata: {metadata}")
 
     # Check requirements
-    for i in range(len(requirements)-1):
-        if not requirements[i](metadata["data"]["repository"], reqs[i]):
+    check_rust_fuzz = False
+    for i in range(len(requirements)):
+        if requirements[i] == req_fuzzers and not requirements[i](
+            metadata["data"]["repository"]
+        ):
             return False
-    if not requirements[-1](metadata["data"]["repository"]):
-        return False
+        elif not requirements[i](metadata["data"]["repository"], reqs[i]):
+            return False
     return True
 
 
 # Pass checks_list and reqs with this template: --checks_list='<list>' --reqs='<list>'
 # Ex. --reqs='["0", "2020-1-1"]'
+# If checking Rust fuzz path, put null in place of where the req should be in the reqs list
 def main(
     repo_id_list: str = "ethanbwang/test",
-    checks_list: list[str] = ["stars", "latest commit", "whether has fuzz"],
+    checks_list: list[str] = ["stars", "latest commit"],
     reqs: list[str] = ["10", "2020-1-1"],  # Year format should be <year>-<month>-<day>
 ):
     # if repo_id_list is a file then load lines
@@ -132,7 +140,12 @@ def main(
         repo_id_list = [repo_id_list]
 
     # Map elements of checks_list to callables
-    check_map = {"stars": req_enough_stars, "latest commit": req_latest_commit,"whether has fuzz":req_fuzz_repos}
+    check_map = {
+        "stars": req_enough_stars,
+        "latest commit": req_latest_commit,
+        "language": req_language,
+        "fuzzers": req_fuzzers,
+    }
     checks = [check_map[check] for check in checks_list]
 
     for repo in repo_id_list:
