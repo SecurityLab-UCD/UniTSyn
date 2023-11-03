@@ -37,7 +37,13 @@ def req_latest_commit(metadata: dict, date_str: str = "2020-1-1") -> bool:
         return True
     return False
 
-
+def req_fuzz_repos(metadata: dict) -> bool:
+    """"Checks if Github repository of Rust has fuzz file"""
+    contents = metadata['object']['entries']
+    for item in contents:
+        if item['name'] == "fuzz" and item['type'] == 'tree':
+            return True
+    return False
 #### End Requirement Callables ####
 
 
@@ -78,6 +84,14 @@ def check_requirements(
             }
             pushedAt
             stargazerCount
+            object(expression: "HEAD:") {
+                ... on Tree {
+                    entries {
+                        name
+                        type
+                    }
+                }
+            }
         }
     }
     """
@@ -95,9 +109,11 @@ def check_requirements(
     print(f"{repo} metadata: {metadata}")
 
     # Check requirements
-    for i in range(len(requirements)):
+    for i in range(len(requirements)-1):
         if not requirements[i](metadata["data"]["repository"], reqs[i]):
             return False
+    if not requirements[-1](metadata["data"]["repository"]):
+        return False
     return True
 
 
@@ -105,7 +121,7 @@ def check_requirements(
 # Ex. --reqs='["0", "2020-1-1"]'
 def main(
     repo_id_list: str = "ethanbwang/test",
-    checks_list: list[str] = ["stars", "latest commit"],
+    checks_list: list[str] = ["stars", "latest commit", "whether has fuzz"],
     reqs: list[str] = ["10", "2020-1-1"],  # Year format should be <year>-<month>-<day>
 ):
     # if repo_id_list is a file then load lines
@@ -116,7 +132,7 @@ def main(
         repo_id_list = [repo_id_list]
 
     # Map elements of checks_list to callables
-    check_map = {"stars": req_enough_stars, "latest commit": req_latest_commit}
+    check_map = {"stars": req_enough_stars, "latest commit": req_latest_commit,"whether has fuzz":req_fuzz_repos}
     checks = [check_map[check] for check in checks_list]
 
     for repo in repo_id_list:
