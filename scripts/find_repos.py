@@ -85,4 +85,17 @@ def find_repos(requirements: list[callable], reqs: list[str]) -> None:
             repos_to_save.append(repo_name)
 
     # Write each repo to a file
+    save_repos_to_file(language.strip('"'), repos_to_save)  # Remove double quotes from the language string if present
+
+    # Update the cursor for the next execution
+    with open(f"{language.strip('"')}_cursor.txt", "w") as f:
+        f.write(new_cursor)
+
+def save_repos_to_file(language: str, repos_list: list[str]) -> None:
+    """Save the repository names to a file named <language>.txt in the ../data/repo_meta directory."""
+    file_path = f"../data/repo_meta/{language}.txt"
+    with open(file_path, "a") as file:  # Using "a" to append to the file if it already exists
+        for repo_name in repos_list:
+            file.write(repo_name + "\n")
+
 
