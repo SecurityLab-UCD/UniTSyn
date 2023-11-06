@@ -17,7 +17,7 @@ from datetime import datetime
 import fire
 import sys
 
-from scripts.common import get_graphql_data
+from common import get_graphql_data
 
 
 #### Requirement Callables ####
@@ -28,7 +28,11 @@ def req_enough_stars(metadata: dict, req_stars: str = "10") -> bool:
 
 def req_latest_commit(metadata: dict, date_str: str = "2020-1-1") -> bool:
     """Checks if Github repository has a valid latest commit"""
-    latest_commit_date = datetime.fromisoformat(metadata["pushedAt"])
+    # latest_commit_date = datetime.fromisoformat(metadata["pushedAt"])
+    date_values = metadata["pushedAt"].split("T")[0].split("-")
+    latest_commit_date = datetime(
+        int(date_values[0]), int(date_values[1]), int(date_values[2])
+    )
     date = date_str.split("-")
     req_date = datetime(int(date[0]), int(date[1]), int(date[2]))
     return latest_commit_date.date() > req_date.date()
@@ -36,7 +40,7 @@ def req_latest_commit(metadata: dict, date_str: str = "2020-1-1") -> bool:
 
 def req_language(metadata: dict, language: str = "java") -> bool:
     """Checks if Github repository has correct language"""
-    return metadata["primaryLanguage"] == language
+    return metadata["primaryLanguage"]["name"].lower() == language.lower()
 
 
 def req_fuzzers(metadata: dict) -> bool:
@@ -83,6 +87,7 @@ def check_requirements(
             }
             name
             url
+            archivedAt
             primaryLanguage {
                 name
             }
@@ -112,14 +117,20 @@ def check_requirements(
 
     print(f"{repo} metadata: {metadata}")
 
+    # If repo is archived, automatic fail
+    if metadata["data"]["repository"]["archivedAt"] is not None:
+        print("Repo is archived")
+        return False
+
     # Check requirements
-    check_rust_fuzz = False
     for i in range(len(requirements)):
         if requirements[i] == req_fuzzers and not requirements[i](
             metadata["data"]["repository"]
         ):
+            print(f"Error with req {requirements[i].__name__}")
             return False
         elif not requirements[i](metadata["data"]["repository"], reqs[i]):
+            print(f"Error with req {requirements[i].__name__} with requirement {reqs[i]}")
             return False
     return True
 
@@ -150,9 +161,9 @@ def main(
 
     for repo in repo_id_list:
         if check_requirements(repo, checks, reqs):
-            print(f"{repo} meets the requirements")
+            print(f"{repo} meets the requirements\n")
         else:
-            print(f"{repo} does not meet the requirements")
+            print(f"{repo} does not meet the requirements\n")
 
 
 if __name__ == "__main__":
