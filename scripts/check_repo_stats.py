@@ -56,7 +56,7 @@ def req_fuzzers(metadata: dict) -> bool:
 
 
 def check_requirements(
-    repo: str, requirements: list[callable], reqs: list[str]
+    repo: str, requirements: list[callable], reqs: list[str], metadata: dict = None
 ) -> bool:
     """Checks if Github repository meets requirements
 
@@ -87,7 +87,7 @@ def check_requirements(
             }
             name
             url
-            archivedAt
+            isArchived
             primaryLanguage {
                 name
             }
@@ -111,26 +111,29 @@ def check_requirements(
     #       'repository': {'primaryLanguage': <language>, 'pushedAt': <ISO-8601 datetime>, 'stargazerCount': <num_stars>}
     #   }
     # }
-    metadata: dict = get_graphql_data(gql_format % (repo_query[1], repo_query[0]))
+    data = metadata
+    if metadata is None:  # Query if metadata is not provided
+        metadata = get_graphql_data(gql_format % (repo_query[1], repo_query[0]))
+        data = metadata["data"]["repository"]
     if "errors" in metadata:
         sys.exit(f"Fetching repo metadata error: {metadata['errors']}")
 
     print(f"{repo} metadata: {metadata}")
 
     # If repo is archived, automatic fail
-    if metadata["data"]["repository"]["archivedAt"] is not None:
+    if data["isArchived"]:
         print("Repo is archived")
         return False
 
     # Check requirements
     for i in range(len(requirements)):
-        if requirements[i] == req_fuzzers and not requirements[i](
-            metadata["data"]["repository"]
-        ):
+        if requirements[i] == req_fuzzers and not requirements[i](data):
             print(f"Error with req {requirements[i].__name__}")
             return False
-        elif not requirements[i](metadata["data"]["repository"], reqs[i]):
-            print(f"Error with req {requirements[i].__name__} with requirement {reqs[i]}")
+        elif not requirements[i](data, reqs[i]):
+            print(
+                f"Error with req {requirements[i].__name__} with requirement {reqs[i]}"
+            )
             return False
     return True
 
