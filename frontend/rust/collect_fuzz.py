@@ -6,7 +6,6 @@ from frontend.util import wrap_repo, parallel_subprocess
 import subprocess
 from os.path import join as pjoin, basename, splitext as psplitext, abspath
 from tqdm import tqdm
-from frontend.rust.rust_util import format_rust
 from multiprocessing import Pool
 from unitsyncer.common import CORES
 
