@@ -74,7 +74,7 @@ def find_repos(language: str, requirements: list[callable], reqs: list[str]) -> 
     with open(f"{language.lower()}_cursor.txt", "r") as f:
         cursor = f.read().strip()
 
-    bulk_size = 100  # How many repos to get at a time
+    bulk_size = 100 # How many repos to get at a time
     stars = 10  # Assuming stars is always a requirement to refine search results
     search_query: str = f"language:{language} stars:>={stars} sort:stars"
     # Set cursor if it exists
