@@ -10,6 +10,7 @@ For path querying specifically:
 https://docs.github.com/en/search-github/github-code-search/understanding-github-code-search-syntax#path-qualifier
 """
 import fire
+import os
 import sys
 
 import check_repo_stats
@@ -68,6 +69,9 @@ def find_repos(language: str, requirements: list[callable], reqs: list[str]) -> 
 
     # Read in last used cursor
     # Cursor can specify where to start looking in search results, save to a file to know where to start searching next time
+    if not os.path.exists(f"{language.lower()}_cursor.txt"):
+        f = open(f"{language.lower()}_cursor.txt", "x")
+        f.close()
     with open(f"{language.lower()}_cursor.txt", "r") as f:
         cursor = f.read().strip()
 
@@ -81,6 +85,8 @@ def find_repos(language: str, requirements: list[callable], reqs: list[str]) -> 
     repos: dict = get_graphql_data(gql_format % (search_query, bulk_size, cursor))
     if "errors" in repos:
         sys.exit(f"Fetching repo metadata error: {repos['errors']}")
+
+    print(f'{repos["data"]["rateLimit"]}\n')
 
     new_cursor = repos["data"]["search"]["pageInfo"]["endCursor"]
 
@@ -104,7 +110,7 @@ def find_repos(language: str, requirements: list[callable], reqs: list[str]) -> 
 
 def save_repos_to_file(language: str, repos_list: list[str]) -> None:
     """Save the repository names to a file named new_<language>.txt in the ../data/repo_meta directory."""
-    file_path = f"../data/repo_meta/new_{language}.txt"
+    file_path = f"./data/repo_meta/new_{language}.txt"
     # Using "a" to append to the file if it already exists
     with open(file_path, "a") as file:
         for repo_name in repos_list:
