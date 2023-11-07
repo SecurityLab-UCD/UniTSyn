@@ -130,7 +130,7 @@ def check_requirements(
         if requirements[i] == req_fuzzers and not requirements[i](data):
             print(f"Error with req {requirements[i].__name__}")
             return False
-        elif not requirements[i](data, reqs[i]):
+        elif requirements[i] != req_fuzzers and not requirements[i](data, reqs[i]):
             print(
                 f"Error with req {requirements[i].__name__} with requirement {reqs[i]}"
             )
@@ -138,8 +138,8 @@ def check_requirements(
     return True
 
 
-# Pass checks_list and reqs with this template: --checks_list='<list>' --reqs='<list>'
-# Ex. --reqs='["0", "2020-1-1"]'
+# Pass checks_list and reqs with this : --checks_list='<list>' --reqs='<list>'
+# Ex. --reqs='["0", "2020-1-1"]'template
 # If checking Rust fuzz path, put null in place of where the req should be in the reqs list
 def main(
     repo_id_list: str = "ethanbwang/test",

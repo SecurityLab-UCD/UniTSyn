@@ -16,7 +16,6 @@ import sys
 import check_repo_stats
 from common import get_graphql_data
 
-
 def find_repos(language: str, requirements: list[callable], reqs: list[str]) -> None:
     """Searches for new repos based on query parameters and checks if they fit the requirements given while resources are available
 
