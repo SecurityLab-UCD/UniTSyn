@@ -6,6 +6,7 @@ Multilingual **Uni**t **T**est and Function Source **Sync**hronization for CodeL
 
 - Python 3.10+
 - `requirements.txt`
+- [rustfmt](https://github.com/rust-lang/rustfmt) to use `frontend/rust/collect_fuzz.py`
 
 ### Language Server
 

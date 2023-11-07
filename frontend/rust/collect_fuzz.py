@@ -5,6 +5,8 @@ import os
 from frontend.util import wrap_repo, parallel_subprocess
 import subprocess
 from os.path import join as pjoin, basename, splitext as psplitext, abspath
+from tqdm import tqdm
+from frontend.rust.rust_util import format_rust
 
 
 def transform_repos(repos: list[str], jobs: int):
@@ -92,8 +94,44 @@ def fuzz_repos(repos: list[str], jobs: int, timeout: int = 60):
     )
 
 
-def test_gen_repos(repos: list[str], jobs: int):
-    pass
+def substitute_input(template: str, input_data: str) -> str:
+    lines = template.splitlines()
+    for i in range(len(lines)):
+        line = lines[i].strip()
+        if "let data = []" in line:
+            lines[i] = lines[i].replace("let data = []", f"let data = {input_data}")
+    return "\n".join(lines)
+
+
+def testgen_repos(repos: list[str], jobs: int, num_gen: Optional[int] = None):
+    target_map = parallel_subprocess(
+        repos,
+        jobs,
+        lambda path: subprocess.Popen(
+            ["cargo", "fuzz", "list"], cwd=path, stdout=subprocess.PIPE
+        ),
+        on_exit=get_target_list,
+        use_tqdm=False,
+    )
+    logging.info(f"Subsituting ")
+    for repo, targets in tqdm(target_map.items()):
+        template_dir = pjoin(repo, "tests-gen")
+        input_dir = pjoin(repo, "fuzz_inputs")
+        for t in targets:
+            if t == "":
+                continue
+
+            # format template befor loading
+            template_path = pjoin(template_dir, t + ".rs")
+            subprocess.run(["rustfmt", str(template_path)], check=True)
+            with open(template_path) as f_template:
+                template = format_rust(f_template.read())
+            with open(pjoin(input_dir, t), "r") as f_input:
+                inputs = f_input.read().splitlines()
+
+            tests = [substitute_input(template, input_data) for input_data in inputs]
+            with open(pjoin(template_dir, f"{t}.inputs.rs"), "w") as f_template:
+                f_template.write("\n".join(tests))
 
 
 def main(
@@ -132,7 +170,7 @@ def main(
         case "fuzz":
             fuzz_repos(repos, nprocs, timeout=timeout)
         case "testgen":
-            test_gen_repos(repos, nprocs)
+            testgen_repos(repos, nprocs)
         case _:
             logging.error(f"Unknown pipeline {pipeline}")
 

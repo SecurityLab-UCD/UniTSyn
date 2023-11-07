@@ -106,5 +106,9 @@ fn encode_all_bytes_url() {
     print(focal_call)
 
 
+def format_rust(code: str) -> str:
+    return code
+
+
 if __name__ == "__main__":
     main()
