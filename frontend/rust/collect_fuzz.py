@@ -115,7 +115,7 @@ def substitute_one_repo(repo: str, targets: list[str]):
         template_path = pjoin(template_dir, t + ".rs")
         subprocess.run(["rustfmt", str(template_path)], check=True)
         with open(template_path) as f_template:
-            template = format_rust(f_template.read())
+            template = f_template.read()
         with open(pjoin(input_dir, t), "r") as f_input:
             inputs = [i for i in f_input.read().splitlines() if i != "[]"]
 
