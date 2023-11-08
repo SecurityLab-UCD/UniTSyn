@@ -16,6 +16,7 @@ https://docs.github.com/en/graphql/reference/objects#repository
 from datetime import datetime
 import fire
 import sys
+from typing import Callable, Optional
 
 from common import get_graphql_data
 
@@ -56,7 +57,7 @@ def req_fuzzers(metadata: dict) -> bool:
 
 
 def check_requirements(
-    repo: str, requirements: list[callable], reqs: list[str], metadata: dict = None
+    repo: str, requirements: list[Callable[[dict, Optional[str]], bool]], reqs: list[str], metadata: Optional[dict] = None
 ) -> bool:
     """Checks if Github repository meets requirements
 

@@ -48,3 +48,18 @@ python3 scripts/decompress_repos.py
 python3 frontend/<language>/collect_all.py
 python3 main.py
 ```
+
+## Automated Repo Mining
+Automatic repo mining is supported through `scripts/find_repos.py`.
+
+Current checks that are supported are:
+- "stars"
+- "latest commit"
+- "language"
+- "fuzzers"
+
+The corresponding value in `reqs` to check against should be at the same index as the check in `checks_list`.
+```bash
+python3 scripts/find_repos.py --language='"<language>"' --checks_list='[<checks>]' --reqs='[<values>]'
+```
+Cursors representing where the search left off are saved to `data/repo_cursors/<language>_cursor.txt`. `find_repos.py` will automatically use and update this cursor to avoid mining duplicate repos.

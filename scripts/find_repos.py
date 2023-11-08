@@ -68,10 +68,10 @@ def find_repos(language: str, requirements: list[callable], reqs: list[str]) -> 
 
     # Read in last used cursor
     # Cursor can specify where to start looking in search results, save to a file to know where to start searching next time
-    if not os.path.exists(f"{language.lower()}_cursor.txt"):
-        f = open(f"{language.lower()}_cursor.txt", "x")
+    if not os.path.exists(f"./data/repo_cursors/{language.lower()}_cursor.txt"):
+        f = open(f"./data/repo_cursors/{language.lower()}_cursor.txt", "x")
         f.close()
-    with open(f"{language.lower()}_cursor.txt", "r") as f:
+    with open(f"./data/repo_cursors/{language.lower()}_cursor.txt", "r") as f:
         cursor = f.read().strip()
 
     bulk_size = 100 # How many repos to get at a time
@@ -103,7 +103,7 @@ def find_repos(language: str, requirements: list[callable], reqs: list[str]) -> 
     save_repos_to_file(language.lower(), repos_to_save)
 
     # Update the cursor for the next execution
-    with open(f"{language.lower()}_cursor.txt", "w") as f:
+    with open(f"./data/repo_cursors/{language.lower()}_cursor.txt", "w") as f:
         f.write(new_cursor)
 
 
