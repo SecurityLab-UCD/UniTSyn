@@ -106,5 +106,6 @@ fn encode_all_bytes_url() {
     print(focal_call)
 
 
+
 if __name__ == "__main__":
     main()
