@@ -61,5 +61,9 @@ Current checks that are supported are:
 The corresponding value in `reqs` to check against should be at the same index as the check in `checks_list`.
 ```bash
 python3 scripts/find_repos.py --language='"<language>"' --checks_list='[<checks>]' --reqs='[<values>]'
+```Rust
+python3 scripts/find_repos.py --language='"Rust"' --checks_list='["stars", "latest commit","language","fuzzers"]' --reqs='["10", "2020-1-1", 'Rust', None]'
+```python
+python3 scripts/find_repos.py --language='"python"' --checks_list='["stars", "latest commit","language"]' --reqs='["10", "2020-1-1", 'python']'
 ```
 Cursors representing where the search left off are saved to `data/repo_cursors/<language>_cursor.txt`. `find_repos.py` will automatically use and update this cursor to avoid mining duplicate repos.
