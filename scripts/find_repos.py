@@ -12,8 +12,8 @@ https://docs.github.com/en/search-github/github-code-search/understanding-github
 import fire
 import os
 import sys
-
 import check_repo_stats
+from collections import OrderedDict
 from common import get_graphql_data
 
 def find_repos(language: str, requirements: list[callable], reqs: list[str]) -> None:
@@ -114,6 +114,15 @@ def save_repos_to_file(language: str, repos_list: list[str]) -> None:
     with open(file_path, "a") as file:
         for repo_name in repos_list:
             file.write(repo_name + "\n")
+        
+    # use OrderedDict to reduce repetation and keep in order
+    with open(file_path, 'r') as file:
+        unique_repos = OrderedDict.fromkeys(file.read().splitlines())
+
+    # write back to original txt
+    with open(file_path, 'w') as file:
+        for repo in unique_repos:
+            file.write(f"{repo}\n")
 
 
 # Pass checks_list and reqs with this template: --checks_list='<list>' --reqs='<list>'
