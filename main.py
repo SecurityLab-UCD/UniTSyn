@@ -157,7 +157,7 @@ def process_one_focal_file(
 
 
 def main(
-    repos_root="data/repos_tarball",
+    repos_root="data/repos",
     focal_path="data/focal",
     language="python",
     jobs=CORES,
