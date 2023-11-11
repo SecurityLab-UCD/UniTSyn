@@ -1,6 +1,6 @@
 from tqdm import tqdm
 from unitsyncer.sync import Synchronizer, LSPSynchronizer
-from unitsyncer.rust_deps import RustSynchronizer
+from unitsyncer.rust_syncer import RustSynchronizer
 from pylspclient.lsp_structs import LANGUAGE_IDENTIFIER, Location, Position, Range
 from returns.maybe import Maybe, Nothing, Some
 from returns.result import Result, Success, Failure
