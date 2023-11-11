@@ -94,8 +94,10 @@ class RustSynchronizer(Synchronizer):
         base_name: str
 
         match focal_name.split("."):
-            case [obj_name, *_, method_name]:
+            case [obj_name, *xs, method_name]:
                 include_name = obj_name
+                if "unwrap" in method_name:
+                    method_name = obj_name if len(xs) == 0 else xs[-1]
                 base_name = method_name.split("(")[0]
             case _:
                 temp_name = focal_name.split("(")[0]
