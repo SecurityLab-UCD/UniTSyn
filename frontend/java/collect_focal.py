@@ -5,16 +5,6 @@ from tree_sitter.binding import Node
 from frontend.parser.langauges import JAVA_LANGUAGE
 from frontend.parser.ast_util import ASTUtil, ASTLoc, flatten_postorder
 from returns.maybe import Maybe, Nothing, Some, maybe
-from fuzzywuzzy import process
-
-
-@maybe
-def closest_match(name: str, strings: list[str]) -> Optional[str]:
-    match process.extractOne(name, strings):
-        case (best_match, score):
-            return best_match
-        case None:
-            return None
 
 
 def fuzzy_focal_name(test_func_name: str) -> str:

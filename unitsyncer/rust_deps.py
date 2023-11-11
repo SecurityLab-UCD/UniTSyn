@@ -1,3 +1,4 @@
+from typing import Optional
 from pip._vendor import tomli
 from os.path import join as pjoin, isfile, isdir, abspath
 import os
@@ -13,6 +14,8 @@ from unitsyncer.util import path2uri, uri2path
 from returns.converters import maybe_to_result
 from unitsyncer.sync import Synchronizer
 from pylspclient.lsp_structs import LANGUAGE_IDENTIFIER
+from fuzzywuzzy import process
+from functools import partial
 
 
 class RustSynchronizer(Synchronizer):
@@ -45,14 +48,18 @@ class RustSynchronizer(Synchronizer):
         names = [ast_util.get_name(node).value_or("") for node in nodes]
         return list(zip(names, nodes))
 
-    # todo: align type with sync.py
     def get_source_of_call(
-        self, focal_name: str
+        self,
+        focal_name: str,
+        file_path: Optional[str] = None,
+        line: Optional[int] = None,
+        col: Optional[int] = None,
+        verbose: bool = False,
     ) -> Result[tuple[str, str | None, str | None], str]:
         match self.goto_definition(focal_name):
             case [] | None:
                 return Failure("Not Definition Found")
-            case [loc, *_]:
+            case [(_, loc), *_]:
                 # todo: find best match based on imports of test file
 
                 def not_found_error(_):
@@ -73,7 +80,7 @@ class RustSynchronizer(Synchronizer):
             case _:
                 return Failure("Unexpected Error")
 
-    def goto_definition(self, focal_name: str) -> list[Location]:
+    def goto_definition(self, focal_name: str) -> list[tuple[str, Location]]:
         """get the definition of the given function name
 
         Args:
@@ -82,17 +89,51 @@ class RustSynchronizer(Synchronizer):
         Returns:
             list[Location]: all locations of function definition with focal_name
         """
-        results = []
+        results: list[tuple[str, Location]] = []  # [(file_path, location)]
+        include_name: str
+        base_name: str
+
+        match focal_name.split("."):
+            case [obj_name, *_, method_name]:
+                include_name = obj_name
+                base_name = method_name.split("(")[0]
+            case _:
+                temp_name = focal_name.split("(")[0]
+                include_name = temp_name
+                base_name = temp_name
         for file_path, funcs in self.file_func_map.items():
             for name, node in funcs:
-                if name == focal_name:
+                if name == base_name:
                     uri = path2uri(file_path)
                     range_ = Range(
                         Position(*node.start_point),
                         Position(*node.end_point),
                     )
-                    results.append(Location(uri, range_))
-        return results
+                    results.append((file_path, Location(uri, range_)))
+
+        # sort by fuzzy match with base name
+        return sorted(
+            results,
+            key=partial(self.fuzzy_comparator, include_name),
+            reverse=True,
+        )
+
+    def fuzzy_comparator(self, include_name: str, x: tuple[str, Location]) -> float:
+        """similarity score of file path with include_name
+
+        Args:
+            include_name (str): **engine::GeneralPurpose::new(&URL_SAFE, PAD)**.encode(bytes)
+            x (tuple[str, Location]): (file_path, location)
+
+        Returns:
+            float: similarity score
+        """
+        file_path = x[0].split(self.workspace_dir)[-1]
+        match process.extractOne(file_path, [include_name]):
+            case (_, score):
+                return score
+            case _:
+                return 0
 
     def stop(self):
         pass
@@ -103,7 +144,13 @@ def main():
     lsp = RustSynchronizer(workdir)
     lsp.initialize()
 
-    print(lsp.get_source_of_call("decode"))
+    file = f"{workdir}/tests/encode.rs"
+
+    print(
+        lsp.get_source_of_call(
+            "engine::GeneralPurpose::new(&URL_SAFE, PAD).encode(bytes)"
+        )
+    )
 
 
 if __name__ == "__main__":

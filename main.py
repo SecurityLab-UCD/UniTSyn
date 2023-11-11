@@ -75,7 +75,12 @@ def focal2result(syncer: Synchronizer, repos_root, obj):
     }
 
     # todo: conform return format when Failure
-    match syncer.get_source_of_call(file_path, src_lineno, src_col_offset):
+    match syncer.get_source_of_call(
+        obj["focal_id"],
+        file_path,
+        src_lineno,
+        src_col_offset,
+    ):
         case Success((code, docstring, code_id)):
             result["code_id"] = (
                 obj["focal_id"]

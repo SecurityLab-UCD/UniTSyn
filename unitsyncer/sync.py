@@ -54,7 +54,12 @@ class Synchronizer:
         raise NotImplementedError
 
     def get_source_of_call(
-        self, file_path: str, line: int, col: int, verbose: bool = False
+        self,
+        focal_name: str,
+        file_path: str,
+        line: int,
+        col: int,
+        verbose: bool = False,
     ) -> Result[tuple[str, str | None, str | None], str]:
         raise NotImplementedError
 
@@ -124,7 +129,12 @@ class LSPSynchronizer(Synchronizer):
         return uri
 
     def get_source_of_call(
-        self, file_path: str, line: int, col: int, verbose: bool = False
+        self,
+        focal_name: str,
+        file_path: str,
+        line: int,
+        col: int,
+        verbose: bool = False,
     ) -> Result[tuple[str, str | None, str | None], str]:
         """get the source code of a function called at a specific location in a file
 
