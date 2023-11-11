@@ -96,6 +96,8 @@ class RustSynchronizer(Synchronizer):
         match focal_name.split("."):
             case [obj_name, *xs, method_name]:
                 include_name = obj_name
+
+                # if method_name is unwrap, use the previous splited name as method_name
                 if "unwrap" in method_name:
                     method_name = obj_name if len(xs) == 0 else xs[-1]
                 base_name = method_name.split("(")[0]
@@ -103,6 +105,7 @@ class RustSynchronizer(Synchronizer):
                 temp_name = focal_name.split("(")[0]
                 include_name = temp_name
                 base_name = temp_name
+
         for file_path, funcs in self.file_func_map.items():
             for name, node in funcs:
                 if name == base_name:
