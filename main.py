@@ -1,5 +1,6 @@
 from tqdm import tqdm
-from unitsyncer.sync import Synchronizer
+from unitsyncer.sync import Synchronizer, LSPSynchronizer
+from unitsyncer.rust_deps import RustSynchronizer
 from pylspclient.lsp_structs import LANGUAGE_IDENTIFIER, Location, Position, Range
 from returns.maybe import Maybe, Nothing, Some
 from returns.result import Result, Success, Failure
@@ -125,11 +126,16 @@ def process_one_focal_file(
         fail = []
         full_workdir = os.path.join(repos_root, workdir)
         logging.debug(f"workdir: {full_workdir}")
-        syncer = Synchronizer(full_workdir, language)
+        syncer: Synchronizer
+
+        match language:
+            case LANGUAGE_IDENTIFIER.RUST:
+                syncer = RustSynchronizer(full_workdir, language)
+            case _:
+                syncer = LSPSynchronizer(full_workdir, language)
 
         try:
-            syncer.start_lsp_server(timeout=60)
-            syncer.initialize()
+            syncer.initialize(timeout=60)
 
             for obj in workdir_objs:
                 result = focal2result(syncer, repos_root, obj)

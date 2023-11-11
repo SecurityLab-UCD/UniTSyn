@@ -11,16 +11,18 @@ from pylspclient.lsp_structs import Location, LANGUAGE_IDENTIFIER, Range, Positi
 from unitsyncer.source_code import get_function_code
 from unitsyncer.util import path2uri, uri2path
 from returns.converters import maybe_to_result
+from unitsyncer.sync import Synchronizer
+from pylspclient.lsp_structs import LANGUAGE_IDENTIFIER
 
 
-class FakeRustLSP:
-    def __init__(self, workdir: str) -> None:
-        self.workdir = workdir
+class RustSynchronizer(Synchronizer):
+    def __init__(self, workspace_dir: str, language="rust") -> None:
+        super().__init__(workspace_dir, LANGUAGE_IDENTIFIER.RUST)
         self.file_func_map: dict[str, list[tuple[str, Node]]] = {}
 
-    def initialize(self):
+    def initialize(self, timeout: int = 10):
         """index all files and functions in the workdir/src"""
-        src_dir = pjoin(self.workdir, "src")
+        src_dir = pjoin(self.workspace_dir, "src")
         for root, dirs, files in os.walk(src_dir):
             for file in files:
                 if file.endswith(".rs"):
@@ -92,10 +94,13 @@ class FakeRustLSP:
                     results.append(Location(uri, range_))
         return results
 
+    def stop(self):
+        pass
+
 
 def main():
     workdir = "data/repos/marshallpierce-rust-base64/marshallpierce-rust-base64-4ef33cc"
-    lsp = FakeRustLSP(workdir)
+    lsp = RustSynchronizer(workdir)
     lsp.initialize()
 
     print(lsp.get_source_of_call("decode"))
