@@ -65,9 +65,9 @@ The corresponding value in `reqs` to check against should be at the same index a
 python3 scripts/find_repos.py --language='<language>' --checks_list='[<checks>]' --reqs='[<values>]' --num_searches='<num_searches>'
 
 # Rust example
-python3 scripts/find_repos.py --language='Rust' --checks_list='["stars", "latest commit", "language", "fuzzers"]' --reqs='["10", "2020-1-1", 'Rust', None]' --num_searches='1'
+python3 scripts/find_repos.py --language='Rust' --checks_list='["stars", "latest commit", "language", "fuzzers"]' --reqs='["10", "2020-1-1", "Rust", None]' --num_searches='1'
 
 # Python example
-python3 scripts/find_repos.py --language='Python' --checks_list='["stars", "latest commit", "language"]' --reqs='["10", "2020-1-1", 'Python']' --num_searches='1'
+python3 scripts/find_repos.py --language='Python' --checks_list='["stars", "latest commit", "language"]' --reqs='["10", "2020-1-1", "Python"]' --num_searches='1'
 ```
 Cursors representing where the search left off are saved to `data/repo_cursors/<language>_cursor.txt`. `find_repos.py` will automatically use and update this cursor to avoid mining duplicate repos.
