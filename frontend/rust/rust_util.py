@@ -66,12 +66,7 @@ def get_focal_call(ast_util: ASTUtil, test_func: Node) -> Maybe[tuple[str, ASTLo
                 name = assert_ast_util.get_source_from_node(call)
                 lineno = call.start_point[0] + assert_macro.start_point[0]
                 col = call.start_point[1]
-                match name.split("."):
-                    case [obj_name, *_, method_name]:
-                        offset = len(name) - len(method_name)
-                        return Some((method_name, (lineno, col + offset)))
-                    case _:
-                        return Some((name, (lineno, col)))
+                return Some((name, (lineno, col)))
 
         return Nothing
 
@@ -104,7 +99,6 @@ fn encode_all_bytes_url() {
 
     focal_call = get_focal_call(ast_util, func)
     print(focal_call)
-
 
 
 if __name__ == "__main__":

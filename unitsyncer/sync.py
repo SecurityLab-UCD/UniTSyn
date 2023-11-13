@@ -49,6 +49,28 @@ class Synchronizer:
     def __init__(self, workspace_dir: str, language: str) -> None:
         self.workspace_dir = os.path.abspath(workspace_dir)
         self.langID = language
+
+    def initialize(self, timeout: int):
+        raise NotImplementedError
+
+    def get_source_of_call(
+        self,
+        focal_name: str,
+        file_path: str,
+        line: int,
+        col: int,
+        verbose: bool = False,
+    ) -> Result[tuple[str, str | None, str | None], str]:
+        raise NotImplementedError
+
+    def stop(self):
+        raise NotImplementedError
+
+
+class LSPSynchronizer(Synchronizer):
+    def __init__(self, workspace_dir: str, language: str) -> None:
+        super().__init__(workspace_dir, language)
+
         self.root_uri = path2uri(self.workspace_dir)
         workspace_name = os.path.basename(self.workspace_dir)
         self.workspace_folders = [{"name": workspace_name, "uri": self.root_uri}]
@@ -75,7 +97,8 @@ class Synchronizer:
         self.lsp_client = pylspclient.LspClient(lsp_endpoint)
 
     @silence
-    def initialize(self):
+    def initialize(self, timeout: int = 10):
+        self.start_lsp_server(timeout)
         response = self.lsp_client.initialize(
             self.lsp_proc.pid,
             self.workspace_dir,
@@ -106,7 +129,12 @@ class Synchronizer:
         return uri
 
     def get_source_of_call(
-        self, file_path: str, line: int, col: int, verbose: bool = False
+        self,
+        focal_name: str,
+        file_path: str,
+        line: int,
+        col: int,
+        verbose: bool = False,
     ) -> Result[tuple[str, str | None, str | None], str]:
         """get the source code of a function called at a specific location in a file
 
