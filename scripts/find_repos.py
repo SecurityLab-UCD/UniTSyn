@@ -114,7 +114,7 @@ def find_repos(language: str, requirements: list[callable], reqs: list[str]) -> 
 
 def save_repos_to_file(language: str, repos_list: list[str]) -> None:
     """Save the repository names to a file named new_<language>.txt in the ../data/repo_meta directory."""
-    file_path = f"./data/repo_meta/new_{language}.txt"
+    file_path = f"./data/repo_meta/{language}.txt"
     # Using "a" to append to the file if it already exists
     with open(file_path, "a") as file:
         for repo_name in repos_list:
