@@ -15,18 +15,22 @@ https://docs.github.com/en/graphql/reference/objects#repository
 """
 from datetime import datetime
 import fire
+import json
+import os
 import sys
 from typing import Callable, Optional
 
-from common import get_graphql_data
+from common import get_graphql_data, check_metadata_decorator
 
 
 #### Requirement Callables ####
+@check_metadata_decorator
 def req_enough_stars(metadata: dict, req_stars: str = "10") -> bool:
     """Checks if Github repository has enough stars"""
     return metadata["stargazerCount"] >= int(req_stars)
 
 
+@check_metadata_decorator
 def req_latest_commit(metadata: dict, date_str: str = "2020-1-1") -> bool:
     """Checks if Github repository has a valid latest commit"""
     # latest_commit_date = datetime.fromisoformat(metadata["pushedAt"])
@@ -39,11 +43,13 @@ def req_latest_commit(metadata: dict, date_str: str = "2020-1-1") -> bool:
     return latest_commit_date.date() > req_date.date()
 
 
+@check_metadata_decorator
 def req_language(metadata: dict, language: str = "java") -> bool:
     """Checks if Github repository has correct language"""
     return metadata["primaryLanguage"]["name"].lower() == language.lower()
 
 
+@check_metadata_decorator
 def req_fuzzers(metadata: dict) -> bool:
     """ "Checks if Github repository of Rust has fuzz file"""
     contents = metadata["object"]["entries"]
@@ -57,7 +63,10 @@ def req_fuzzers(metadata: dict) -> bool:
 
 
 def check_requirements(
-    repo: str, requirements: list[Callable[[dict, Optional[str]], bool]], reqs: list[str], metadata: Optional[dict] = None
+    repo: str,
+    requirements: list[Callable[[dict, Optional[str]], bool]],
+    reqs: list[str],
+    metadata: Optional[dict] = None,
 ) -> bool:
     """Checks if Github repository meets requirements
 
@@ -136,7 +145,32 @@ def check_requirements(
                 f"Error with req {requirements[i].__name__} with requirement {reqs[i]}"
             )
             return False
+
+    # Save metadata to file to avoid repeat queries for repos that pass checks
+    for key, value in data.items():
+        if not os.path.exists(f"./data/repo_metadata/{key}.json"):
+            f = open(f"./data/repo_metadata/{key}.json", "x")
+            f.close()
+
+        with open(f"./data/repo_metadata/{key}.json", "r") as f:
+            try:
+                dic = json.load(f)
+            except ValueError:
+                dic = {}
+        dic[repo] = value
+        with open(f"./data/repo_metadata/{key}.json", "w") as f:
+            f.write(json.dumps(dic))
+
     return True
+
+
+# Map elements of checks_list to callables
+check_map = {
+    "stars": req_enough_stars,
+    "latest commit": req_latest_commit,
+    "language": req_language,
+    "fuzzers": req_fuzzers,
+}
 
 
 # Pass checks_list and reqs with this : --checks_list='<list>' --reqs='<list>'
@@ -154,13 +188,6 @@ def main(
     except:
         repo_id_list = [repo_id_list]
 
-    # Map elements of checks_list to callables
-    check_map = {
-        "stars": req_enough_stars,
-        "latest commit": req_latest_commit,
-        "language": req_language,
-        "fuzzers": req_fuzzers,
-    }
     checks = [check_map[check] for check in checks_list]
 
     for repo in repo_id_list:

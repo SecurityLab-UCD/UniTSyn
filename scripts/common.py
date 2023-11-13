@@ -7,6 +7,34 @@ https://github.com/EvanLi/Github-Ranking/blob/master/source/
 """
 
 
+def check_metadata_decorator(func):
+    """Decorator function to check metadata keys and value types returned by Github GraphQL API"""
+
+    def check_metadata(*args, **kwargs):
+        required_keys = [
+            ("id", str),
+            ("owner", dict),
+            ("name", str),
+            ("url", str),
+            ("isArchived", bool),
+            ("primaryLanguage", dict),
+            ("pushedAt", str),
+            ("stargazerCount", int),
+            ("object", dict),
+        ]
+        improper_fields = []
+        for key, t in required_keys:
+            if not (key in args[0] and type(args[0][key]) is t):
+                improper_fields.append(key)
+
+        if len(improper_fields) > 0:
+            print(f"Metadata JSON does not contain the proper keys: {improper_fields}")
+            return False
+        return func(*args, **kwargs)
+
+    return check_metadata
+
+
 def get_access_token():
     with open("./oauth", "r") as f:
         access_token = f.read().strip()

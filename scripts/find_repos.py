@@ -9,14 +9,16 @@ https://docs.github.com/en/search-github/github-code-search/understanding-github
 For path querying specifically:
 https://docs.github.com/en/search-github/github-code-search/understanding-github-code-search-syntax#path-qualifier
 """
+from collections import OrderedDict
 import fire
 import os
 import sys
-import check_repo_stats
-from collections import OrderedDict
+
+from check_repo_stats import check_requirements, check_map
 from common import get_graphql_data
 
-def find_repos(language: str, requirements: list[callable], reqs: list[str]) -> None:
+
+def find_repos(language: str, requirements: list[callable], reqs: list[str]) -> int:
     """Searches for new repos based on query parameters and checks if they fit the requirements given while resources are available
 
     Args:
@@ -24,6 +26,9 @@ def find_repos(language: str, requirements: list[callable], reqs: list[str]) -> 
         requirements (list[callable]): List of requirement callables that check if repo meets requirement
         reqs (list[str]): List of values to check against for each callable
             - each req will be called with the callable of the same index in requirements
+
+    Returns:
+        int: number of remaining queries
     """
 
     gql_format = """
@@ -74,7 +79,7 @@ def find_repos(language: str, requirements: list[callable], reqs: list[str]) -> 
     with open(f"./data/repo_cursors/{language.lower()}_cursor.txt", "r") as f:
         cursor = f.read().strip()
 
-    bulk_size = 100 # How many repos to get at a time
+    bulk_size = 100  # How many repos to get at a time
     stars = 10  # Assuming stars is always a requirement to refine search results
     search_query: str = f"language:{language} stars:>={stars} sort:stars"
     # Set cursor if it exists
@@ -94,9 +99,7 @@ def find_repos(language: str, requirements: list[callable], reqs: list[str]) -> 
     for repo in repos["data"]["search"]["edges"]:
         repo_data = repo["node"]
         repo_name = f"{repo_data['owner']['login']}/{repo_data['name']}"
-        if check_repo_stats.check_requirements(
-            repo_name, requirements, reqs, repo_data
-        ):
+        if check_requirements(repo_name, requirements, reqs, repo_data):
             repos_to_save.append(repo_name)
 
     # Write each repo to a file
@@ -105,6 +108,8 @@ def find_repos(language: str, requirements: list[callable], reqs: list[str]) -> 
     # Update the cursor for the next execution
     with open(f"./data/repo_cursors/{language.lower()}_cursor.txt", "w") as f:
         f.write(new_cursor)
+
+    return int(repos["data"]["rateLimit"]["remaining"])
 
 
 def save_repos_to_file(language: str, repos_list: list[str]) -> None:
@@ -115,7 +120,7 @@ def save_repos_to_file(language: str, repos_list: list[str]) -> None:
         for repo_name in repos_list:
             file.write(repo_name + "\n")
         
-    # use OrderedDict to reduce repetation and keep in order
+    # use OrderedDict to reduce repetition and keep the ordering
     with open(file_path, 'r') as file:
         unique_repos = OrderedDict.fromkeys(file.read().splitlines())
 
@@ -132,17 +137,14 @@ def main(
     language: str = "Java",
     checks_list: list[str] = ["stars", "latest commit"],
     reqs: list[str] = ["10", "2020-1-1"],  # Year format should be <year>-<month>-<day>
+    num_searches: int = 1,  # How much of the rate limit to use (5000 max)
 ):
     # Set up requirement callables and reqs
-    check_map = {
-        "stars": check_repo_stats.req_enough_stars,
-        "latest commit": check_repo_stats.req_latest_commit,
-        "language": check_repo_stats.req_language,
-        "fuzzers": check_repo_stats.req_fuzzers,
-    }
     checks = [check_map[check] for check in checks_list]
 
-    find_repos(language, checks, reqs)
+    for _ in range(num_searches):
+        if find_repos(language, checks, reqs) <= 0:
+            break
 
 
 if __name__ == "__main__":
