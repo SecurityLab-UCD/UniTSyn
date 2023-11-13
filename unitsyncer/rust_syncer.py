@@ -87,7 +87,8 @@ class RustSynchronizer(Synchronizer):
             focal_name (str): name of the function
 
         Returns:
-            list[Location]: all locations of function definition with focal_name
+            list[tuple[str, Location]]: [(source_file_path, location))],
+                source_file_path is used for sorting the results
         """
         results: list[tuple[str, Location]] = []  # [(file_path, location)]
         include_name: str
