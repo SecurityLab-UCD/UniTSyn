@@ -36,7 +36,6 @@ def collect_test_files(root: str, fuzz: bool):
                     # print(p)
                     if fuzz:
                         if is_fuzz_test(p):
-                            print(p)
                             yield p
                     else:
                         if not is_fuzz_test(p):
