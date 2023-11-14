@@ -1,7 +1,7 @@
 from typing import Iterable
 from tree_sitter.binding import Node
 from frontend.parser.langauges import RUST_LANGUAGE
-from frontend.parser.ast_util import ASTUtil, ASTLoc
+from frontend.parser.ast_util import ASTUtil, ASTLoc, flatten_postorder
 from returns.maybe import Maybe, Nothing, Some
 from unitsyncer.util import replace_tabs
 
@@ -41,13 +41,17 @@ def get_first_assert(ast_util: ASTUtil, test_func: Node) -> Maybe[Node]:
     return Nothing
 
 
-def get_focal_call(ast_util: ASTUtil, test_func: Node) -> Maybe[tuple[str, ASTLoc]]:
+def get_focal_call(
+    ast_util: ASTUtil, test_func: Node, is_fuzz: bool = False
+) -> Maybe[tuple[str, ASTLoc]]:
     """Get the focal call from the given test function
 
     Heuristic:
         1. find the first assert macro
         2. expand the macro and find the first call expression in the macro
         3. if no call expression in the macro, back track to find the last call before assert
+
+        if is_fuzz but has no assert, then find the last call in the test function instead of assert
     """
 
     def expand_assert_and_get_call(assert_macro: Node) -> Maybe[tuple[str, ASTLoc]]:
@@ -70,7 +74,18 @@ def get_focal_call(ast_util: ASTUtil, test_func: Node) -> Maybe[tuple[str, ASTLo
 
         return Nothing
 
-    return get_first_assert(ast_util, test_func).bind(expand_assert_and_get_call)
+    first_assert = get_first_assert(ast_util, test_func)
+    if first_assert != Nothing:
+        return first_assert.bind(expand_assert_and_get_call)
+    else:
+        match flatten_postorder(test_func, "call_expression"):
+            case []:
+                return Nothing
+            case [call, *_]:
+                name = ast_util.get_source_from_node(call)
+                return Some((name, call.start_point))
+
+    return Nothing
 
 
 def main():
