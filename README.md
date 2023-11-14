@@ -82,5 +82,6 @@ The pipeline is as follows:
 4. testgen: substitute the input to the test template and get the test code
 
 ```bash
-python3 frontend/rust/collect_fuzz.py -j 60 --repo_id data/repo_meta/rust.txt -p all
+python3 frontend/rust/collect_fuzz.py --repo_id data/repo_meta/rust.txt -p all
+python3 frontend/rust/collect_all.py --repo_id data/repo_meta/rust.txt --repo_root data/rust_repos --fuzz True
 ```
