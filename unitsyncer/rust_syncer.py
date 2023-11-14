@@ -25,8 +25,7 @@ class RustSynchronizer(Synchronizer):
 
     def initialize(self, timeout: int = 10):
         """index all files and functions in the workdir/src"""
-        src_dir = pjoin(self.workspace_dir, "src")
-        for root, dirs, files in os.walk(src_dir):
+        for root, dirs, files in os.walk(self.workspace_dir):
             for file in files:
                 if file.endswith(".rs"):
                     file_path = pjoin(root, file)
