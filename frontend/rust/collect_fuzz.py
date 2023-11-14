@@ -47,7 +47,7 @@ def fuzz_one_target(target: tuple[str, str], timeout):
         )
 
 
-def fuzz_repos(repos: list[str], jobs: int, timeout: int = 60):
+def build(repos: list[str], jobs: int):
     logging.info(f"Initializing fuzzing targets in {len(repos)} repos")
     parallel_subprocess(
         repos,
@@ -61,7 +61,7 @@ def fuzz_repos(repos: list[str], jobs: int, timeout: int = 60):
         on_exit=None,
     )
     logging.info(f"Building fuzzing targets in {len(repos)} repos")
-    parallel_subprocess(
+    _ = parallel_subprocess(
         repos,
         jobs,
         lambda path: subprocess.Popen(
@@ -73,6 +73,8 @@ def fuzz_repos(repos: list[str], jobs: int, timeout: int = 60):
         on_exit=None,
     )
 
+
+def fuzz_repos(repos: list[str], jobs: int, timeout: int = 60):
     logging.info("Collecting all fuzz targets")
 
     target_map = parallel_subprocess(
@@ -113,15 +115,18 @@ def substitute_one_repo(repo: str, targets: list[str]):
 
         # format template befor loading
         template_path = pjoin(template_dir, t + ".rs")
-        subprocess.run(["rustfmt", str(template_path)], check=True)
-        with open(template_path) as f_template:
-            template = f_template.read()
-        with open(pjoin(input_dir, t), "r") as f_input:
-            inputs = [i for i in f_input.read().splitlines() if i != "[]"]
+        try:
+            subprocess.run(["rustfmt", str(template_path)])
+            with open(template_path) as f_template:
+                template = f_template.read()
+            with open(pjoin(input_dir, t), "r") as f_input:
+                inputs = [i for i in f_input.read().splitlines() if i != "[]"]
 
-        tests = [substitute_input(template, input_data) for input_data in inputs]
-        with open(pjoin(template_dir, f"{t}.inputs.rs"), "w") as f_template:
-            f_template.write("\n".join(tests))
+            tests = [substitute_input(template, input_data) for input_data in inputs]
+            with open(pjoin(template_dir, f"{t}.inputs.rs"), "w") as f_template:
+                f_template.write("\n".join(tests))
+        except FileNotFoundError:
+            logging.debug(f"Template {template_path} not found")
 
 
 def testgen_repos(repos: list[str], jobs: int, num_gen: Optional[int] = None):
@@ -148,7 +153,7 @@ def testgen_repos(repos: list[str], jobs: int, num_gen: Optional[int] = None):
 
 
 def main(
-    repo_id: str = "marshallpierce/rust-base64",
+    repo_id: str = "image-rs/image-png",
     repo_root: str = "data/rust_repos/",
     timeout: int = 60,
     jobs: int = CORES,
@@ -190,9 +195,16 @@ def main(
     match pipeline:
         case "transform":
             transform_repos(repos, jobs)
+        case "build":
+            build(repos, jobs)
         case "fuzz":
             fuzz_repos(repos, jobs, timeout=timeout)
         case "testgen":
+            testgen_repos(repos, jobs, limits)
+        case "all":
+            transform_repos(repos, jobs)
+            build(repos, jobs)
+            fuzz_repos(repos, jobs, timeout=timeout)
             testgen_repos(repos, jobs, limits)
         case _:
             logging.error(f"Unknown pipeline {pipeline}")
