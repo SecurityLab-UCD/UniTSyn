@@ -78,6 +78,8 @@ def get_focal_call(
     if first_assert != Nothing:
         return first_assert.bind(expand_assert_and_get_call)
     else:
+        if not is_fuzz:
+            return Nothing
         match flatten_postorder(test_func, "call_expression"):
             case []:
                 return Nothing

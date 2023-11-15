@@ -33,7 +33,6 @@ def collect_test_files(root: str, fuzz: bool):
         for filename in filenames:
             if filename.endswith(".rs"):
                 if has_test(p := os.path.join(dirpath, filename)):
-                    # print(p)
                     if fuzz:
                         if is_fuzz_test(p):
                             yield p
@@ -89,8 +88,6 @@ def collect_from_repo(
         return 3, 0, 0
     # collect potential testing modules
     all_files = collect_test_files(repo_path, fuzz)
-    all_files = list(all_files)
-    print(len(all_files))
     tests = {}
     for f in all_files:
         funcs = collect_test_n_focal(f, is_fuzz=fuzz)
