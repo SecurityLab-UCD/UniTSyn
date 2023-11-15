@@ -5,7 +5,7 @@ import os
 from returns.maybe import Maybe, Nothing, Some
 from returns.result import Result, Success, Failure
 from frontend.parser.ast_util import ASTLoc, ASTUtil
-from frontend.parser.langauges import RUST_LANGUAGE
+from frontend.parser.languages import RUST_LANGUAGE
 from tree_sitter import Language, Parser, Tree
 from tree_sitter.binding import Node
 from pylspclient.lsp_structs import Location, LANGUAGE_IDENTIFIER, Range, Position

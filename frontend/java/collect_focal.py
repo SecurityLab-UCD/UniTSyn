@@ -2,7 +2,7 @@ from typing import Optional
 import fire
 import re
 from tree_sitter.binding import Node
-from frontend.parser.langauges import JAVA_LANGUAGE
+from frontend.parser.languages import JAVA_LANGUAGE
 from frontend.parser.ast_util import ASTUtil, ASTLoc, flatten_postorder
 from returns.maybe import Maybe, Nothing, Some, maybe
 

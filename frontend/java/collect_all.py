@@ -2,7 +2,7 @@ from typing import Iterable
 import fire
 import os
 from tree_sitter.binding import Node
-from frontend.parser.langauges import JAVA_LANGUAGE
+from frontend.parser.languages import JAVA_LANGUAGE
 from frontend.parser.ast_util import ASTUtil
 from returns.maybe import Maybe, Nothing, Some
 from frontend.java.collect_focal import get_focal_call

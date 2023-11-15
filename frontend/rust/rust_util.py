@@ -1,6 +1,6 @@
 from typing import Iterable
 from tree_sitter.binding import Node
-from frontend.parser.langauges import RUST_LANGUAGE
+from frontend.parser.languages import RUST_LANGUAGE
 from frontend.parser.ast_util import ASTUtil, ASTLoc, flatten_postorder
 from returns.maybe import Maybe, Nothing, Some
 from unitsyncer.util import replace_tabs
