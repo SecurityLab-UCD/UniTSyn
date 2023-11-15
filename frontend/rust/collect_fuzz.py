@@ -48,18 +48,6 @@ def fuzz_one_target(target: tuple[str, str], timeout):
 
 
 def build(repos: list[str], jobs: int):
-    logging.info(f"Initializing fuzzing targets in {len(repos)} repos")
-    parallel_subprocess(
-        repos,
-        jobs,
-        lambda path: subprocess.Popen(
-            ["cargo", "fuzz", "init"],
-            cwd=path,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        ),
-        on_exit=None,
-    )
     logging.info(f"Building fuzzing targets in {len(repos)} repos")
     _ = parallel_subprocess(
         repos,
