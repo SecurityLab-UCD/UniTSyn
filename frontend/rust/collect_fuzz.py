@@ -4,7 +4,7 @@ import fire
 import os
 from frontend.util import wrap_repo, parallel_subprocess
 import subprocess
-from os.path import join as pjoin, basename, splitext as psplitext, abspath
+from os.path import join as pjoin, abspath
 from tqdm import tqdm
 from unitsyncer.common import CORES
 from pathos.multiprocessing import ProcessingPool
@@ -86,14 +86,9 @@ def fuzz_repos(repos: list[str], jobs: int, timeout: int = 60):
 
 
 def substitute_input(template: str, input_data: str, idx: int) -> str:
-    lines = template.splitlines()
-    for i in range(len(lines)):
-        line = lines[i].strip()
-        if "let data = []" in line:
-            lines[i] = lines[i].replace("let data = []", f"let data = {input_data}")
-        if "fn test_something()" in line:
-            lines[i] = lines[i].replace("fn test_something()", f"fn test_{idx}()")
-    return "\n".join(lines)
+    return template.replace(
+        '[] ; # [doc = "This is a test template"]', f"{input_data} ; "
+    ).replace("fn test_something ()", f"fn test_{idx} ()")
 
 
 def substitute_one_repo(repo: str, targets: list[str], n_fuzz):
@@ -103,10 +98,9 @@ def substitute_one_repo(repo: str, targets: list[str], n_fuzz):
         if t == "":
             continue
 
-        # format template befor loading
+        # format template before loading
         template_path = pjoin(template_dir, t + ".rs")
         try:
-            subprocess.run(["rustfmt", str(template_path)])
             with open(template_path) as f_template:
                 template = f_template.read()
             with open(pjoin(input_dir, t), "r") as f_input:
@@ -116,8 +110,12 @@ def substitute_one_repo(repo: str, targets: list[str], n_fuzz):
                 substitute_input(template, input_data, i)
                 for i, input_data in enumerate(inputs)
             ]
-            with open(pjoin(template_dir, f"{t}.inputs.rs"), "w") as f_template:
+            generated_test_path = pjoin(template_dir, f"{t}.inputs.rs")
+            with open(generated_test_path, "w") as f_template:
                 f_template.write("\n".join(tests))
+
+            # format generated tests
+            subprocess.run(["rustfmt", str(generated_test_path)])
         except FileNotFoundError:
             logging.debug(f"Template {template_path} not found")
 
@@ -139,8 +137,7 @@ def testgen_repos(repos: list[str], jobs: int, n_fuzz: int = 100):
         on_exit=get_target_list,
         use_tqdm=False,
     )
-    logging.info(f"Substitute fuzz data to test templates")
-    # for repo, targets in tqdm(target_map.items()):
+    logging.info("Substitute fuzz data to test templates")
     with ProcessingPool(jobs) as p:
         _ = list(
             tqdm(
@@ -174,7 +171,7 @@ def main(
     """
     try:
         repo_id_list = [
-            ll for l in open(repo_id, "r").readlines() if len(ll := l.strip()) > 0
+            ll for line in open(repo_id, "r").readlines() if len(ll := line.strip()) > 0
         ]
     except:
         repo_id_list = [repo_id]
@@ -182,7 +179,7 @@ def main(
         repo_id_list = repo_id_list[:limits]
     logging.info(f"Loaded {len(repo_id_list)} repos to be processed")
 
-    logging.info(f"Collecting all rust repos")
+    logging.info("Collecting all rust repos")
     repos = []
     for repo_id in repo_id_list:
         repo_path = os.path.join(repo_root, wrap_repo(repo_id))
