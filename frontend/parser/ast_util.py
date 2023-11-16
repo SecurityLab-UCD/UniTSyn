@@ -104,6 +104,9 @@ def flatten_postorder(
         list[Node]: flattened tree
     """
     nodes = []
+    if max_level == 0:
+        return nodes
+
     for child in root.children:
         nodes += flatten_postorder(child, node_type, max_level - 1)
 
