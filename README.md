@@ -71,3 +71,17 @@ python3 scripts/find_repos.py --language='Rust' --checks_list='["stars", "latest
 python3 scripts/find_repos.py --language='Python' --checks_list='["stars", "latest commit", "language"]' --reqs='["10", "2020-1-1", "Python"]' --num_searches='1'
 ```
 Cursors representing where the search left off are saved to `data/repo_cursors/<language>_cursor.txt`. `find_repos.py` will automatically use and update this cursor to avoid mining duplicate repos.
+
+## Collecting Rust Fuzzing Data
+
+`frontend/rust/collect_fuzz.py` is used to collect fuzzing data from the Rust fuzzing corpus.
+The pipeline is as follows:
+1. transform: transform the `fuzz_target!` to print the input to stdout and get test template,
+2. build: build the fuzzing target in each repo, `cargo fuzz build`
+3. fuzz: fuzz the target in each repo, `cargo fuzz run <target>`
+4. testgen: substitute the input to the test template and get the test code
+
+```bash
+python3 frontend/rust/collect_fuzz.py --repo_id data/repo_meta/rust.txt -p all
+python3 frontend/rust/collect_all.py --repo_id data/repo_meta/rust.txt --repo_root data/rust_repos --fuzz True
+```

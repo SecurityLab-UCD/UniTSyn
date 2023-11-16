@@ -5,7 +5,7 @@ import os
 from returns.maybe import Maybe, Nothing, Some
 from returns.result import Result, Success, Failure
 from frontend.parser.ast_util import ASTLoc, ASTUtil
-from frontend.parser.langauges import RUST_LANGUAGE
+from frontend.parser import RUST_LANGUAGE
 from tree_sitter import Language, Parser, Tree
 from tree_sitter.binding import Node
 from pylspclient.lsp_structs import Location, LANGUAGE_IDENTIFIER, Range, Position
@@ -25,8 +25,7 @@ class RustSynchronizer(Synchronizer):
 
     def initialize(self, timeout: int = 10):
         """index all files and functions in the workdir/src"""
-        src_dir = pjoin(self.workspace_dir, "src")
-        for root, dirs, files in os.walk(src_dir):
+        for root, dirs, files in os.walk(self.workspace_dir):
             for file in files:
                 if file.endswith(".rs"):
                     file_path = pjoin(root, file)

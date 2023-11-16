@@ -2,7 +2,7 @@ from typing import Iterable
 import fire
 import os
 from tree_sitter.binding import Node
-from frontend.parser.langauges import RUST_LANGUAGE
+from frontend.parser import RUST_LANGUAGE
 from frontend.parser.ast_util import ASTUtil
 from frontend.rust.rust_util import get_test_functions, get_focal_call
 from unitsyncer.util import replace_tabs
@@ -17,7 +17,11 @@ def has_test(file_path):
     return "#[test]" in code
 
 
-def collect_test_files(root: str):
+def is_fuzz_test(filepath):
+    return "tests-gen" in filepath and ".inputs.rs" in filepath
+
+
+def collect_test_files(root: str, fuzz: bool):
     """Get all files end with .java in the given root directory
 
     Args:
@@ -29,7 +33,12 @@ def collect_test_files(root: str):
         for filename in filenames:
             if filename.endswith(".rs"):
                 if has_test(p := os.path.join(dirpath, filename)):
-                    yield p
+                    if fuzz:
+                        if is_fuzz_test(p):
+                            yield p
+                    else:
+                        if not is_fuzz_test(p):
+                            yield p
 
 
 def collect_test_funcs(ast_util: ASTUtil) -> Iterable[Node]:
@@ -41,13 +50,15 @@ def collect_test_funcs(ast_util: ASTUtil) -> Iterable[Node]:
     return get_test_functions(ast_util, root_node)
 
 
-def collect_test_n_focal(file_path: str):
+def collect_test_n_focal(file_path: str, is_fuzz: bool = False):
     with open(file_path, "r", errors="replace") as f:
         ast_util = ASTUtil(replace_tabs(f.read()))
 
     def get_focal_for_test(test_func: Node):
         test_name = ast_util.get_name(test_func).value_or(None)
-        focal, focal_loc = get_focal_call(ast_util, test_func).value_or((None, None))
+        focal, focal_loc = get_focal_call(ast_util, test_func, is_fuzz).value_or(
+            (None, None)
+        )
         return {
             "test_id": test_name,
             "test_loc": test_func.start_point,
@@ -60,7 +71,9 @@ def collect_test_n_focal(file_path: str):
 
 
 @run_with_timeout
-def collect_from_repo(repo_id: str, repo_root: str, test_root: str, focal_root: str):
+def collect_from_repo(
+    repo_id: str, repo_root: str, test_root: str, focal_root: str, fuzz: bool
+):
     """collect all test functions in the given project
     return (status, nfile, ntest)
     status can be 0: success, 1: repo not found, 2: test not found, 3: skip when output file existed
@@ -74,10 +87,10 @@ def collect_from_repo(repo_id: str, repo_root: str, test_root: str, focal_root: 
     if os.path.exists(focal_path):
         return 3, 0, 0
     # collect potential testing modules
-    all_files = collect_test_files(repo_path)
+    all_files = collect_test_files(repo_path, fuzz)
     tests = {}
     for f in all_files:
-        funcs = collect_test_n_focal(f)
+        funcs = collect_test_n_focal(f, is_fuzz=fuzz)
         tests[f] = funcs
     if len(tests.keys()) == 0:
         return 2, 0, sum(len(list(v)) for v in tests.values())
@@ -87,6 +100,8 @@ def collect_from_repo(repo_id: str, repo_root: str, test_root: str, focal_root: 
     with open(focal_path, "w") as outfile:
         for k in tests.keys():
             for d in tests[k]:
+                if d is None:
+                    continue
                 test_id = f"{k.removeprefix(repo_root)}::{d['test_id']}"
                 d["test_id"] = test_id[1:] if test_id[0] == "/" else test_id
                 if d["focal_loc"] is None:
@@ -98,13 +113,14 @@ def collect_from_repo(repo_id: str, repo_root: str, test_root: str, focal_root: 
 
 
 def main(
-    repo_id: str = "marshallpierce/rust-base64",
+    repo_id: str = "astral-sh/ruff",
     repo_root: str = "data/repos/",
     test_root: str = "data/tests/",
     focal_root: str = "data/focal/",
     timeout: int = 120,
     nprocs: int = 0,
     limits: int = -1,
+    fuzz: bool = True,
 ):
     try:
         repo_id_list = [l.strip() for l in open(repo_id, "r").readlines()]
@@ -123,6 +139,7 @@ def main(
         repo_root=repo_root,
         test_root=test_root,
         focal_root=focal_root,
+        fuzz=fuzz,
     )
 
     filtered_results = [i for i in status_ntest_nfocal if i is not None]
