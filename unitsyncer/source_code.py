@@ -3,7 +3,7 @@ from pylspclient.lsp_structs import Location, LANGUAGE_IDENTIFIER
 from unitsyncer.util import replace_tabs, uri2path
 from returns.maybe import Maybe, Nothing, Some
 from frontend.parser.ast_util import ASTUtil
-from frontend.parser.languages import JAVA_LANGUAGE, JAVASCRIPT_LANGUAGE, RUST_LANGUAGE
+from frontend.parser import JAVA_LANGUAGE, JAVASCRIPT_LANGUAGE, RUST_LANGUAGE
 from tree_sitter.binding import Node
 from frontend.parser.ast_util import remove_leading_spaces
 
