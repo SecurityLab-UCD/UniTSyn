@@ -14,7 +14,7 @@ for filename in os.listdir(folder_path):
 
         with jsonlines.open(file_path) as reader:
             for obj in reader:
-                # 处理每个 JSON 对象
+                # process every JSON object
                 source_code = obj.get('test','')
                 if source_code:
                     source_codes.append(source_code)
