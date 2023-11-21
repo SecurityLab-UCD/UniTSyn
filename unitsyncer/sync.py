@@ -41,6 +41,8 @@ def get_lsp_cmd(language: str) -> Optional[list[str]]:
             return ["typescript-language-server", "--stdio"]
         case LANGUAGE_IDENTIFIER.RUST:
             return ["rust-analyzer"]
+        case LANGUAGE_IDENTIFIER.GO:
+            return ["gopls"]
         case _:
             return None
 
