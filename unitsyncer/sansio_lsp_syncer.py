@@ -10,7 +10,8 @@ import os
 from returns.result import Result, Success, Failure
 from returns.converters import maybe_to_result
 import logging
-from unitsyncer.util import path2uri, replace_tabs
+from unitsyncer.util import path2uri, replace_tabs, uri2path
+from unitsyncer.source_code import get_function_code
 
 import sansio_lsp_client as lsp
 
@@ -133,9 +134,6 @@ class ThreadedServer:
 
         elif isinstance(msg, lsp.WorkspaceFolders):
             msg.reply([lsp.WorkspaceFolder(uri=self.root_uri, name="Root")])
-
-    #        else:
-    #            print(f"Can't autoreply: {type(msg)}")
 
     def wait_for_message_of_type(self, type_, timeout=60):
         end_time = time.monotonic() + timeout
@@ -270,14 +268,46 @@ class SansioLSPSynchronizer(Synchronizer):
     ) -> Result[tuple[str, str | None, str | None], str]:
         file_uri = self.open_file(file_path)
         pos = lsp.Position(line=line, character=col)
-        defn_response = self.lsp_server.do_method(
-            "",
-            file_uri,
-            METHOD_DEFINITION,
-            pos,
+        try:
+            defn_response = self.lsp_server.do_method(
+                focal_name,
+                file_uri,
+                METHOD_DEFINITION,
+                pos,
+            )
+        except Exception as e:
+            return Failure("GoDef Request Failed")
+
+        logging.debug(defn_response)
+
+        def_location: lsp.Location
+        match defn_response.result:
+            case []:
+                return Failure("No definition found")
+            case [fst, *_]:
+                def_location = fst
+            case _:
+                return Failure(
+                    f"Unexpected response from LSP server: {str(defn_response)}"
+                )
+
+        file_path = uri2path(def_location.uri).value_or(str(def_location.uri))
+        logging.debug(file_path)
+
+        # check if file path is relative to workspace root
+        if not file_path.startswith(str(self.workspace_dir)):
+            return Failure(f"Source code not in workspace: {file_path}")
+
+        def not_found_error(_):
+            lineno = def_location.range.start.line
+            col_offset = def_location.range.start.character
+            return f"Source code not found: {file_path}:{lineno}:{col_offset}"
+
+        return (
+            maybe_to_result(get_function_code(def_location, self.langID))
+            .alt(not_found_error)
+            .bind(lambda t: Failure("Empty Source Code") if t[0] == "" else Success(t))
         )
-        print(defn_response)
-        return Failure("aaa")
 
     def stop(self):
         pass
@@ -291,7 +321,10 @@ def main():
     sync.initialize()
 
     test_file = os.path.join(workspace_dir, "zfs_test.go")
-    sync.get_source_of_call("aa", test_file, 21, 28)
+    func_GetData = (19, 20)
+    func_GetProperty = (34, 20)
+    print(sync.get_source_of_call("GetData", test_file, *func_GetData))
+    print(sync.get_source_of_call("GetProperty", test_file, *func_GetProperty))
     sync.stop()
 
 
