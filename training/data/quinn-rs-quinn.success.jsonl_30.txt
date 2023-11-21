@@ -1,0 +1,28 @@
+pub fn accept(&self) -> Accept<'_> {
+        Accept {
+            endpoint: self,
+            notify: self.inner.shared.incoming.notified(),
+        }
+    }
+fn stop_during_finish() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let (client_ch, server_ch) = pair.connect();
+
+    let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    const MSG: &[u8] = b"hello";
+    pair.client_send(client_ch, s).write(MSG).unwrap();
+    pair.drive();
+
+    assert_matches!(pair.server_streams(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
+    info!("stopping and finishing stream");
+    const ERROR: VarInt = VarInt(42);
+    pair.server_recv(server_ch, s).stop(ERROR).unwrap();
+    pair.drive_server();
+    pair.client_send(client_ch, s).finish().unwrap();
+    pair.drive_client();
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::Stream(StreamEvent::Stopped { id, error_code: ERROR })) if id == s
+    );
+}

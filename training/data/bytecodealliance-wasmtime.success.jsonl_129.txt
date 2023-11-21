@@ -1,0 +1,41 @@
+pub fn to_string(&self) -> String {
+        format!("label{}", self.0)
+    }
+fn active_borrows_at_end_of_call() -> Result<()> {
+    let engine = super::engine();
+    let c = Component::new(
+        &engine,
+        r#"
+            (component
+                (import "t" (type $t (sub resource)))
+
+                (core module $m
+                    (func (export "f") (param i32))
+                )
+                (core instance $i (instantiate $m))
+
+                (func (export "f") (param "x" (borrow $t))
+                    (canon lift (core func $i "f")))
+            )
+        "#,
+    )?;
+
+    struct MyType;
+
+    let mut store = Store::new(&engine, ());
+    let mut linker = Linker::new(&engine);
+    linker.root().resource::<MyType>("t", |_, _| Ok(()))?;
+    let i = linker.instantiate(&mut store, &c)?;
+
+    let f = i.get_typed_func::<(&Resource<MyType>,), ()>(&mut store, "f")?;
+
+    let resource = Resource::new_own(1);
+    f.call(&mut store, (&resource,))?;
+    let err = f.post_return(&mut store).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "borrow handles still remain at the end of the call",
+    );
+
+    Ok(())
+}

@@ -1,0 +1,21 @@
+pub fn call(&self, mut ctx: impl AsContextMut, params: Params) -> Result<Results, Trap> {
+        // Note: Cloning an [`Engine`] is intentionally a cheap operation.
+        ctx.as_context().store.engine().clone().execute_func(
+            ctx.as_context_mut(),
+            &self.func,
+            params,
+            <CallResultsTuple<Results>>::default(),
+        )
+    }
+fn static_duplicate_works() {
+    let (mut store, duplicate, duplicate_dyn) = setup_duplicate();
+    let duplicate = duplicate.typed::<i32, (i32, i32)>(&mut store).unwrap();
+    let duplicate_dyn = duplicate_dyn.typed::<i32, (i32, i32)>(&mut store).unwrap();
+    for input in 0..10 {
+        assert_eq!(duplicate.call(&mut store, input).unwrap(), (input, input));
+        assert_eq!(
+            duplicate_dyn.call(&mut store, input).unwrap(),
+            (input, input)
+        );
+    }
+}

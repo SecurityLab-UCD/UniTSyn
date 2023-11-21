@@ -1,0 +1,13 @@
+fn nothing(i: &[u8]) -> IResult<&[u8], &[u8]> {
+    take_till(|_| true)(i)
+  }
+fn take_till_issue() {
+  use nom::bytes::streaming::take_till;
+
+  fn nothing(i: &[u8]) -> IResult<&[u8], &[u8]> {
+    take_till(|_| true)(i)
+  }
+
+  assert_eq!(nothing(b""), Err(Err::Incomplete(Needed::new(1))));
+  assert_eq!(nothing(b"abc"), Ok((&b"abc"[..], &b""[..])));
+}

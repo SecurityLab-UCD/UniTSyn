@@ -1,0 +1,15 @@
+pub fn raw(input: &str, json: &Value) -> Result<Value, JqlRunnerError> {
+    if input.is_empty() {
+        return Err(JqlRunnerError::EmptyQueryError);
+    }
+
+    let tokens = parse(input)?;
+
+    token(&tokens, json)
+}
+fn check_raw_integration() {
+    assert_eq!(
+        raw(r#""a","b""#, &json!({ "a": 1, "b": 2 })),
+        Ok(json!([1, 2]))
+    );
+}

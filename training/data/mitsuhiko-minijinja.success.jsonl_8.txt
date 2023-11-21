@@ -1,0 +1,23 @@
+pub fn render<S: Serialize>(&self, ctx: S) -> Result<String, Error> {
+        // reduce total amount of code faling under mono morphization into
+        // this function, and share the rest in _render.
+        self._render(Value::from_serializable(&ctx)).map(|x| x.0)
+    }
+fn test_dynamic() {
+    let mut env = Environment::new();
+    let template = String::from("Hello World 2!");
+    env.add_template_owned("hello2", template).unwrap();
+    env.set_loader(|name| match name {
+        "hello" => Ok(Some("Hello World!".into())),
+        _ => Ok(None),
+    });
+    let t = env.get_template("hello").unwrap();
+    assert_eq!(t.render(()).unwrap(), "Hello World!");
+    let t = env.get_template("hello2").unwrap();
+    assert_eq!(t.render(()).unwrap(), "Hello World 2!");
+    let err = env.get_template("missing").unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "template not found: template \"missing\" does not exist"
+    );
+}

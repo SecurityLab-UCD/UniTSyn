@@ -1,0 +1,77 @@
+pub fn response_code(&self) -> ResponseCode {
+        self.response_code
+    }
+fn test_delete_by_rdata_multi() {
+    let io_loop = Runtime::new().unwrap();
+    let ((mut client, bg), origin) = io_loop.block_on(create_sig0_ready_client());
+    hickory_proto::spawn_bg(&io_loop, bg);
+
+    // append a record
+    let mut rrset = RecordSet::with_ttl(
+        Name::from_str("new.example.com").unwrap(),
+        RecordType::A,
+        Duration::minutes(5).whole_seconds() as u32,
+    );
+
+    let record1 = rrset
+        .new_record(&RData::A(A::new(100, 10, 100, 10)))
+        .clone();
+    let record2 = rrset
+        .new_record(&RData::A(A::new(100, 10, 100, 11)))
+        .clone();
+    let record3 = rrset
+        .new_record(&RData::A(A::new(100, 10, 100, 12)))
+        .clone();
+    let record4 = rrset
+        .new_record(&RData::A(A::new(100, 10, 100, 13)))
+        .clone();
+    let rrset = rrset;
+
+    // first check the must_exist option
+    let result = io_loop
+        .block_on(client.delete_by_rdata(rrset.clone(), origin.clone()))
+        .expect("delete failed");
+    assert_eq!(result.response_code(), ResponseCode::NoError);
+
+    // next create to a non-existent RRset
+    let result = io_loop
+        .block_on(client.create(rrset, origin.clone()))
+        .expect("create failed");
+    assert_eq!(result.response_code(), ResponseCode::NoError);
+
+    // append a record
+    let mut rrset = RecordSet::with_ttl(
+        Name::from_str("new.example.com").unwrap(),
+        RecordType::A,
+        Duration::minutes(5).whole_seconds() as u32,
+    );
+
+    let record1 = rrset.new_record(record1.data().unwrap()).clone();
+    let record3 = rrset.new_record(record3.data().unwrap()).clone();
+    let rrset = rrset;
+
+    let result = io_loop
+        .block_on(client.append(rrset.clone(), origin.clone(), true))
+        .expect("create failed");
+    assert_eq!(result.response_code(), ResponseCode::NoError);
+
+    // verify record contents
+    let result = io_loop
+        .block_on(client.delete_by_rdata(rrset, origin))
+        .expect("delete failed");
+    assert_eq!(result.response_code(), ResponseCode::NoError);
+
+    let result = io_loop
+        .block_on(client.query(
+            record1.name().clone(),
+            record1.dns_class(),
+            record1.record_type(),
+        ))
+        .expect("query failed");
+    assert_eq!(result.response_code(), ResponseCode::NoError);
+    assert_eq!(result.answers().len(), 2);
+    assert!(!result.answers().iter().any(|rr| *rr == record1));
+    assert!(result.answers().iter().any(|rr| *rr == record2));
+    assert!(!result.answers().iter().any(|rr| *rr == record3));
+    assert!(result.answers().iter().any(|rr| *rr == record4));
+}

@@ -1,0 +1,34 @@
+pub fn len(&self) -> usize {
+    self.len as usize
+  }
+fn ArrayVec_push_pop() {
+  let mut av: ArrayVec<[i32; 4]> = Default::default();
+  assert_eq!(av.len(), 0);
+  assert_eq!(av.pop(), None);
+
+  av.push(10_i32);
+  assert_eq!(av.len(), 1);
+  assert_eq!(av[0], 10);
+  assert_eq!(av.pop(), Some(10));
+  assert_eq!(av.len(), 0);
+  assert_eq!(av.pop(), None);
+
+  av.push(10);
+  av.push(11);
+  av.push(12);
+  av.push(13);
+  assert_eq!(av[0], 10);
+  assert_eq!(av[1], 11);
+  assert_eq!(av[2], 12);
+  assert_eq!(av[3], 13);
+  assert_eq!(av.len(), 4);
+  assert_eq!(av.pop(), Some(13));
+  assert_eq!(av.len(), 3);
+  assert_eq!(av.pop(), Some(12));
+  assert_eq!(av.len(), 2);
+  assert_eq!(av.pop(), Some(11));
+  assert_eq!(av.len(), 1);
+  assert_eq!(av.pop(), Some(10));
+  assert_eq!(av.len(), 0);
+  assert_eq!(av.pop(), None);
+}

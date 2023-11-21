@@ -1,0 +1,44 @@
+pub(super) fn expect<K>(
+        &mut self,
+        kind: K,
+        context: &'static str,
+        interner: &mut Interner,
+    ) -> ParseResult<Token>
+    where
+        K: Into<TokenKind>,
+    {
+        let next_token = self.next(interner).or_abrupt()?;
+        let kind = kind.into();
+
+        if next_token.kind() == &kind {
+            Ok(next_token)
+        } else {
+            Err(Error::expected(
+                [kind.to_string(interner)],
+                next_token.to_string(interner),
+                next_token.span(),
+                context,
+            ))
+        }
+    }
+fn eph_weak_gc_test() {
+    run_test(|| {
+        let gc_value = Gc::new(3);
+
+        {
+            let cloned_gc = gc_value.clone();
+
+            let weak = WeakGc::new(&cloned_gc);
+
+            assert_eq!(*weak.upgrade().expect("Is live currently"), 3);
+            drop(cloned_gc);
+            force_collect();
+            assert_eq!(*weak.upgrade().expect("WeakGc is still live here"), 3);
+
+            drop(gc_value);
+            force_collect();
+
+            assert!(weak.upgrade().is_none());
+        }
+    });
+}

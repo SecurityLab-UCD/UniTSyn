@@ -1,0 +1,50 @@
+pub(crate) fn value(&self) -> V::SelfType<'_> {
+        V::from_bytes(&self.page.memory()[self.value_range.clone()])
+    }
+fn regression8() {
+    let tmpfile = create_tempfile();
+
+    let db = Database::create(tmpfile.path()).unwrap();
+
+    let table_def: TableDefinition<u64, &[u8]> = TableDefinition::new("x");
+
+    let mut tx = db.begin_write().unwrap();
+    tx.set_durability(Durability::None);
+    {
+        let mut t = tx.open_table(table_def).unwrap();
+        let v = vec![0u8; 1186];
+        t.insert(&145227, v.as_slice()).unwrap();
+        let v = vec![0u8; 1585];
+        t.insert(&565922, v.as_slice()).unwrap();
+    }
+    tx.commit().unwrap();
+
+    let tx = db.begin_write().unwrap();
+    {
+        let mut t = tx.open_table(table_def).unwrap();
+        let v = vec![0u8; 2040];
+        t.insert(&94937, v.as_slice()).unwrap();
+        let v = vec![0u8; 2058];
+        t.insert(&130571, v.as_slice()).unwrap();
+        t.remove(&145227).unwrap();
+    }
+    tx.commit().unwrap();
+
+    let tx = db.begin_write().unwrap();
+    {
+        let mut t = tx.open_table(table_def).unwrap();
+        let v = vec![0u8; 947];
+        t.insert(&118749, v.as_slice()).unwrap();
+    }
+    tx.commit().unwrap();
+
+    let tx = db.begin_write().unwrap();
+    {
+        let t = tx.open_table(table_def).unwrap();
+        let mut iter = t.range(118749..142650).unwrap();
+        assert_eq!(iter.next().unwrap().unwrap().0.value(), 118749);
+        assert_eq!(iter.next().unwrap().unwrap().0.value(), 130571);
+        assert!(iter.next().is_none());
+    }
+    tx.commit().unwrap();
+}

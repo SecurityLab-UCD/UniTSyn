@@ -1,0 +1,33 @@
+pub(crate) fn from_u32(x: &[u32]) -> Vec<Limb> {
+    x.iter().cloned().collect()
+}
+fn imul_small_test() {
+    // No overflow check, 1-int.
+    let mut x = Bigint {
+        data: from_u32(&[5]),
+    };
+    x.imul_small(7);
+    assert_eq!(x.data, from_u32(&[35]));
+
+    // No overflow check, 2-ints.
+    let mut x = Bigint::from_u64(0x4000000040000);
+    x.imul_small(5);
+    assert_eq!(x.data, from_u32(&[0x00140000, 0x140000]));
+
+    // Overflow, 1 carry.
+    let mut x = Bigint {
+        data: from_u32(&[0x33333334]),
+    };
+    x.imul_small(5);
+    assert_eq!(x.data, from_u32(&[4, 1]));
+
+    // Overflow, 1 carry, internal.
+    let mut x = Bigint::from_u64(0x133333334);
+    x.imul_small(5);
+    assert_eq!(x.data, from_u32(&[4, 6]));
+
+    // Overflow, 2 carries.
+    let mut x = Bigint::from_u64(0x3333333333333334);
+    x.imul_small(5);
+    assert_eq!(x.data, from_u32(&[4, 0, 1]));
+}

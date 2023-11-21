@@ -1,0 +1,14 @@
+fn finish(&self) -> u64 {
+        self.inner.finish()
+    }
+fn enum_unnamed_fields_variant() {
+    let mut key = CacheKeyHasher::new();
+
+    let variant = Enum::UnnamedFields("Hello".to_string(), "World".to_string());
+    variant.cache_key(&mut key);
+
+    let mut hash = CacheKeyHasher::new();
+    variant.hash(&mut hash);
+
+    assert_eq!(hash.finish(), key.finish());
+}

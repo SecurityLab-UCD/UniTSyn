@@ -1,0 +1,16 @@
+pub fn dir_exists(&self, path: &str) -> bool {
+        match fs::metadata(self.plus(path)) {
+            Ok(m) => m.is_dir(),
+            Err(_) => false,
+        }
+    }
+fn test_symlink_dangling_directory() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let dir = "test_symlink_dangling_dir";
+    let link = "test_symlink_dangling_dir_link";
+
+    ucmd.args(&["-s", dir, link]).succeeds().no_stderr();
+    assert!(!at.dir_exists(dir));
+    assert!(at.is_symlink(link));
+    assert_eq!(at.resolve_link(link), dir);
+}

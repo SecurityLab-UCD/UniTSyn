@@ -1,0 +1,14 @@
+pub fn is_handshaking(&self) -> bool {
+        !(self.may_send_application_data && self.may_receive_application_data)
+    }
+fn buffered_client_complete_io_for_handshake() {
+    let (mut client, mut server) = make_pair(KeyType::Rsa);
+
+    assert!(client.is_handshaking());
+    let (rdlen, wrlen) = client
+        .complete_io(&mut OtherSession::new_buffered(&mut server))
+        .unwrap();
+    assert!(rdlen > 0 && wrlen > 0);
+    assert!(!client.is_handshaking());
+    assert!(!client.wants_write());
+}

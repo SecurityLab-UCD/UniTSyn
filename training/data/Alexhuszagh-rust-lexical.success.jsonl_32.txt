@@ -1,0 +1,12 @@
+pub const fn is_valid(&self) -> bool {
+        self.error().is_success()
+    }
+fn decimal_test() {
+    const FORMAT: u128 = NumberFormatBuilder::decimal();
+    let format = NumberFormat::<FORMAT> {};
+    assert!(format.is_valid());
+    assert_eq!(format.radix(), 10);
+    assert_eq!(format.mantissa_radix(), 10);
+    assert_eq!(format.exponent_base(), 10);
+    assert_eq!(format.exponent_radix(), 10);
+}

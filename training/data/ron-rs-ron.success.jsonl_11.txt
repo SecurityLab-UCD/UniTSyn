@@ -1,0 +1,7 @@
+fn read_original(source: &str) -> String {
+    source.to_string().replace("\r\n", "\n")
+}
+fn test_sequence_ex1() {
+    let file = include_str!("preserve_sequence_ex1.ron");
+    assert_eq!(read_original(file), make_roundtrip(file));
+}

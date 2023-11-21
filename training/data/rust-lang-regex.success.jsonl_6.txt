@@ -1,0 +1,12 @@
+pub fn is_err(&self) -> bool {
+        match self.kind {
+            ErrorKind::None => false,
+            ErrorKind::Str(_) | ErrorKind::Regex(_) => true,
+        }
+    }
+fn invalid_regexes_no_crash() {
+    assert!(regex_new!("(*)").is_err());
+    assert!(regex_new!("(?:?)").is_err());
+    assert!(regex_new!("(?)").is_err());
+    assert!(regex_new!("*").is_err());
+}

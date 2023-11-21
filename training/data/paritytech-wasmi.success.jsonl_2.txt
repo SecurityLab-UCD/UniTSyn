@@ -1,0 +1,21 @@
+pub fn call(
+        &self,
+        mut ctx: impl AsContextMut<UserState = T>,
+        instance: Option<&Instance>,
+        params: FuncParams,
+    ) -> Result<FuncFinished, Trap> {
+        let caller = <Caller<T>>::new(&mut ctx, instance);
+        (self.closure)(caller, params)
+    }
+fn static_add2_works() {
+    let (mut store, add2, add2_dyn) = setup_add2();
+    let add2 = add2.typed::<(i32, i32), i32>(&mut store).unwrap();
+    let add2_dyn = add2_dyn.typed::<(i32, i32), i32>(&mut store).unwrap();
+    for a in 0..10 {
+        for b in 0..10 {
+            let expected = a + b;
+            assert_eq!(add2.call(&mut store, (a, b)).unwrap(), expected);
+            assert_eq!(add2_dyn.call(&mut store, (a, b)).unwrap(), expected);
+        }
+    }
+}

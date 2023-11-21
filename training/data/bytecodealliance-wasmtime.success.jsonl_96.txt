@@ -1,0 +1,34 @@
+pub fn contains<C: Comparator<K>>(&self, key: K, forest: &SetForest<K>, comp: &C) -> bool {
+        self.root
+            .expand()
+            .and_then(|root| Path::default().find(key, root, &forest.nodes, comp))
+            .is_some()
+    }
+fn call_signature_mismatch() -> Result<()> {
+    let mut store = Store::<()>::default();
+    let binary = wat::parse_str(
+        r#"
+            (module $a
+                (func $foo
+                    i32.const 0
+                    call_indirect)
+                (func $bar (param i32))
+                (start $foo)
+
+                (table 1 anyfunc)
+                (elem (i32.const 0) 1)
+            )
+        "#,
+    )?;
+
+    let module = Module::new(store.engine(), &binary)?;
+    let err = Instance::new(&mut store, &module, &[])
+        .err()
+        .unwrap()
+        .downcast::<Trap>()
+        .unwrap();
+    assert!(err
+        .to_string()
+        .contains("wasm trap: indirect call type mismatch"));
+    Ok(())
+}

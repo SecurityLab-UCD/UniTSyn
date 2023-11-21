@@ -1,0 +1,19 @@
+pub fn is_handshaking(&self) -> bool {
+        !(self.may_send_application_data && self.may_receive_application_data)
+    }
+fn server_complete_io_for_handshake_ending_with_alert() {
+    let (client_config, server_config) = make_disjoint_suite_configs();
+    let (mut client, mut server) = make_pair_for_configs(client_config, server_config);
+
+    assert!(server.is_handshaking());
+
+    let mut pipe = OtherSession::new_fails(&mut client);
+    let rc = server.complete_io(&mut pipe);
+    assert!(rc.is_err(), "server io failed due to handshake failure");
+    assert!(!server.wants_write(), "but server did send its alert");
+    assert_eq!(
+        format!("{:?}", pipe.last_error),
+        "Some(AlertReceived(HandshakeFailure))",
+        "which was received by client"
+    );
+}

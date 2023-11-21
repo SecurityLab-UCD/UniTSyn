@@ -1,0 +1,32 @@
+pub fn dir_exists(&self, path: &str) -> bool {
+        match fs::metadata(self.plus(path)) {
+            Ok(m) => m.is_dir(),
+            Err(_) => false,
+        }
+    }
+fn test_mkdir_parent_mode() {
+    let _guard = TEST_MUTEX.lock();
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    let default_umask: mode_t = 0o160;
+    let original_umask = unsafe { umask(default_umask) };
+
+    ucmd.arg("-p").arg("a/b").succeeds().no_stderr().no_stdout();
+
+    assert!(at.dir_exists("a"));
+    // parents created by -p have permissions set to "=rwx,u+wx"
+    assert_eq!(
+        at.metadata("a").permissions().mode() as mode_t,
+        ((!default_umask & 0o777) | 0o300) + 0o40000
+    );
+    assert!(at.dir_exists("a/b"));
+    // sub directory's permission is determined only by the umask
+    assert_eq!(
+        at.metadata("a/b").permissions().mode() as mode_t,
+        (!default_umask & 0o777) + 0o40000
+    );
+
+    unsafe {
+        umask(original_umask);
+    }
+}

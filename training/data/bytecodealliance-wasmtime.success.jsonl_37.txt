@@ -1,0 +1,21 @@
+pub fn size(&self) -> u32 {
+        match self {
+            Table::Static { size, .. } => *size,
+            Table::Dynamic { elements, .. } => elements.len().try_into().unwrap(),
+        }
+    }
+fn grow_externref_tables_via_api() -> anyhow::Result<()> {
+    let mut cfg = Config::new();
+    cfg.wasm_reference_types(true);
+    let engine = Engine::new(&cfg)?;
+    let mut store = Store::new(&engine, ());
+
+    let table_ty = TableType::new(ValType::ExternRef, 10, None);
+    let table = Table::new(&mut store, table_ty, Val::ExternRef(None))?;
+
+    assert_eq!(table.size(&store), 10);
+    table.grow(&mut store, 3, Val::ExternRef(None))?;
+    assert_eq!(table.size(&store), 13);
+
+    Ok(())
+}

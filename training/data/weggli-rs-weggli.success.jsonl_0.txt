@@ -1,0 +1,9 @@
+fn parse_and_match(needle: &str, source: &str) -> usize {
+    parse_and_match_helper(needle, source, false).len()
+}
+fn simple() {
+    assert_eq!(
+        parse_and_match("{int $a = _+foo+$a;}", "void foo() {int bar=10+foo+bar;}"),
+        1
+    );
+}

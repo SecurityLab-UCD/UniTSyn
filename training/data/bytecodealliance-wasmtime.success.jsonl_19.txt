@@ -1,0 +1,15 @@
+fn code(&self, pc: usize) -> Option<(&LoadedCode, usize)> {
+        let (end, (start, code)) = self.loaded_code.range(pc..).next()?;
+        if pc < *start || *end < pc {
+            return None;
+        }
+        Some((code, pc - *start))
+    }
+fn exit126_wasi_snapshot0() -> Result<()> {
+    let wasm = build_wasm("tests/all/cli_tests/exit126_wasi_snapshot0.wat")?;
+    let output = run_wasmtime_for_output(&["-Ccache=n", wasm.path().to_str().unwrap()], None)?;
+    assert_eq!(output.status.code().unwrap(), 1);
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("invalid exit status"));
+    Ok(())
+}

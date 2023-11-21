@@ -1,0 +1,20 @@
+pub fn name(&self) -> Option<&str> {
+        self.repr.name.as_deref()
+    }
+fn test_error_info() {
+    let mut c = CodeGenerator::new("hello.html", "");
+    c.set_line(1);
+    c.add(Instruction::EmitRaw("<h1>Hello</h1>\n"));
+    c.set_line(2);
+    c.add(Instruction::Lookup("a_string"));
+    c.add(Instruction::Lookup("an_int"));
+    c.add(Instruction::Add);
+
+    let mut ctx = std::collections::BTreeMap::new();
+    ctx.insert("a_string", Value::from("foo"));
+    ctx.insert("an_int", Value::from(42));
+
+    let err = simple_eval(&c.finish().0, ctx).unwrap_err();
+    assert_eq!(err.name(), Some("hello.html"));
+    assert_eq!(err.line(), Some(2));
+}

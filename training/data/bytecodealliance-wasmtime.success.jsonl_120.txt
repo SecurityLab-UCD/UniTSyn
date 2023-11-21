@@ -1,0 +1,58 @@
+pub fn data(&self) -> &T {
+        self.inner.data()
+    }
+fn invoke_post_return() -> Result<()> {
+    let component = r#"
+        (component
+            (import "f" (func $f))
+
+            (core func $f_lower
+                (canon lower (func $f))
+            )
+            (core module $m
+                (import "" "" (func $f))
+
+                (func (export "thunk"))
+
+                (func $post_return
+                    call $f)
+                (export "post-return" (func $post_return))
+            )
+            (core instance $i (instantiate $m
+                (with "" (instance
+                    (export "" (func $f_lower))
+                ))
+            ))
+            (func (export "thunk")
+                (canon lift
+                    (core func $i "thunk")
+                    (post-return (func $i "post-return"))
+                )
+            )
+        )
+    "#;
+
+    let engine = super::engine();
+    let component = Component::new(&engine, component)?;
+    let mut store = Store::new(&engine, false);
+    let mut linker = Linker::new(&engine);
+    linker.root().func_wrap(
+        "f",
+        |mut store: StoreContextMut<'_, bool>, _: ()| -> Result<()> {
+            assert!(!*store.data());
+            *store.data_mut() = true;
+            Ok(())
+        },
+    )?;
+
+    let instance = linker.instantiate(&mut store, &component)?;
+    let thunk = instance.get_typed_func::<(), ()>(&mut store, "thunk")?;
+
+    assert!(!*store.data());
+    thunk.call(&mut store, ())?;
+    assert!(!*store.data());
+    thunk.post_return(&mut store)?;
+    assert!(*store.data());
+
+    Ok(())
+}

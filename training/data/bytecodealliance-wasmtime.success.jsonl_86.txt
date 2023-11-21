@@ -1,0 +1,32 @@
+pub fn contains<C: Comparator<K>>(&self, key: K, forest: &SetForest<K>, comp: &C) -> bool {
+        self.root
+            .expand()
+            .and_then(|root| Path::default().find(key, root, &forest.nodes, comp))
+            .is_some()
+    }
+fn test_trap_return() -> Result<()> {
+    let mut store = Store::<()>::default();
+    let wat = r#"
+        (module
+        (func $hello (import "" "hello"))
+        (func (export "run") (call $hello))
+        )
+    "#;
+
+    let module = Module::new(store.engine(), wat)?;
+    let hello_type = FuncType::new(None, None);
+    let hello_func = Func::new(&mut store, hello_type, |_, _, _| bail!("test 123"));
+
+    let instance = Instance::new(&mut store, &module, &[hello_func.into()])?;
+    let run_func = instance.get_typed_func::<(), ()>(&mut store, "run")?;
+
+    let e = run_func.call(&mut store, ()).unwrap_err();
+    assert!(format!("{e:?}").contains("test 123"));
+
+    assert!(
+        e.downcast_ref::<WasmBacktrace>().is_some(),
+        "error should contain a WasmBacktrace"
+    );
+
+    Ok(())
+}

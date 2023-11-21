@@ -1,0 +1,48 @@
+pub fn stdout(&self) -> &[u8] {
+        &self.stdout
+    }
+fn custom_context() {
+    let t_ud = "unconfined_t";
+    let u_ud = "unconfined_u";
+    let r_ud = "unconfined_r";
+
+    new_ucmd!().args(&["--compute", "/bin/true"]).succeeds();
+
+    let args = &["--compute", "/bin/false"];
+    new_ucmd!().args(args).fails().code_is(1);
+
+    let args = &["--type", t_ud, "/bin/true"];
+    new_ucmd!().args(args).succeeds();
+
+    let args = &["--compute", "--type", t_ud, "/bin/true"];
+    new_ucmd!().args(args).succeeds();
+
+    let args = &["--user=system_u", "/bin/true"];
+    new_ucmd!().args(args).succeeds();
+
+    let args = &["--compute", "--user=system_u", "/bin/true"];
+    new_ucmd!().args(args).succeeds();
+
+    let args = &["--role=system_r", "/bin/true"];
+    new_ucmd!().args(args).succeeds();
+
+    let args = &["--compute", "--role=system_r", "/bin/true"];
+    new_ucmd!().args(args).succeeds();
+
+    new_ucmd!().args(&["--range=s0", "/bin/true"]).succeeds();
+
+    let args = &["--compute", "--range=s0", "/bin/true"];
+    new_ucmd!().args(args).succeeds();
+
+    for (ctx, u, r) in [
+        ("unconfined_u:unconfined_r:unconfined_t:s0", u_ud, r_ud),
+        ("system_u:unconfined_r:unconfined_t:s0", "system_u", r_ud),
+        ("unconfined_u:system_r:unconfined_t:s0", u_ud, "system_r"),
+        ("system_u:system_r:unconfined_t:s0", "system_u", "system_r"),
+    ] {
+        let args = &["-t", t_ud, "-u", u, "-r", r, "-l", "s0", "sestatus", "-v"];
+
+        let output = new_ucmd!().args(args).succeeds();
+        assert_eq!(get_sestatus_context(output.stdout()), ctx);
+    }
+}

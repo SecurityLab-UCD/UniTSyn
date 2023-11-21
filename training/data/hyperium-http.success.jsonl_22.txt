@@ -1,0 +1,14 @@
+fn is_success() {
+    assert!(status_code(200).is_success());
+    assert!(status_code(299).is_success());
+
+    assert!(!status_code(199).is_success());
+    assert!(!status_code(300).is_success());
+}
+fn is_success() {
+    assert!(status_code(200).is_success());
+    assert!(status_code(299).is_success());
+
+    assert!(!status_code(199).is_success());
+    assert!(!status_code(300).is_success());
+}

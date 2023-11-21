@@ -1,0 +1,77 @@
+pub fn call(&self, arguments: &[DataValue]) -> Vec<DataValue> {
+        let mut values = UnboxedValues::make_arguments(arguments, &self.func_signature);
+        let arguments_address = values.as_mut_ptr();
+
+        let function_ptr = self.module.get_finalized_function(self.func_id);
+        let trampoline_ptr = self.module.get_finalized_function(self.trampoline_id);
+
+        let callable_trampoline: fn(*const u8, *mut u128) -> () =
+            unsafe { mem::transmute(trampoline_ptr) };
+        callable_trampoline(function_ptr, arguments_address);
+
+        values.collect_returns(&self.func_signature)
+    }
+fn chars() -> Result<()> {
+    let component = r#"
+        (component
+            (core module $m
+                (func (export "pass") (param i32) (result i32) local.get 0)
+            )
+            (core instance $i (instantiate $m))
+
+            (func (export "u32-to-char") (param "a" u32) (result char)
+                (canon lift (core func $i "pass"))
+            )
+            (func (export "char-to-u32") (param "a" char) (result u32)
+                (canon lift (core func $i "pass"))
+            )
+        )
+    "#;
+
+    let engine = super::engine();
+    let component = Component::new(&engine, component)?;
+    let mut store = Store::new(&engine, ());
+    let instance = Linker::new(&engine).instantiate(&mut store, &component)?;
+    let u32_to_char = instance.get_typed_func::<(u32,), (char,)>(&mut store, "u32-to-char")?;
+    let char_to_u32 = instance.get_typed_func::<(char,), (u32,)>(&mut store, "char-to-u32")?;
+
+    let mut roundtrip = |x: char| -> Result<()> {
+        assert_eq!(char_to_u32.call(&mut store, (x,))?, (x as u32,));
+        char_to_u32.post_return(&mut store)?;
+        assert_eq!(u32_to_char.call(&mut store, (x as u32,))?, (x,));
+        u32_to_char.post_return(&mut store)?;
+        Ok(())
+    };
+
+    roundtrip('x')?;
+    roundtrip('a')?;
+    roundtrip('\0')?;
+    roundtrip('\n')?;
+    roundtrip('💝')?;
+
+    let u32_to_char = |store: &mut Store<()>| {
+        Linker::new(&engine)
+            .instantiate(&mut *store, &component)?
+            .get_typed_func::<(u32,), (char,)>(&mut *store, "u32-to-char")
+    };
+    let err = u32_to_char(&mut store)?
+        .call(&mut store, (0xd800,))
+        .unwrap_err();
+    assert!(err.to_string().contains("integer out of range"), "{}", err);
+    let err = u32_to_char(&mut store)?
+        .call(&mut store, (0xdfff,))
+        .unwrap_err();
+    assert!(err.to_string().contains("integer out of range"), "{}", err);
+    let err = u32_to_char(&mut store)?
+        .call(&mut store, (0x110000,))
+        .unwrap_err();
+    assert!(err.to_string().contains("integer out of range"), "{}", err);
+    let err = u32_to_char(&mut store)?
+        .call(&mut store, (u32::MAX,))
+        .unwrap_err();
+    assert!(err.to_string().contains("integer out of range"), "{}", err);
+
+    Ok(())
+}
+
+#

@@ -1,0 +1,34 @@
+pub fn to_string(&self) -> String {
+        format!("label{}", self.0)
+    }
+fn mismatched_arguments() -> Result<()> {
+    let mut store = Store::<()>::default();
+    let binary = wat::parse_str(
+        r#"
+            (module $a
+                (func (export "foo") (param i32))
+            )
+        "#,
+    )?;
+
+    let module = Module::new(store.engine(), &binary)?;
+    let instance = Instance::new(&mut store, &module, &[])?;
+    let func = instance.get_func(&mut store, "foo").unwrap();
+    assert_eq!(
+        func.call(&mut store, &[], &mut []).unwrap_err().to_string(),
+        "expected 1 arguments, got 0"
+    );
+    assert_eq!(
+        func.call(&mut store, &[Val::F32(0)], &mut [])
+            .unwrap_err()
+            .to_string(),
+        "argument type mismatch: found f32 but expected i32",
+    );
+    assert_eq!(
+        func.call(&mut store, &[Val::I32(0), Val::I32(1)], &mut [])
+            .unwrap_err()
+            .to_string(),
+        "expected 1 arguments, got 2"
+    );
+    Ok(())
+}

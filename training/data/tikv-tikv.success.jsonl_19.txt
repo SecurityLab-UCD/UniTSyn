@@ -1,0 +1,41 @@
+fn valid(&self) -> Result<bool> {
+        self.0.valid().map_err(r2e)
+    }
+fn delete() -> Result<()> {
+    let tempdir = tempdir();
+    let sst_path = tempdir
+        .path()
+        .join("test-data.sst")
+        .to_string_lossy()
+        .to_string();
+    let sst_builder = <KvTestEngine as SstExt>::SstWriterBuilder::new();
+    let mut sst_writer = sst_builder.build(&sst_path)?;
+
+    sst_writer.delete(b"k1")?;
+    sst_writer.finish()?;
+
+    let sst_reader = <KvTestEngine as SstExt>::SstReader::open(&sst_path)?;
+    let mut iter = sst_reader.iter(IterOptions::default()).unwrap();
+
+    iter.seek_to_first()?;
+
+    assert_eq!(iter.valid()?, false);
+
+    iter.prev().unwrap_err();
+    iter.next().unwrap_err();
+    recover_safe(|| {
+        iter.key();
+    })
+    .unwrap_err();
+    recover_safe(|| {
+        iter.value();
+    })
+    .unwrap_err();
+
+    assert_eq!(iter.seek_to_first()?, false);
+    assert_eq!(iter.seek_to_last()?, false);
+    assert_eq!(iter.seek(b"foo")?, false);
+    assert_eq!(iter.seek_for_prev(b"foo")?, false);
+
+    Ok(())
+}

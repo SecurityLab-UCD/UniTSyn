@@ -1,0 +1,14 @@
+fn is_redirection() {
+    assert!(status_code(300).is_redirection());
+    assert!(status_code(399).is_redirection());
+
+    assert!(!status_code(299).is_redirection());
+    assert!(!status_code(400).is_redirection());
+}
+fn is_redirection() {
+    assert!(status_code(300).is_redirection());
+    assert!(status_code(399).is_redirection());
+
+    assert!(!status_code(299).is_redirection());
+    assert!(!status_code(400).is_redirection());
+}

@@ -1,0 +1,15 @@
+fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+fn drain_drop_immediately() {
+    // test mem::forgetting does not double-free
+
+    let mut headers = HeaderMap::new();
+    headers.insert("hello", "world".parse().unwrap());
+    headers.insert("zomg", "bar".parse().unwrap());
+    headers.append("hello", "world2".parse().unwrap());
+
+    let iter = headers.drain();
+    assert_eq!(iter.size_hint(), (2, Some(3)));
+    // not consuming `iter`
+}

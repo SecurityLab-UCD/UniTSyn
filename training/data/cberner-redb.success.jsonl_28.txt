@@ -1,0 +1,39 @@
+fn value(&self) -> V::SelfType<'_> {
+        V::from_bytes(&self.data)
+    }
+fn owned_get_signatures() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+
+    let definition: TableDefinition<u32, u32> = TableDefinition::new("x");
+
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(definition).unwrap();
+        for i in 0..10 {
+            table.insert(&i, &(i + 1)).unwrap();
+        }
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(definition).unwrap();
+
+    assert_eq!(2, table.get(&1).unwrap().unwrap().value());
+
+    let mut iter: Range<u32, u32> = table.range::<u32>(..).unwrap();
+    for i in 0..10 {
+        assert_eq!(iter.next().unwrap().unwrap().1.value(), i + 1);
+    }
+    assert!(iter.next().is_none());
+    let mut iter: Range<u32, u32> = table.range(0..10).unwrap();
+    for i in 0..10 {
+        assert_eq!(iter.next().unwrap().unwrap().1.value(), i + 1);
+    }
+    assert!(iter.next().is_none());
+    let mut iter = table.range::<&u32>(&0..&10).unwrap();
+    for i in 0..10 {
+        assert_eq!(iter.next().unwrap().unwrap().1.value(), i + 1);
+    }
+    assert!(iter.next().is_none());
+}

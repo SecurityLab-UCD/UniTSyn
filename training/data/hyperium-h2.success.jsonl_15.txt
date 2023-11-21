@@ -1,0 +1,56 @@
+pub fn reason(&self) -> Option<Reason> {
+        match self.kind {
+            Kind::Reset(_, reason, _) | Kind::GoAway(_, reason, _) | Kind::Reason(reason) => {
+                Some(reason)
+            }
+            _ => None,
+        }
+    }
+async fn recv_push_promise_over_max_header_list_size() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_frame_eq(settings, frames::settings().max_header_list_size(10));
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(
+            frames::push_promise(1, 2).request("GET", "https://http2.akamai.com/style.css"),
+        )
+        .await;
+        srv.recv_frame(frames::reset(2).refused()).await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+        idle_ms(10).await;
+    };
+
+    let client = async move {
+        let (mut client, mut conn) = client::Builder::new()
+            .max_header_list_size(10)
+            .handshake::<_, Bytes>(io)
+            .await
+            .expect("handshake");
+        let request = Request::builder()
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
+
+        let req = async move {
+            let err = client
+                .send_request(request, true)
+                .expect("send_request")
+                .0
+                .await
+                .expect_err("response");
+            assert_eq!(err.reason(), Some(Reason::REFUSED_STREAM));
+        };
+
+        conn.drive(req).await;
+        conn.await.expect("client");
+    };
+    join(srv, client).await;
+}

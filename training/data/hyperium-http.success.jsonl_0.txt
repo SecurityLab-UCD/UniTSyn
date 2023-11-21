@@ -1,0 +1,35 @@
+fn is_none(&self) -> bool {
+        self.index == !0
+    }
+fn smoke() {
+    let mut headers = HeaderMap::new();
+
+    assert!(headers.get("hello").is_none());
+
+    let name: HeaderName = "hello".parse().unwrap();
+
+    match headers.entry(&name) {
+        Entry::Vacant(e) => {
+            e.insert("world".parse().unwrap());
+        }
+        _ => panic!(),
+    }
+
+    assert!(headers.get("hello").is_some());
+
+    match headers.entry(&name) {
+        Entry::Occupied(mut e) => {
+            assert_eq!(e.get(), &"world");
+
+            // Push another value
+            e.append("zomg".parse().unwrap());
+
+            let mut i = e.iter();
+
+            assert_eq!(*i.next().unwrap(), "world");
+            assert_eq!(*i.next().unwrap(), "zomg");
+            assert!(i.next().is_none());
+        }
+        _ => panic!(),
+    }
+}

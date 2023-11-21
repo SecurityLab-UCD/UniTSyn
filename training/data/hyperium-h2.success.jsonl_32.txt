@@ -1,0 +1,54 @@
+pub fn status(self, value: StatusCode) -> Self {
+        let (id, mut pseudo, fields) = self.into_parts();
+
+        pseudo.set_status(value);
+
+        Mock(frame::Headers::new(id, pseudo, fields))
+    }
+async fn errors_if_recv_frame_exceeds_max_frame_size() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let h2 = async move {
+        let (mut client, h2) = client::handshake(io).await.unwrap();
+        let req = async move {
+            let resp = client.get("https://example.com/").await.expect("response");
+            assert_eq!(resp.status(), StatusCode::OK);
+            let body = resp.into_parts().1;
+            let res = util::concat(body).await;
+            let err = res.unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                "connection error detected: frame with invalid size"
+            );
+        };
+
+        // client should see a conn error
+        let conn = async move {
+            let err = h2.await.unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                "connection error detected: frame with invalid size"
+            );
+        };
+        join(conn, req).await;
+    };
+
+    // a bad peer
+    srv.codec_mut().set_max_send_frame_size(16_384 * 4);
+
+    let srv = async move {
+        let _ = srv.assert_client_handshake().await;
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200)).await;
+        srv.send_frame(frames::data(1, vec![0; 16_385]).eos()).await;
+        srv.recv_frame(frames::go_away(0).frame_size()).await;
+    };
+
+    join(srv, h2).await;
+}

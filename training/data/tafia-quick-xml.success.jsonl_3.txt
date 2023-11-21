@@ -1,0 +1,38 @@
+pub fn to_string<T>(value: &T) -> Result<String, DeError>
+where
+    T: ?Sized + Serialize,
+{
+    let mut buffer = String::new();
+    to_writer(&mut buffer, value)?;
+    Ok(buffer)
+}
+fn issue343() {
+    #[derive(Debug, Deserialize, Serialize, PartialEq)]
+    struct Users {
+        users: HashMap<String, User>,
+    }
+    #[derive(Debug, Deserialize, Serialize, PartialEq)]
+    struct Max(u16);
+
+    #[derive(Debug, Deserialize, Serialize, PartialEq)]
+    struct User {
+        max: Max,
+    }
+
+    let xml = "<Users>\
+                        <users>\
+                            <roger>\
+                                <max>10</max>\
+                            </roger>\
+                        </users>\
+                    </Users>";
+    let users: Users = from_str(xml).unwrap();
+
+    assert_eq!(
+        users,
+        Users {
+            users: HashMap::from([("roger".to_string(), User { max: Max(10) })]),
+        }
+    );
+    assert_eq!(to_string(&users).unwrap(), xml);
+}

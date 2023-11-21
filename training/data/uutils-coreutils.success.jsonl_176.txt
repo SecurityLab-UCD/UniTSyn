@@ -1,0 +1,30 @@
+pub fn file_exists<P: AsRef<Path>>(&self, path: P) -> bool {
+        match fs::metadata(self.plus(path)) {
+            Ok(m) => m.is_file(),
+            Err(_) => false,
+        }
+    }
+fn test_backup_force() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+
+    at.write("a", "a\n");
+    at.write("b", "b2\n");
+
+    scene.ucmd().args(&["-s", "b", "b~"]).succeeds().no_stderr();
+    assert!(at.file_exists("a"));
+    assert!(at.file_exists("b"));
+    assert!(at.file_exists("b~"));
+    scene
+        .ucmd()
+        .args(&["-s", "-f", "--b=simple", "a", "b"])
+        .succeeds()
+        .no_stderr();
+    assert!(at.file_exists("a"));
+    assert!(at.file_exists("b"));
+    assert!(at.file_exists("b~"));
+    assert_eq!(at.read("a"), "a\n");
+    assert_eq!(at.read("b"), "a\n");
+    // we should have the same content as b as we had time to do a backup
+    assert_eq!(at.read("b~"), "b2\n");
+}

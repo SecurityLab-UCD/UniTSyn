@@ -1,0 +1,21 @@
+pub fn contains<C: Comparator<K>>(&self, key: K, forest: &SetForest<K>, comp: &C) -> bool {
+        self.root
+            .expand()
+            .and_then(|root| Path::default().find(key, root, &forest.nodes, comp))
+            .is_some()
+    }
+fn trap_smoke() -> Result<()> {
+    let engine = Engine::default();
+    let mut linker = Linker::<()>::new(&engine);
+    linker.func_wrap("", "", || -> Result<()> { bail!("test") })?;
+
+    let mut store = Store::new(&engine, ());
+
+    let f = linker.get(&mut store, "", "").unwrap().into_func().unwrap();
+
+    let err = f.call(&mut store, &[], &mut []).unwrap_err();
+
+    assert!(err.to_string().contains("test"));
+
+    Ok(())
+}

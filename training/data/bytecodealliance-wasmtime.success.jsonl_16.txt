@@ -1,0 +1,13 @@
+fn code(&self, pc: usize) -> Option<(&LoadedCode, usize)> {
+        let (end, (start, code)) = self.loaded_code.range(pc..).next()?;
+        if pc < *start || *end < pc {
+            return None;
+        }
+        Some((code, pc - *start))
+    }
+fn exit2_wasi_snapshot1() -> Result<()> {
+    let wasm = build_wasm("tests/all/cli_tests/exit2_wasi_snapshot1.wat")?;
+    let output = run_wasmtime_for_output(&["-Ccache=n", wasm.path().to_str().unwrap()], None)?;
+    assert_eq!(output.status.code().unwrap(), 2);
+    Ok(())
+}

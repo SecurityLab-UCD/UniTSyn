@@ -1,0 +1,23 @@
+fn render(env: &Environment, template: &str, ctx: &Value, locals: &BTreeMap<String, Value>) {
+    match env.render_str(
+        template,
+        context!(
+            ..Value::from_iter(locals.iter().map(|x| (x.0.clone(), x.1.clone()))),
+            ..ctx.clone()
+        ),
+    ) {
+        Ok(rv) => {
+            println!("{}", rv);
+        }
+        Err(err) => print_error(&Error::from(err)),
+    }
+}
+fn test_clone() {
+    let mut env = Environment::new();
+    env.add_template("test", "a").unwrap();
+    let mut env2 = env.clone();
+    assert_eq!(env2.get_template("test").unwrap().render(()).unwrap(), "a");
+    env2.add_template("test", "b").unwrap();
+    assert_eq!(env2.get_template("test").unwrap().render(()).unwrap(), "b");
+    assert_eq!(env.get_template("test").unwrap().render(()).unwrap(), "a");
+}

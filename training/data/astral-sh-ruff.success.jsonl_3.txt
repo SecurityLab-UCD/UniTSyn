@@ -1,0 +1,18 @@
+fn finish(&self) -> u64 {
+        self.inner.finish()
+    }
+fn unnamed_field_struct() {
+    #[derive(CacheKey, Hash)]
+    struct UnnamedFieldsStruct(String, String);
+
+    let mut key = CacheKeyHasher::new();
+
+    let unnamed_fields = UnnamedFieldsStruct("Hello".into(), "World".into());
+
+    unnamed_fields.cache_key(&mut key);
+
+    let mut hash = CacheKeyHasher::new();
+    unnamed_fields.hash(&mut hash);
+
+    assert_eq!(hash.finish(), key.finish());
+}

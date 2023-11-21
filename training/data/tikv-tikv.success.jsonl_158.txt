@@ -1,0 +1,35 @@
+pub fn get_current(&self) -> TikvConfig {
+        self.inner.read().unwrap().current.clone()
+    }
+fn test_dispatch_change() {
+    use std::{error::Error, result::Result};
+
+    use online_config::ConfigManager;
+
+    #[derive(Clone)]
+    struct CfgManager(Arc<Mutex<RaftstoreConfig>>);
+
+    impl ConfigManager for CfgManager {
+        fn dispatch(&mut self, c: ConfigChange) -> Result<(), Box<dyn Error>> {
+            self.0.lock().unwrap().update(c)
+        }
+    }
+
+    let (mut cfg, _dir) = TikvConfig::with_tmp().unwrap();
+    cfg.validate().unwrap();
+    let cfg_controller = ConfigController::new(cfg);
+    let mut cfg = cfg_controller.get_current();
+    let mgr = CfgManager(Arc::new(Mutex::new(cfg.raft_store.clone())));
+    cfg_controller.register(Module::Raftstore, Box::new(mgr.clone()));
+
+    cfg_controller
+        .update(change("raftstore.raft-log-gc-threshold", "2000"))
+        .unwrap();
+
+    // config update
+    cfg.raft_store.raft_log_gc_threshold = 2000;
+    assert_eq!(cfg_controller.get_current(), cfg);
+
+    // config change should also dispatch to raftstore config manager
+    assert_eq!(mgr.0.lock().unwrap().raft_log_gc_threshold, 2000);
+}

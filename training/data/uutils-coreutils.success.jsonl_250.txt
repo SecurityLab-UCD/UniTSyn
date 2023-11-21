@@ -1,0 +1,22 @@
+pub fn file_exists<P: AsRef<Path>>(&self, path: P) -> bool {
+        match fs::metadata(self.plus(path)) {
+            Ok(m) => m.is_file(),
+            Err(_) => false,
+        }
+    }
+fn test_rm_interactive_once_recursive_prompt() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    let file1 = "test_rm_interactive_once_recursive_prompt_file1";
+
+    at.touch(file1);
+
+    ucmd.arg("--interactive=once")
+        .arg("-r")
+        .arg(file1)
+        .pipe_in("y")
+        .succeeds()
+        .stderr_contains("remove 1 argument recursively?");
+
+    assert!(!at.file_exists(file1));
+}

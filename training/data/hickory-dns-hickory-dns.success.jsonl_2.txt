@@ -1,0 +1,83 @@
+pub fn get_listen_port(&self) -> u16 {
+        self.listen_port.unwrap_or(DEFAULT_PORT)
+    }
+fn test_read_config() {
+    let server_path = env::var("TDNS_WORKSPACE_ROOT").unwrap_or_else(|_| "../..".to_owned());
+    let path: PathBuf =
+        PathBuf::from(server_path).join("tests/test-data/test_configs/example.toml");
+
+    if !path.exists() {
+        panic!("can't locate example.toml and other configs: {:?}", path)
+    }
+
+    println!("reading config");
+    let config: Config = Config::read_config(&path).unwrap();
+
+    assert_eq!(config.get_listen_port(), 53);
+    assert_eq!(config.get_listen_addrs_ipv4(), Ok(Vec::<Ipv4Addr>::new()));
+    assert_eq!(config.get_listen_addrs_ipv6(), Ok(Vec::<Ipv6Addr>::new()));
+    assert_eq!(config.get_tcp_request_timeout(), Duration::from_secs(5));
+    assert_eq!(config.get_log_level(), tracing::Level::INFO);
+    assert_eq!(config.get_directory(), Path::new("/var/named"));
+    assert_eq!(
+        config.get_zones(),
+        [
+            ZoneConfig::new(
+                "localhost".into(),
+                ZoneType::Primary,
+                "default/localhost.zone".into(),
+                None,
+                None,
+                None,
+                vec![],
+            ),
+            ZoneConfig::new(
+                "0.0.127.in-addr.arpa".into(),
+                ZoneType::Primary,
+                "default/127.0.0.1.zone".into(),
+                None,
+                None,
+                None,
+                vec![],
+            ),
+            ZoneConfig::new(
+                "0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.\
+                 ip6.arpa"
+                    .into(),
+                ZoneType::Primary,
+                "default/ipv6_1.zone".into(),
+                None,
+                None,
+                None,
+                vec![],
+            ),
+            ZoneConfig::new(
+                "255.in-addr.arpa".into(),
+                ZoneType::Primary,
+                "default/255.zone".into(),
+                None,
+                None,
+                None,
+                vec![],
+            ),
+            ZoneConfig::new(
+                "0.in-addr.arpa".into(),
+                ZoneType::Primary,
+                "default/0.zone".into(),
+                None,
+                None,
+                None,
+                vec![],
+            ),
+            ZoneConfig::new(
+                "example.com".into(),
+                ZoneType::Primary,
+                "example.com.zone".into(),
+                None,
+                None,
+                None,
+                vec![],
+            )
+        ]
+    );
+}

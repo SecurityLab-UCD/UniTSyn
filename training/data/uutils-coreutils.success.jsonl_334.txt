@@ -1,0 +1,12 @@
+pub(crate) fn is_empty(&self) -> bool {
+        self.reads_complete == 0 && self.reads_partial == 0
+    }
+fn test_non_existing_files() {
+    let scenario = TestScenario::new(util_name!());
+
+    let result = scenario
+        .ucmd()
+        .args(&["newer_file", "-nt", "regular_file"])
+        .fails();
+    assert!(result.stderr().is_empty());
+}

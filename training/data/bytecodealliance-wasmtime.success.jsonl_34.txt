@@ -1,0 +1,28 @@
+pub fn is_none(&self) -> bool {
+        self.0.is_reserved_value()
+    }
+fn fill_funcref_tables_via_api() -> anyhow::Result<()> {
+    let mut cfg = Config::new();
+    cfg.wasm_reference_types(true);
+    let engine = Engine::new(&cfg)?;
+    let mut store = Store::new(&engine, ());
+
+    let table_ty = TableType::new(ValType::FuncRef, 10, None);
+    let table = Table::new(&mut store, table_ty, Val::FuncRef(None))?;
+
+    for i in 0..10 {
+        assert!(table.get(&mut store, i).unwrap().unwrap_funcref().is_none());
+    }
+
+    let fill = Val::FuncRef(Some(Func::wrap(&mut store, || {})));
+    table.fill(&mut store, 2, fill, 4)?;
+
+    for i in (0..2).chain(7..10) {
+        assert!(table.get(&mut store, i).unwrap().unwrap_funcref().is_none());
+    }
+    for i in 2..6 {
+        assert!(table.get(&mut store, i).unwrap().unwrap_funcref().is_some());
+    }
+
+    Ok(())
+}

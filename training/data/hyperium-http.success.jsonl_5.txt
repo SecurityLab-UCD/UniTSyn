@@ -1,0 +1,15 @@
+pub fn len(&self) -> usize {
+        self.vec.len()
+    }
+fn into_header_name() {
+    let mut m = HeaderMap::new();
+    m.insert(HOST, "localhost".parse().unwrap());
+    m.insert(&ACCEPT, "*/*".parse().unwrap());
+    m.insert("connection", "keep-alive".parse().unwrap());
+
+    m.append(LOCATION, "/".parse().unwrap());
+    m.append(&VIA, "bob".parse().unwrap());
+    m.append("transfer-encoding", "chunked".parse().unwrap());
+
+    assert_eq!(m.len(), 6);
+}

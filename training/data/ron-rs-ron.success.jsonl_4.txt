@@ -1,0 +1,19 @@
+pub fn to_string<T>(&self, value: &T) -> Result<String>
+    where
+        T: ?Sized + ser::Serialize,
+    {
+        let mut output = Vec::new();
+        let mut s = Serializer::with_options(&mut output, None, self.clone())?;
+        value.serialize(&mut s)?;
+        Ok(String::from_utf8(output).expect("Ron should be utf-8"))
+    }
+fn test_non_ascii() {
+    assert_eq!(to_string(&"♠").unwrap(), "\"♠\"");
+    assert_eq!(to_string(&"ß").unwrap(), "\"ß\"");
+    assert_eq!(to_string(&"ä").unwrap(), "\"ä\"");
+    assert_eq!(to_string(&"ö").unwrap(), "\"ö\"");
+    assert_eq!(to_string(&"ü").unwrap(), "\"ü\"");
+}
+
+#[test]
+fn

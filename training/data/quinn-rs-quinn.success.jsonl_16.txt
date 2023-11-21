@@ -1,0 +1,95 @@
+fn open<'a>(
+        &self,
+        data: &'a mut [u8],
+        additional_data: &[u8],
+    ) -> Result<&'a mut [u8], CryptoError> {
+        let aad = ring::aead::Aad::from(additional_data);
+        let zero_nonce = ring::aead::Nonce::assume_unique_for_key([0u8; 12]);
+        Ok(self.open_in_place(zero_nonce, aad, data)?)
+    }
+fn stream_id_limit() {
+    let _guard = subscribe();
+    let server = ServerConfig {
+        transport: Arc::new(TransportConfig {
+            max_concurrent_uni_streams: 1u32.into(),
+            ..TransportConfig::default()
+        }),
+        ..server_config()
+    };
+    let mut pair = Pair::new(Default::default(), server);
+    let (client_ch, server_ch) = pair.connect();
+
+    let s = pair
+        .client
+        .connections
+        .get_mut(&client_ch)
+        .unwrap()
+        .streams()
+        .open(Dir::Uni)
+        .expect("couldn't open first stream");
+    assert_eq!(
+        pair.client_streams(client_ch).open(Dir::Uni),
+        None,
+        "only one stream is permitted at a time"
+    );
+    // Generate some activity to allow the server to see the stream
+    const MSG: &[u8] = b"hello";
+    pair.client_send(client_ch, s).write(MSG).unwrap();
+    pair.client_send(client_ch, s).finish().unwrap();
+    pair.drive();
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::Stream(StreamEvent::Finished { id })) if id == s
+    );
+    assert_eq!(
+        pair.client_streams(client_ch).open(Dir::Uni),
+        None,
+        "server does not immediately grant additional credit"
+    );
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::Stream(StreamEvent::Opened { dir: Dir::Uni }))
+    );
+    assert_matches!(pair.server_streams(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
+
+    let mut recv = pair.server_recv(server_ch, s);
+    let mut chunks = recv.read(false).unwrap();
+    assert_matches!(
+        chunks.next(usize::MAX),
+        Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == MSG
+    );
+    assert_eq!(chunks.next(usize::MAX), Ok(None));
+    let _ = chunks.finalize();
+
+    // Server will only send MAX_STREAM_ID now that the application's been notified
+    pair.drive();
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::Stream(StreamEvent::Available { dir: Dir::Uni }))
+    );
+    assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
+
+    // Try opening the second stream again, now that we've made room
+    let s = pair
+        .client
+        .connections
+        .get_mut(&client_ch)
+        .unwrap()
+        .streams()
+        .open(Dir::Uni)
+        .expect("didn't get stream id budget");
+    pair.client_send(client_ch, s).finish().unwrap();
+    pair.drive();
+    // Make sure the server actually processes data on the newly-available stream
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::Stream(StreamEvent::Opened { dir: Dir::Uni }))
+    );
+    assert_matches!(pair.server_streams(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
+    assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
+
+    let mut recv = pair.server_recv(server_ch, s);
+    let mut chunks = recv.read(false).unwrap();
+    assert_matches!(chunks.next(usize::MAX), Ok(None));
+    let _ = chunks.finalize();
+}

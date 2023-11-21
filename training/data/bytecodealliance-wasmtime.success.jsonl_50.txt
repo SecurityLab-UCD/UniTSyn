@@ -1,0 +1,52 @@
+pub unsafe fn load(ptr: *mut Self) -> Self {
+        let other = &*ptr;
+        VMMemoryDefinition {
+            base: other.base,
+            current_length: other.current_length().into(),
+        }
+    }
+fn drop_delayed() -> Result<()> {
+    static HITS: AtomicUsize = AtomicUsize::new(0);
+
+    struct A;
+
+    impl Drop for A {
+        fn drop(&mut self) {
+            HITS.fetch_add(1, SeqCst);
+        }
+    }
+
+    let engine = Engine::default();
+    let mut linker = Linker::<()>::new(&engine);
+
+    let a = A;
+    linker.func_wrap("", "", move || {
+        let _ = &a;
+    })?;
+
+    assert_eq!(HITS.load(SeqCst), 0);
+
+    let module = Module::new(&engine, &wat::parse_str(r#"(import "" "" (func))"#)?)?;
+
+    let mut store = Store::new(&engine, ());
+    let func = linker.get(&mut store, "", "").unwrap();
+    Instance::new(&mut store, &module, &[func])?;
+
+    drop(store);
+
+    assert_eq!(HITS.load(SeqCst), 0);
+
+    let mut store = Store::new(&engine, ());
+    let func = linker.get(&mut store, "", "").unwrap();
+    Instance::new(&mut store, &module, &[func])?;
+
+    drop(store);
+
+    assert_eq!(HITS.load(SeqCst), 0);
+
+    drop(linker);
+
+    assert_eq!(HITS.load(SeqCst), 1);
+
+    Ok(())
+}

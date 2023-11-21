@@ -1,0 +1,61 @@
+pub fn is_some(&self) -> bool {
+        self.max_expire_ts.is_some() || self.min_expire_ts.is_some()
+    }
+fn save_point_all_commands() {
+    let db = default_engine();
+    let mut wb = db.engine.write_batch();
+
+    db.engine.put(b"a", b"").unwrap();
+    db.engine.put(b"d", b"").unwrap();
+
+    wb.set_save_point();
+    wb.delete(b"a").unwrap();
+    wb.put(b"b", b"").unwrap();
+    wb.delete_range(b"c", b"e").unwrap();
+
+    wb.rollback_to_save_point().unwrap();
+    wb.write().unwrap();
+
+    let a = db.engine.get_value(b"a").unwrap();
+    let b = db.engine.get_value(b"b").unwrap();
+    let d = db.engine.get_value(b"d").unwrap();
+    assert!(a.is_some());
+    assert!(b.is_none());
+    assert!(d.is_some());
+
+    let db = multi_batch_write_engine();
+    let mut wb = db.engine.write_batch_with_cap(1024);
+    let max_keys = 256_usize;
+
+    for i in 0..max_keys / 2 {
+        db.engine.put(&i.to_be_bytes(), b"").unwrap();
+    }
+    db.engine.put(b"a", b"").unwrap();
+    for i in max_keys / 2..max_keys {
+        db.engine.put(&i.to_be_bytes(), b"").unwrap();
+    }
+    db.engine.put(b"d", b"").unwrap();
+
+    wb.set_save_point();
+    for i in 0..max_keys / 2 {
+        wb.delete(&i.to_be_bytes()).unwrap();
+    }
+    wb.delete(b"a").unwrap();
+    wb.put(b"b", b"").unwrap();
+    wb.delete_range(b"c", b"e").unwrap();
+    wb.delete_range(&(max_keys / 3).to_be_bytes(), &(2 * max_keys).to_be_bytes())
+        .unwrap();
+
+    wb.rollback_to_save_point().unwrap();
+    wb.write().unwrap();
+
+    let a = db.engine.get_value(b"a").unwrap();
+    let b = db.engine.get_value(b"b").unwrap();
+    let d = db.engine.get_value(b"d").unwrap();
+    for i in 0..max_keys {
+        assert!(db.engine.get_value(&i.to_be_bytes()).unwrap().is_some());
+    }
+    assert!(a.is_some());
+    assert!(b.is_none());
+    assert!(d.is_some());
+}

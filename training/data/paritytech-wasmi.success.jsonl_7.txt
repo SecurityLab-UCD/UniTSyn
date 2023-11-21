@@ -1,0 +1,31 @@
+pub fn i32_exit_status(&self) -> Option<i32> {
+        if let Self::I32Exit(status) = self {
+            return Some(*status);
+        }
+        None
+    }
+fn resumable_call_host() {
+    let (mut store, _linker) = test_setup();
+    let host_fn = Func::wrap(&mut store, || -> Result<(), Trap> {
+        Err(Trap::i32_exit(100))
+    });
+    // Even though the called host function traps we expect a normal error
+    // since the host function is the root function of the call and therefore
+    // it would not make sense to resume it.
+    let error = host_fn
+        .call_resumable(&mut store, &[], &mut [])
+        .unwrap_err();
+    match error {
+        Error::Trap(trap) => {
+            assert_eq!(trap.i32_exit_status(), Some(100));
+        }
+        _ => panic!("expected Wasm trap"),
+    }
+    // The same test for `TypedFunc`:
+    let trap = host_fn
+        .typed::<(), ()>(&store)
+        .unwrap()
+        .call_resumable(&mut store, ())
+        .unwrap_err();
+    assert_eq!(trap.i32_exit_status(), Some(100));
+}

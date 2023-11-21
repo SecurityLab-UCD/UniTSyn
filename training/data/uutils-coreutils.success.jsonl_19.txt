@@ -1,0 +1,17 @@
+pub(crate) fn read(mut self, operands: &[&str]) -> Result<Self, ParseError> {
+        for operand in operands {
+            self.parse_operand(operand)?;
+        }
+
+        Ok(self)
+    }
+fn test_cp_cp() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    // Invoke our binary to make the copy.
+    ucmd.arg(TEST_HELLO_WORLD_SOURCE)
+        .arg(TEST_HELLO_WORLD_DEST)
+        .succeeds();
+
+    // Check the content of the destination file that was copied.
+    assert_eq!(at.read(TEST_HELLO_WORLD_DEST), "Hello, World!\n");
+}

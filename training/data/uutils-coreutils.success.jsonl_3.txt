@@ -1,0 +1,27 @@
+pub fn mode(&self) -> u32 {
+        match self.specified_mode {
+            Some(x) => x,
+            None => DEFAULT_MODE,
+        }
+    }
+fn test_chmod_keep_setgid() {
+    for (from, arg, to) in [
+        (0o7777, "777", 0o46777),
+        (0o7777, "=777", 0o40777),
+        (0o7777, "0777", 0o46777),
+        (0o7777, "=0777", 0o40777),
+        (0o7777, "00777", 0o40777),
+        (0o2444, "a+wx", 0o42777),
+        (0o2444, "a=wx", 0o42333),
+        (0o1444, "g+s", 0o43444),
+        (0o4444, "u-s", 0o40444),
+        (0o7444, "a-s", 0o41444),
+    ] {
+        let (at, mut ucmd) = at_and_ucmd!();
+        at.mkdir("dir");
+        set_permissions(at.plus("dir"), Permissions::from_mode(from)).unwrap();
+        let r = ucmd.arg(arg).arg("dir").succeeds();
+        println!("{}", r.stderr_str());
+        assert_eq!(at.metadata("dir").permissions().mode(), to);
+    }
+}

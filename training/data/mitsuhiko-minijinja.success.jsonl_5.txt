@@ -1,0 +1,24 @@
+pub fn fuel(&self) -> Option<u64> {
+        self.fuel
+    }
+fn test_basic() {
+    let mut env = Environment::new();
+    assert_eq!(env.fuel(), None);
+    env.set_fuel(Some(100));
+    assert_eq!(env.fuel(), Some(100));
+    env.add_template("test", "{% for x in seq %}{{ x }}\n{% endfor %}")
+        .unwrap();
+    let t = env.get_template("test").unwrap();
+
+    // this will still manage to run with 100 fuel
+    let rv = t
+        .render(context!(seq => (0..15).collect::<Vec<_>>()))
+        .unwrap();
+    assert_eq!(rv.lines().count(), 15);
+
+    // this is above the limit
+    let rv = t
+        .render(context!(seq => (0..20).collect::<Vec<_>>()))
+        .unwrap_err();
+    assert_eq!(rv.kind(), ErrorKind::OutOfFuel);
+}

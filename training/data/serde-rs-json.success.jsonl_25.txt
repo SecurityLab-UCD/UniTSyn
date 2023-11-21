@@ -1,0 +1,20 @@
+pub(crate) fn internal_n_mask(bit: u64, n: u64) -> u64 {
+    let bits: u64 = mem::size_of::<u64>() as u64 * 8;
+    debug_assert!(bit <= bits, "internal_n_halfway() overflow in shl.");
+    debug_assert!(n <= bits, "internal_n_halfway() overflow in shl.");
+    debug_assert!(bit >= n, "internal_n_halfway() overflow in sub.");
+
+    lower_n_mask(bit) ^ lower_n_mask(bit - n)
+}
+fn internal_n_mask_test() {
+    assert_eq!(internal_n_mask(1u64, 0u64), 0b0);
+    assert_eq!(internal_n_mask(1u64, 1u64), 0b1);
+    assert_eq!(internal_n_mask(2u64, 1u64), 0b10);
+    assert_eq!(internal_n_mask(4u64, 2u64), 0b1100);
+    assert_eq!(internal_n_mask(10u64, 2u64), 0b1100000000);
+    assert_eq!(internal_n_mask(10u64, 4u64), 0b1111000000);
+    assert_eq!(
+        internal_n_mask(32u64, 4u64),
+        0b11110000000000000000000000000000
+    );
+}

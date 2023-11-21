@@ -1,0 +1,25 @@
+pub fn recv_timeout<S, I>(s: &mut S, dur: std::time::Duration) -> Result<Option<I>, ()>
+where
+    S: Stream<Item = I> + Unpin,
+{
+    poll_timeout(&mut s.next(), dur)
+}
+fn test_when_warmup_succeed_and_not_become_leader() {
+    let mut cluster = run_cluster_and_warm_up_cache_for_store2();
+
+    let (sx, rx) = channel::unbounded();
+    fail::cfg_callback("worker_async_fetch_raft_log", move || {
+        sx.send(true).unwrap()
+    })
+    .unwrap();
+    fail::cfg("entry_cache_warmed_up_state_is_stale", "return").unwrap();
+
+    // Since the warmup state is stale, the peer should exit warmup state,
+    // and the entry cache should be compacted during post_apply.
+    let applied_index = cluster.apply_state(1, 2).applied_index;
+    cluster.must_put(b"kk1", b"vv1");
+    cluster.wait_applied_index(1, 2, applied_index + 1);
+    // The peer should warm up cache again when it receives a new TransferLeaderMsg.
+    cluster.transfer_leader(1, new_peer(2, 2));
+    assert!(rx.recv_timeout(Duration::from_millis(500)).unwrap());
+}

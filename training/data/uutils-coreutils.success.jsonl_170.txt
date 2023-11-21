@@ -1,0 +1,19 @@
+pub fn is_symlink(&self, path: &str) -> bool {
+        log_info("is_symlink", self.plus_as_string(path));
+        match fs::symlink_metadata(self.plus(path)) {
+            Ok(m) => m.file_type().is_symlink(),
+            Err(_) => false,
+        }
+    }
+fn test_symlink_relative() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file_a = "test_symlink_relative_a";
+    let link = "test_symlink_relative_link";
+
+    at.touch(file_a);
+
+    // relative symlink
+    ucmd.args(&["-r", "-s", file_a, link]).succeeds();
+    assert!(at.is_symlink(link));
+    assert_eq!(at.resolve_link(link), file_a);
+}

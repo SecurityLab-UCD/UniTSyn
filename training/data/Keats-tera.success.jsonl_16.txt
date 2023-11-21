@@ -1,0 +1,30 @@
+fn render_template(content: &str, context: &Context) -> Result<String> {
+    let mut tera = Tera::default();
+    tera.add_raw_template("hello.html", content).unwrap();
+    tera.register_function("get_number", |_: &HashMap<String, Value>| Ok(Value::Number(10.into())));
+    tera.register_function("get_true", |_: &HashMap<String, Value>| Ok(Value::Bool(true)));
+    tera.register_function("get_string", |_: &HashMap<String, Value>| {
+        Ok(Value::String("Hello".to_string()))
+    });
+
+    tera.render("hello.html", context)
+}
+fn render_filter_section() {
+    let inputs = vec![
+        ("{% filter upper %}Hello{% endfilter %}", "HELLO"),
+        ("{% filter upper %}Hello{% if true %} world{% endif %}{% endfilter %}", "HELLO WORLD"),
+        ("{% filter upper %}Hello {% for i in range(end=3) %}i{% endfor %}{% endfilter %}", "HELLO III"),
+        (
+            "{% filter upper %}Hello {% for i in range(end=3) %}{% if i == 1 %}{% break %} {% endif %}i{% endfor %}{% endfilter %}",
+            "HELLO I",
+        ),
+        ("{% filter title %}Hello {% if true %}{{ 'world' | upper | safe }}{% endif %}{% endfilter %}", "Hello World"),
+        ("{% filter safe %}{% filter upper %}<Hello>{% endfilter %}{% endfilter%}", "<HELLO>")
+    ];
+
+    let context = Context::new();
+    for (input, expected) in inputs {
+        println!("{:?} -> {:?}", input, expected);
+        assert_eq!(render_template(input, &context).unwrap(), expected);
+    }
+}

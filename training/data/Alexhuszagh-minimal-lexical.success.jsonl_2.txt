@@ -1,0 +1,36 @@
+fn compute_error32(q: i32, w: u64) -> (i32, u64) {
+    let fp = lemire::compute_error::<f32>(q, w);
+    (fp.exp, fp.mant)
+}
+fn compute_error32_test() {
+    // These test near-halfway cases for single-precision floats.
+    assert_eq!(compute_error32(0, 16777216), (111 + f32::INVALID_FP, 9223372036854775808));
+    assert_eq!(compute_error32(0, 16777217), (111 + f32::INVALID_FP, 9223372586610589696));
+    assert_eq!(compute_error32(0, 16777218), (111 + f32::INVALID_FP, 9223373136366403584));
+    assert_eq!(compute_error32(0, 16777219), (111 + f32::INVALID_FP, 9223373686122217472));
+    assert_eq!(compute_error32(0, 16777220), (111 + f32::INVALID_FP, 9223374235878031360));
+
+    // These are examples of the above tests, with
+    // digits from the exponent shifted to the mantissa.
+    assert_eq!(
+        compute_error32(-10, 167772160000000000),
+        (111 + f32::INVALID_FP, 9223372036854775808)
+    );
+    assert_eq!(
+        compute_error32(-10, 167772170000000000),
+        (111 + f32::INVALID_FP, 9223372586610589696)
+    );
+    assert_eq!(
+        compute_error32(-10, 167772180000000000),
+        (111 + f32::INVALID_FP, 9223373136366403584)
+    );
+    // Let's check the lines to see if anything is different in table...
+    assert_eq!(
+        compute_error32(-10, 167772190000000000),
+        (111 + f32::INVALID_FP, 9223373686122217472)
+    );
+    assert_eq!(
+        compute_error32(-10, 167772200000000000),
+        (111 + f32::INVALID_FP, 9223374235878031360)
+    );
+}

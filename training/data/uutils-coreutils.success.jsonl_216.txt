@@ -1,0 +1,27 @@
+pub(crate) fn read(mut self, operands: &[&str]) -> Result<Self, ParseError> {
+        for operand in operands {
+            self.parse_operand(operand)?;
+        }
+
+        Ok(self)
+    }
+fn test_mv_arg_update_all() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    let file1 = "test_mv_arg_update_none_file1";
+    let file2 = "test_mv_arg_update_none_file2";
+    let file1_content = "file1 content\n";
+    let file2_content = "file2 content\n";
+
+    at.write(file1, file1_content);
+    at.write(file2, file2_content);
+
+    ucmd.arg(file1)
+        .arg(file2)
+        .arg("--update=all")
+        .succeeds()
+        .no_stderr()
+        .no_stdout();
+
+    assert_eq!(at.read(file2), file1_content);
+}

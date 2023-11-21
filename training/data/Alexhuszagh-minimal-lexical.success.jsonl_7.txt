@@ -1,0 +1,41 @@
+pub fn compute_float64(q: i32, w: u64) -> (i32, u64) {
+    let num = Number {
+        exponent: q,
+        mantissa: w,
+        many_digits: false,
+    };
+    let fp = bellerophon::<f64>(&num);
+    (fp.exp, fp.mant)
+}
+fn compute_float_f64_rounding() {
+    // Also need to check halfway cases **inside** that exponent range.
+
+    // These test near-halfway cases for double-precision floats.
+    assert_eq!(compute_float64(0, 9007199254740992), (1076, 0));
+    assert_eq!(compute_float64(0, 9007199254740993), (1076, 0));
+    assert_eq!(compute_float64(0, 9007199254740994), (1076, 1));
+    assert_eq!(compute_float64(0, 9007199254740995), (1076, 2));
+    assert_eq!(compute_float64(0, 9007199254740996), (1076, 2));
+    assert_eq!(compute_float64(0, 18014398509481984), (1077, 0));
+    assert_eq!(compute_float64(0, 18014398509481986), (1077, 0));
+    assert_eq!(compute_float64(0, 18014398509481988), (1077, 1));
+    assert_eq!(compute_float64(0, 18014398509481990), (1077, 2));
+    assert_eq!(compute_float64(0, 18014398509481992), (1077, 2));
+
+    // Test a much closer set of examples.
+    assert_eq!(compute_float64(0, 9007199254740991), (1075, 4503599627370495));
+    assert_eq!(compute_float64(0, 9223372036854776831), (1086, 0));
+    assert_eq!(compute_float64(0, 9223372036854776832), (1086, 0));
+    assert_eq!(compute_float64(0, 9223372036854776833), (1086, 1));
+    assert_eq!(compute_float64(-42, 9123456727292927), (936, 1854521741541368));
+    assert_eq!(compute_float64(-43, 91234567272929275), (936, 1854521741541369));
+    assert_eq!(compute_float64(-42, 9123456727292928), (936, 1854521741541369));
+
+    // These are examples of the above tests, with
+    // digits from the exponent shifted to the mantissa.
+    assert_eq!(compute_float64(-3, 9007199254740992000), (1076, 0));
+    assert_eq!(compute_float64(-3, 9007199254740993000), (1076, 0));
+    assert_eq!(compute_float64(-3, 9007199254740994000), (1076, 1));
+    assert_eq!(compute_float64(-3, 9007199254740995000), (1076, 2));
+    assert_eq!(compute_float64(-3, 9007199254740996000), (1076, 2));
+}

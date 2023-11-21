@@ -1,0 +1,87 @@
+fn success(&self) -> usize {
+            self.success.load(Ordering::SeqCst)
+        }
+fn c_flags() {
+    let temp = setup_wasmer_dir();
+    let wasmer_dir = temp.path();
+
+    wasmer_cmd(&temp)
+        .arg("config")
+        .arg("--bindir")
+        .assert()
+        .success()
+        .stdout(contains_path(temp.path().join("bin")));
+
+    wasmer_cmd(&temp)
+        .arg("config")
+        .arg("--cflags")
+        .assert()
+        .success()
+        .stdout(contains(format!(
+            "-I{}\n",
+            wasmer_dir.join("include").display()
+        )));
+
+    wasmer_cmd(&temp)
+        .arg("config")
+        .arg("--includedir")
+        .assert()
+        .success()
+        .stdout(contains_path(wasmer_dir.join("include")));
+
+    wasmer_cmd(&temp)
+        .arg("config")
+        .arg("--libdir")
+        .assert()
+        .success()
+        .stdout(contains_path(wasmer_dir.join("lib")));
+
+    wasmer_cmd(&temp)
+        .arg("config")
+        .arg("--libs")
+        .assert()
+        .stdout(contains(format!(
+            "-L{} -lwasmer\n",
+            wasmer_dir.join("lib").display()
+        )));
+
+    wasmer_cmd(&temp)
+        .arg("config")
+        .arg("--prefix")
+        .assert()
+        .success()
+        .stdout(contains_path(wasmer_dir));
+
+    let output = wasmer_cmd(&temp)
+        .arg("config")
+        .arg("--pkg-config")
+        .output()
+        .unwrap();
+
+    let pkg_config = vec![
+        format!("prefix={}", wasmer_dir.display()),
+        format!("exec_prefix={}", wasmer_dir.join("bin").display()),
+        format!("includedir={}", wasmer_dir.join("include").display()),
+        format!("libdir={}", wasmer_dir.join("lib").display()),
+        format!(""),
+        format!("Name: wasmer"),
+        format!("Description: The Wasmer library for running WebAssembly"),
+        format!("Version: {}", env!("CARGO_PKG_VERSION")),
+        format!("Cflags: -I{}", wasmer_dir.join("include").display()),
+        format!("Libs: -L{} -lwasmer", wasmer_dir.join("lib").display()),
+    ]
+    .join("\n");
+
+    assert!(output.status.success());
+    let stderr = std::str::from_utf8(&output.stdout)
+        .unwrap()
+        .replace("\r\n", "\n");
+    assert_eq!(stderr.trim(), pkg_config.trim());
+
+    wasmer_cmd(&temp)
+        .arg("config")
+        .arg("--config-path")
+        .assert()
+        .success()
+        .stdout(contains_path(temp.path().join("wasmer.toml")));
+}

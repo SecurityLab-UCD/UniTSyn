@@ -1,0 +1,35 @@
+fn get_header(s: &str) -> String {
+        s.lines()
+            .next()
+            .unwrap()
+            .to_string()
+            .split_whitespace()
+            .nth(1)
+            .unwrap()
+            .trim()
+            .to_string()
+    }
+fn test_block_size_in_posix_portability_mode() {
+    fn get_header(block_size: &str) -> String {
+        let output = new_ucmd!()
+            .args(&["-P", "-B", block_size])
+            .succeeds()
+            .stdout_move_str();
+        output
+            .lines()
+            .next()
+            .unwrap()
+            .to_string()
+            .split_whitespace()
+            .nth(1)
+            .unwrap()
+            .trim()
+            .to_string()
+    }
+
+    assert_eq!(get_header("1024"), "1024-blocks");
+    assert_eq!(get_header("1K"), "1024-blocks");
+    assert_eq!(get_header("1KB"), "1000-blocks");
+    assert_eq!(get_header("1M"), "1048576-blocks");
+    assert_eq!(get_header("1MB"), "1000000-blocks");
+}

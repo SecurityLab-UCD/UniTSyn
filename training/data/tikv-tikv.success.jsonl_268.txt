@@ -1,0 +1,37 @@
+pub fn load(&self, ctx: TabletContext, create: bool) -> Result<CachedTablet<EK>>
+    where
+        EK: Clone,
+    {
+        assert!(ctx.suffix.is_some());
+        let id = ctx.id;
+        let path = self.tablet_path(id, ctx.suffix.unwrap());
+        if !create && !self.tablets.factory.exists(&path) {
+            return Err(Error::Other(box_err!(
+                "tablet ({}, {:?}) doesn't exist",
+                id,
+                ctx.suffix
+            )));
+        }
+        // TODO: use compaction filter to trim range.
+        let tablet = self.tablets.factory.open_tablet(ctx, &path)?;
+        let mut cached = self.get_or_default(id);
+        cached.set(tablet);
+        Ok(cached)
+    }
+fn test_batch_raft_fallback() {
+    let msg_count = Arc::new(AtomicUsize::new(0));
+    let batch_msg_count = Arc::new(AtomicUsize::new(0));
+    let service = MockKvForRaft::new(Arc::clone(&msg_count), Arc::clone(&batch_msg_count), false);
+    let (mock_server, port) = create_mock_server(service, 60000, 60100).unwrap();
+
+    let mut raft_client = get_raft_client_by_port(port);
+    (0..100).for_each(|_| {
+        raft_client.send(RaftMessage::default()).unwrap();
+        thread::sleep(time::Duration::from_millis(10));
+        raft_client.flush();
+    });
+
+    assert!(msg_count.load(Ordering::SeqCst) > 0);
+    assert_eq!(batch_msg_count.load(Ordering::SeqCst), 0);
+    drop(mock_server)
+}

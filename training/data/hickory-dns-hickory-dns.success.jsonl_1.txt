@@ -1,0 +1,26 @@
+pub fn response_code(&self) -> ResponseCode {
+        self.header.response_code()
+    }
+fn test_nxdomain_where_no_name_exists() {
+    named_test_harness("example.toml", |_, tcp_port, _, _, _| {
+        let io_loop = Runtime::new().unwrap();
+        let addr: SocketAddr = SocketAddr::new(
+            Ipv4Addr::new(127, 0, 0, 1).into(),
+            tcp_port.expect("no tcp_port"),
+        );
+        let (stream, sender) = TcpClientStream::<AsyncIoTokioAsStd<TokioTcpStream>>::new(addr);
+        let client = AsyncClient::new(Box::new(stream), sender, None);
+        let (mut client, bg) = io_loop.block_on(client).expect("client failed to connect");
+        hickory_proto::spawn_bg(&io_loop, bg);
+
+        let msg = io_loop
+            .block_on(client.query(
+                Name::from_str("nxdomain.example.com.").unwrap(),
+                DNSClass::IN,
+                RecordType::SRV,
+            ))
+            .unwrap();
+        assert_eq!(msg.response_code(), ResponseCode::NXDomain);
+        assert!(msg.answers().is_empty());
+    })
+}

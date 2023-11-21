@@ -1,0 +1,72 @@
+pub fn get_end_key(&self) -> &[u8] {
+        self.region.get_end_key()
+    }
+fn test_region_merge() {
+    let mut suite = TestSuite::new(3, ApiVersion::V2);
+    let keys = vec![b"rk0", b"rk1", b"rk2", b"rk3", b"rk4", b"rk5"];
+
+    suite.must_raw_put(keys[1], b"v1");
+    suite.must_raw_put(keys[3], b"v3");
+    suite.must_raw_put(keys[5], b"v5");
+
+    // Split to: region1: (-, 2), region3: [2, 4), region5: [4, +)
+    let region1 = suite.cluster.get_region(keys[1]);
+    suite.cluster.must_split(&region1, keys[2]);
+    let region1 = suite.cluster.get_region(keys[1]);
+    let region3 = suite.cluster.get_region(keys[3]);
+    suite.cluster.must_split(&region3, keys[4]);
+    let region3 = suite.cluster.get_region(keys[3]);
+    let region5 = suite.cluster.get_region(keys[5]);
+    assert_eq!(region1.get_end_key(), region3.get_start_key());
+    assert_eq!(region3.get_end_key(), region5.get_start_key());
+
+    // Transfer leaders: region 1 -> store 1, region 3 -> store 2, region 5 -> store
+    // 3.
+    suite.must_transfer_leader(&region1, 1);
+    suite.must_transfer_leader(&region3, 2);
+    suite.must_transfer_leader(&region5, 3);
+
+    // Write to region 1.
+    {
+        let leader1 = suite.must_leader_on_store(keys[1], 1);
+
+        suite.must_raw_put(keys[1], b"v2");
+        suite.must_raw_put(keys[1], b"v3");
+        suite.flush_timestamp(leader1.get_store_id()); // Flush to make ts of store 1 larger than others.
+        suite.must_raw_put(keys[1], b"v4");
+        assert_eq!(suite.must_raw_get(keys[1]), Some(b"v4".to_vec()));
+    }
+
+    // Make causal_ts_provider.async_flush() & handle_update_max_timestamp fail.
+    fail::cfg(FP_GET_TSO, "return(50)").unwrap();
+
+    // Merge region 1 to 3.
+    {
+        suite.must_merge_region_by_key(keys[1], keys[3]);
+        suite.must_leader_on_store(keys[1], 2);
+
+        // Write to store 2. Store 2 has a TSO batch smaller than store 1.
+        suite.raw_put_err_by_timestamp_not_synced(keys[1], b"v5");
+        assert_eq!(suite.must_raw_get(keys[1]), Some(b"v4".to_vec()));
+        suite.raw_put_err_by_timestamp_not_synced(keys[1], b"v6");
+        assert_eq!(suite.must_raw_get(keys[1]), Some(b"v4".to_vec()));
+    }
+
+    // Make handle_update_max_timestamp succeed.
+    fail::cfg(FP_GET_TSO, "off").unwrap();
+
+    // Merge region 3 to 5.
+    {
+        suite.must_merge_region_by_key(keys[3], keys[5]);
+        suite.must_leader_on_store(keys[1], 3);
+
+        // Write to store 3.
+        suite.must_raw_put(keys[1], b"v7");
+        assert_eq!(suite.must_raw_get(keys[1]), Some(b"v7".to_vec()));
+        suite.must_raw_put(keys[1], b"v8");
+        assert_eq!(suite.must_raw_get(keys[1]), Some(b"v8".to_vec()));
+    }
+
+    fail::remove(FP_GET_TSO);
+    suite.stop();
+}

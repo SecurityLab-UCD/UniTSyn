@@ -1,0 +1,32 @@
+pub(crate) fn is_empty(&self) -> bool {
+        self.reads_complete == 0 && self.reads_partial == 0
+    }
+fn test_terse_normal_format() {
+    // note: contains birth/creation date which increases test fragility
+    // * results may vary due to built-in `stat` limitations as well as linux kernel and rust version capability variations
+    let args = ["-t", "/"];
+    let ts = TestScenario::new(util_name!());
+    let actual = ts.ucmd().args(&args).succeeds().stdout_move_str();
+    let expect = unwrap_or_return!(expected_result(&ts, &args)).stdout_move_str();
+    println!("actual: {actual:?}");
+    println!("expect: {expect:?}");
+    let v_actual: Vec<&str> = actual.trim().split(' ').collect();
+    let mut v_expect: Vec<&str> = expect.trim().split(' ').collect();
+    assert!(!v_expect.is_empty());
+
+    // uu_stat does not support selinux
+    if v_actual.len() == v_expect.len() - 1 && v_expect[v_expect.len() - 1].contains(':') {
+        // assume last element contains: `SELinux security context string`
+        v_expect.pop();
+    }
+
+    // * allow for inequality if `stat` (aka, expect) returns "0" (unknown value)
+    assert!(
+        expect == "0"
+            || expect == "0\n"
+            || v_actual
+                .iter()
+                .zip(v_expect.iter())
+                .all(|(a, e)| a == e || *e == "0" || *e == "0\n")
+    );
+}

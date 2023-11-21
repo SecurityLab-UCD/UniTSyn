@@ -1,0 +1,22 @@
+pub fn file_exists<P: AsRef<Path>>(&self, path: P) -> bool {
+        match fs::metadata(self.plus(path)) {
+            Ok(m) => m.is_file(),
+            Err(_) => false,
+        }
+    }
+fn test_touch_set_ymdhms_time() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file = "test_touch_set_ymdhms_time";
+
+    ucmd.args(&["-t", "1501011234.56", file])
+        .succeeds()
+        .no_stderr();
+
+    assert!(at.file_exists(file));
+
+    let start_of_year = str_to_filetime("%Y%m%d%H%M.%S", "201501010000.00");
+    let (atime, mtime) = get_file_times(&at, file);
+    assert_eq!(atime, mtime);
+    assert_eq!(atime.unix_seconds() - start_of_year.unix_seconds(), 45296);
+    assert_eq!(mtime.unix_seconds() - start_of_year.unix_seconds(), 45296);
+}

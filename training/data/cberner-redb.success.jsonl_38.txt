@@ -1,0 +1,40 @@
+fn value(&self) -> V::SelfType<'_> {
+        V::from_bytes(&self.data)
+    }
+fn regression14() {
+    let tmpfile = create_tempfile();
+
+    let db = Database::create(tmpfile.path()).unwrap();
+
+    let table_def: MultimapTableDefinition<u64, &[u8]> = MultimapTableDefinition::new("x");
+
+    let mut tx = db.begin_write().unwrap();
+    tx.set_durability(Durability::None);
+    {
+        let mut t = tx.open_multimap_table(table_def).unwrap();
+        let value = vec![0; 1424];
+        t.insert(&539749, value.as_slice()).unwrap();
+    }
+    tx.commit().unwrap();
+
+    let mut tx = db.begin_write().unwrap();
+    tx.set_durability(Durability::None);
+    {
+        let mut t = tx.open_multimap_table(table_def).unwrap();
+        let value = vec![0; 2230];
+        t.insert(&776971, value.as_slice()).unwrap();
+
+        let mut iter = t.range(514043..(514043 + 514043)).unwrap().rev();
+        {
+            let (key, mut value_iter) = iter.next().unwrap().unwrap();
+            assert_eq!(key.value(), 776971);
+            assert_eq!(value_iter.next().unwrap().unwrap().value(), &[0; 2230]);
+        }
+        {
+            let (key, mut value_iter) = iter.next().unwrap().unwrap();
+            assert_eq!(key.value(), 539749);
+            assert_eq!(value_iter.next().unwrap().unwrap().value(), &[0; 1424]);
+        }
+    }
+    tx.abort().unwrap();
+}

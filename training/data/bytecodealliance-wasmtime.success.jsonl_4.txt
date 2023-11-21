@@ -1,0 +1,85 @@
+pub fn data(&self) -> &[u8] {
+        // N.B.: we emit every section into the .text section as far as
+        // the `CodeSink` is concerned; we do not bother to segregate
+        // the contents into the actual program text, the jumptable and the
+        // rodata (constant pool). This allows us to generate code assuming
+        // that these will not be relocated relative to each other, and avoids
+        // having to designate each section as belonging in one of the three
+        // fixed categories defined by `CodeSink`. If this becomes a problem
+        // later (e.g. because of memory permissions or similar), we can
+        // add this designation and segregate the output; take care, however,
+        // to add the appropriate relocations in this case.
+
+        &self.data[..]
+    }
+async fn call_linked_func_async() -> Result<(), Error> {
+    let mut config = Config::new();
+    config.async_support(true);
+    let engine = Engine::new(&config)?;
+    let mut store = Store::new(&engine, State::default());
+    store.call_hook(State::call_hook);
+
+    let f = Func::wrap4_async(
+        &mut store,
+        |caller: Caller<State>, a: i32, b: i64, c: f32, d: f64| {
+            Box::new(async move {
+                // Calling this func will switch context into wasm, then back to host:
+                assert_eq!(caller.data().context, vec![Context::Wasm, Context::Host]);
+
+                assert_eq!(
+                    caller.data().calls_into_host,
+                    caller.data().returns_from_host + 1
+                );
+                assert_eq!(
+                    caller.data().calls_into_wasm,
+                    caller.data().returns_from_wasm + 1
+                );
+                assert_eq!(a, 1);
+                assert_eq!(b, 2);
+                assert_eq!(c, 3.0);
+                assert_eq!(d, 4.0);
+            })
+        },
+    );
+
+    let mut linker = Linker::new(&engine);
+
+    linker.define(&mut store, "host", "f", f)?;
+
+    let wat = r#"
+        (module
+            (import "host" "f"
+                (func $f (param i32) (param i64) (param f32) (param f64)))
+            (func (export "export")
+                (call $f (i32.const 1) (i64.const 2) (f32.const 3.0) (f64.const 4.0)))
+        )
+    "#;
+    let module = Module::new(&engine, wat)?;
+
+    let inst = linker.instantiate_async(&mut store, &module).await?;
+    let export = inst
+        .get_export(&mut store, "export")
+        .expect("get export")
+        .into_func()
+        .expect("export is func");
+
+    export.call_async(&mut store, &[], &mut []).await?;
+
+    // One switch from vm to host to call f, another in return from f.
+    assert_eq!(store.data().calls_into_host, 1);
+    assert_eq!(store.data().returns_from_host, 1);
+    assert_eq!(store.data().calls_into_wasm, 1);
+    assert_eq!(store.data().returns_from_wasm, 1);
+
+    export
+        .typed::<(), ()>(&store)?
+        .call_async(&mut store, ())
+        .await?;
+
+    assert_eq!(store.data().calls_into_host, 2);
+    assert_eq!(store.data().returns_from_host, 2);
+    assert_eq!(store.data().calls_into_wasm, 2);
+    assert_eq!(store.data().returns_from_wasm, 2);
+
+    Ok(())
+}

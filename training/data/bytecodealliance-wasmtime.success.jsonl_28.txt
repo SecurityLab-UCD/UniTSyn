@@ -1,0 +1,19 @@
+fn success() -> Self {
+        Self::Success
+    }
+fn table_growth_failure() -> Result<()> {
+    let output = get_wasmtime_command()?
+        .args(&[
+            "run",
+            "-Wtrap-on-grow-failure",
+            "tests/all/cli_tests/table-grow-failure.wat",
+        ])
+        .output()?;
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("forcing trap when growing table"),
+        "bad stderr: {stderr}"
+    );
+    Ok(())
+}

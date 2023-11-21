@@ -1,0 +1,64 @@
+pub fn call(&self, mut ctx: impl AsContextMut, params: Params) -> Result<Results, Trap> {
+        // Note: Cloning an [`Engine`] is intentionally a cheap operation.
+        ctx.as_context().store.engine().clone().execute_func(
+            ctx.as_context_mut(),
+            &self.func,
+            params,
+            <CallResultsTuple<Results>>::default(),
+        )
+    }
+fn dynamic_type_check_works() {
+    let mut store = test_setup();
+    let identity = Func::wrap(&mut store, |value: i32| value);
+    let mut result = Value::I32(0);
+    // Case: Too few inputs given to function.
+    assert_matches!(
+        identity.call(&mut store, &[], core::slice::from_mut(&mut result)),
+        Err(Error::Func(FuncError::MismatchingParameterLen))
+    );
+    // Case: Too many inputs given to function.
+    assert_matches!(
+        identity.call(
+            &mut store,
+            &[Value::I32(0), Value::I32(1)],
+            core::slice::from_mut(&mut result)
+        ),
+        Err(Error::Func(FuncError::MismatchingParameterLen))
+    );
+    // Case: Too few outputs given to function.
+    assert_matches!(
+        identity.call(&mut store, &[Value::I32(0)], &mut [],),
+        Err(Error::Func(FuncError::MismatchingResultLen))
+    );
+    // Case: Too many outputs given to function.
+    assert_matches!(
+        identity.call(
+            &mut store,
+            &[Value::I32(0)],
+            &mut [Value::I32(0), Value::I32(1)],
+        ),
+        Err(Error::Func(FuncError::MismatchingResultLen))
+    );
+    // Case: Mismatching type given as input to function.
+    for input in &[
+        Value::I64(0),
+        Value::F32(0.0.into()),
+        Value::F64(0.0.into()),
+    ] {
+        assert_matches!(
+            identity.call(
+                &mut store,
+                core::slice::from_ref(input),
+                core::slice::from_mut(&mut result)
+            ),
+            Err(Error::Func(FuncError::MismatchingParameterType))
+        );
+    }
+    // Case: Allow for incorrect result type.
+    //
+    // The result type will be overwritten anyways.
+    assert_matches!(
+        identity.call(&mut store, &[Value::I32(0)], &mut [Value::I64(0)]),
+        Ok(_)
+    );
+}

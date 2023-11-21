@@ -1,0 +1,106 @@
+pub fn contains<C: Comparator<K>>(&self, key: K, forest: &SetForest<K>, comp: &C) -> bool {
+        self.root
+            .expand()
+            .and_then(|root| Path::default().find(key, root, &forest.nodes, comp))
+            .is_some()
+    }
+fn bad_import_alignment() -> Result<()> {
+    let component = format!(
+        r#"
+(component
+  (import "unaligned-retptr" (func $unaligned_retptr (result string)))
+  (type $many_arg (tuple
+    string string string string
+    string string string string
+    string
+  ))
+  (import "unaligned-argptr" (func $unaligned_argptr (param "a" $many_arg)))
+  (core module $libc_panic
+    (memory (export "memory") 1)
+    (func (export "realloc") (param i32 i32 i32 i32) (result i32)
+      unreachable)
+  )
+  (core instance $libc_panic (instantiate $libc_panic))
+
+  (core func $unaligned_retptr_lower
+    (canon lower (func $unaligned_retptr) (memory $libc_panic "memory") (realloc (func $libc_panic "realloc")))
+  )
+  (core func $unaligned_argptr_lower
+    (canon lower (func $unaligned_argptr) (memory $libc_panic "memory") (realloc (func $libc_panic "realloc")))
+  )
+
+  (core module $m
+    (import "host" "unaligned-retptr" (func $unaligned_retptr (param i32)))
+    (import "host" "unaligned-argptr" (func $unaligned_argptr (param i32)))
+
+    (func (export "unaligned-retptr")
+     (call $unaligned_retptr (i32.const 1)))
+    (func (export "unaligned-argptr")
+     (call $unaligned_argptr (i32.const 1)))
+  )
+  (core instance $m (instantiate $m
+    (with "host" (instance
+      (export "unaligned-retptr" (func $unaligned_retptr_lower))
+      (export "unaligned-argptr" (func $unaligned_argptr_lower))
+    ))
+  ))
+
+  (func (export "unaligned-retptr2")
+    (canon lift (core func $m "unaligned-retptr"))
+  )
+  (func (export "unaligned-argptr2")
+    (canon lift (core func $m "unaligned-argptr"))
+  )
+)
+        "#
+    );
+
+    let engine = super::engine();
+    let mut linker = Linker::new(&engine);
+    linker
+        .root()
+        .func_wrap("unaligned-retptr", |_, _: ()| -> Result<(String,)> {
+            Ok((String::new(),))
+        })?;
+    linker.root().func_wrap(
+        "unaligned-argptr",
+        |_,
+         _: ((
+            WasmStr,
+            WasmStr,
+            WasmStr,
+            WasmStr,
+            WasmStr,
+            WasmStr,
+            WasmStr,
+            WasmStr,
+            WasmStr,
+        ),)|
+         -> Result<()> { unreachable!() },
+    )?;
+    let component = Component::new(&engine, component)?;
+    let mut store = Store::new(&engine, ());
+
+    let trap = linker
+        .instantiate(&mut store, &component)?
+        .get_typed_func::<(), ()>(&mut store, "unaligned-retptr2")?
+        .call(&mut store, ())
+        .unwrap_err();
+    assert!(
+        format!("{:?}", trap).contains("pointer not aligned"),
+        "{}",
+        trap
+    );
+    let trap = linker
+        .instantiate(&mut store, &component)?
+        .get_typed_func::<(), ()>(&mut store, "unaligned-argptr2")?
+        .call(&mut store, ())
+        .unwrap_err();
+    assert!(
+        format!("{:?}", trap).contains("pointer not aligned"),
+        "{}",
+        trap
+    );
+
+    Ok(())
+}

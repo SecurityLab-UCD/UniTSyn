@@ -1,0 +1,28 @@
+pub fn buffer_position(&self) -> usize {
+        // when internal state is OpenedTag, we have actually read until '<',
+        // which we don't want to show
+        if let ParseState::OpenedTag = self.state.state {
+            self.state.offset - 1
+        } else {
+            self.state.offset
+        }
+    }
+fn test_offset_err_comment_trim_text() {
+    let mut r = Reader::from_str("<a>\r\n <!--b>");
+    r.trim_text(true);
+
+    next_eq!(r, Start, b"a");
+    assert_eq!(r.buffer_position(), 3);
+
+    match r.read_event() {
+        // error at char 7: no closing --> tag found
+        Err(e) => assert_eq!(
+            r.buffer_position(),
+            7,
+            "expecting buf_pos = 7, found {}, err {:?}",
+            r.buffer_position(),
+            e
+        ),
+        e => panic!("expecting error, found {:?}", e),
+    }
+}

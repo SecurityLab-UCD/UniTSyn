@@ -1,0 +1,46 @@
+pub fn to_string(&self) -> String {
+        format!("label{}", self.0)
+    }
+fn total_core_instances_limit() -> Result<()> {
+    const INSTANCE_LIMIT: u32 = 10;
+    let mut pool = crate::small_pool_config();
+    pool.total_core_instances(INSTANCE_LIMIT);
+    let mut config = Config::new();
+    config.allocation_strategy(InstanceAllocationStrategy::Pooling(pool));
+    config.dynamic_memory_guard_size(0);
+    config.static_memory_guard_size(0);
+    config.static_memory_maximum_size(65536);
+
+    let engine = Engine::new(&config)?;
+    let module = Module::new(&engine, r#"(module)"#)?;
+
+    // Instantiate to the limit
+    {
+        let mut store = Store::new(&engine, ());
+
+        for _ in 0..INSTANCE_LIMIT {
+            Instance::new(&mut store, &module, &[])?;
+        }
+
+        match Instance::new(&mut store, &module, &[]) {
+            Ok(_) => panic!("instantiation should fail"),
+            Err(e) => assert_eq!(
+                e.to_string(),
+                format!(
+                    "maximum concurrent core instance limit of {} reached",
+                    INSTANCE_LIMIT
+                )
+            ),
+        }
+    }
+
+    // With the above store dropped, ensure instantiations can be made
+
+    let mut store = Store::new(&engine, ());
+
+    for _ in 0..INSTANCE_LIMIT {
+        Instance::new(&mut store, &module, &[])?;
+    }
+
+    Ok(())
+}

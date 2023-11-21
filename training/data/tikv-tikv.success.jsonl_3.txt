@@ -1,0 +1,35 @@
+pub fn alive_cnt(&self) -> usize {
+        self.normals.len()
+    }
+fn test_router_trace() {
+    let (control_tx, control_fsm) = Runner::new(10);
+    let (router, mut system) =
+        batch_system::create_system(&Config::default(), control_tx, control_fsm, None);
+    let builder = Builder::new();
+    system.spawn("test".to_owned(), builder);
+
+    let register_runner = |addr| {
+        let (sender, runner) = Runner::new(10);
+        let mailbox = BasicMailbox::new(sender, runner, router.state_cnt().clone());
+        router.register(addr, mailbox);
+    };
+    let close_runner = |addr| {
+        router.close(addr);
+    };
+
+    let mut mailboxes = vec![];
+    for i in 0..10 {
+        register_runner(i);
+        mailboxes.push(router.mailbox(i).unwrap());
+    }
+    assert_eq!(router.alive_cnt(), 10);
+    assert_eq!(router.state_cnt().load(Ordering::Relaxed), 11);
+    for i in 0..10 {
+        close_runner(i);
+    }
+    assert_eq!(router.alive_cnt(), 0);
+    assert_eq!(router.state_cnt().load(Ordering::Relaxed), 11);
+    drop(mailboxes);
+    assert_eq!(router.alive_cnt(), 0);
+    assert_eq!(router.state_cnt().load(Ordering::Relaxed), 1);
+}

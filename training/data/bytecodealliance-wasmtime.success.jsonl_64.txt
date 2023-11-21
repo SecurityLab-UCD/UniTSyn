@@ -1,0 +1,19 @@
+pub(crate) fn module(&self) -> &Arc<Module> {
+        self.runtime_info.module()
+    }
+fn test_unknown_import_error() -> Result<()> {
+    let mut store = Store::<()>::default();
+    let linker = Linker::new(store.engine());
+    let module = Module::new(
+        store.engine(),
+        r#"(module (import "unknown-module" "unknown-name" (func)))"#,
+    )?;
+    let err = linker
+        .instantiate(&mut store, &module)
+        .expect_err("should fail");
+    let unknown_import: UnknownImportError = err.downcast()?;
+    assert_eq!(unknown_import.module(), "unknown-module");
+    assert_eq!(unknown_import.name(), "unknown-name");
+    unknown_import.ty().unwrap_func();
+    Ok(())
+}

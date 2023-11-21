@@ -1,0 +1,46 @@
+fn write(&mut self, buf: &[u8]) -> Result<usize> {
+        self.complete_prior_io()?;
+
+        let len = self.conn.writer().write(buf)?;
+
+        // Try to write the underlying transport here, but don't let
+        // any errors mask the fact we've consumed `len` bytes.
+        // Callers will learn of permanent errors on the next call.
+        let _ = self.conn.complete_io(self.sock);
+
+        Ok(len)
+    }
+fn buffered_both_data_sent() {
+    let server_config = Arc::new(make_server_config(KeyType::Rsa));
+
+    for version in rustls::ALL_VERSIONS {
+        let client_config = make_client_config_with_versions(KeyType::Rsa, &[version]);
+        let (mut client, mut server) =
+            make_pair_for_arc_configs(&Arc::new(client_config), &server_config);
+
+        assert_eq!(
+            12,
+            server
+                .writer()
+                .write(b"from-server!")
+                .unwrap()
+        );
+        assert_eq!(
+            12,
+            client
+                .writer()
+                .write(b"from-client!")
+                .unwrap()
+        );
+
+        do_handshake(&mut client, &mut server);
+
+        transfer(&mut server, &mut client);
+        client.process_new_packets().unwrap();
+        transfer(&mut client, &mut server);
+        server.process_new_packets().unwrap();
+
+        check_read(&mut client.reader(), b"from-server!");
+        check_read(&mut server.reader(), b"from-client!");
+    }
+}

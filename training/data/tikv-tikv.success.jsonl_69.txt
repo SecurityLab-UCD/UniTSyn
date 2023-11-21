@@ -1,0 +1,40 @@
+pub fn contains(&self, op: IoOp) -> bool {
+        match *self {
+            IoRateLimitMode::WriteOnly => op == IoOp::Write,
+            IoRateLimitMode::ReadOnly => op == IoOp::Read,
+            _ => true,
+        }
+    }
+fn test_deadline_3() {
+    let data = vec![
+        (1, Some("name:0"), 2),
+        (2, Some("name:4"), 3),
+        (4, Some("name:3"), 1),
+        (5, Some("name:1"), 4),
+    ];
+
+    let product = ProductTable::new();
+    let (_, endpoint, _) = {
+        let engine = tikv::storage::TestEngineBuilder::new().build().unwrap();
+        let cfg = tikv::server::Config {
+            end_point_request_max_handle_duration: tikv_util::config::ReadableDuration::secs(1),
+            ..Default::default()
+        };
+        init_data_with_details(Context::default(), engine, &product, &data, true, &cfg)
+    };
+    let req = DagSelect::from(&product).build();
+
+    fail::cfg("kv_cursor_seek", "sleep(2000)").unwrap();
+    fail::cfg("copr_batch_initial_size", "return(1)").unwrap();
+    let cop_resp = handle_request(&endpoint, req);
+    let mut resp = SelectResponse::default();
+    resp.merge_from_bytes(cop_resp.get_data()).unwrap();
+
+    assert!(
+        cop_resp.other_error.contains("exceeding the deadline")
+            || resp
+                .get_error()
+                .get_msg()
+                .contains("exceeding the deadline")
+    );
+}

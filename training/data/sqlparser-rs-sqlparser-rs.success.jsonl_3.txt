@@ -1,0 +1,13 @@
+pub fn verified_expr(&self, sql: &str) -> Expr {
+        self.expr_parses_to(sql, sql)
+    }
+fn parse_scalar_subqueries() {
+    let sql = "(SELECT 1) + (SELECT 2)";
+    assert_matches!(
+        verified_expr(sql),
+        Expr::BinaryOp {
+            op: BinaryOperator::Plus,
+            ..
+        }
+    );
+}

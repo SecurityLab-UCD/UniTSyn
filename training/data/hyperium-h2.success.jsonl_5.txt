@@ -1,0 +1,21 @@
+pub fn stream_id(&self) -> StreamId {
+        self.stream_id
+    }
+async fn read_push_promise() {
+    let mut codec = raw_codec! {
+        read => [
+            0, 0, 0x5,
+            0x5, 0x4,
+            0, 0, 0, 0x1, // stream id
+            0, 0, 0, 0x2, // promised id
+            0x82, // HPACK :method="GET"
+        ];
+    };
+
+    let pp = poll_frame!(PushPromise, codec);
+    assert_eq!(pp.stream_id(), 1);
+    assert_eq!(pp.promised_id(), 2);
+    assert_eq!(pp.into_parts().0.method, Some(Method::GET));
+
+    assert_closed!(codec);
+}

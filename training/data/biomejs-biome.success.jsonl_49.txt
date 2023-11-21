@@ -1,0 +1,40 @@
+pub fn is_err(&self) -> bool {
+        if let Self::WithOptions(rule) = self {
+            rule.level == RulePlainConfiguration::Error
+        } else {
+            matches!(self, Self::Plain(RulePlainConfiguration::Error))
+        }
+    }
+fn file_too_large() {
+    let mut fs = MemoryFileSystem::default();
+    let mut console = BufferConsole::default();
+
+    let file_path = Path::new("format.js");
+    fs.insert(file_path.into(), "statement();\n".repeat(80660).as_bytes());
+
+    let result = run_cli(
+        DynRef::Borrowed(&mut fs),
+        &mut console,
+        Args::from(
+            [
+                ("format"),
+                file_path.as_os_str().to_str().unwrap(),
+                ("--write"),
+            ]
+            .as_slice(),
+        ),
+    );
+
+    assert!(result.is_err(), "run_cli returned {result:?}");
+
+    // Do not store the content of the file in the snapshot
+    fs.remove(file_path);
+
+    assert_cli_snapshot(SnapshotPayload::new(
+        module_path!(),
+        "file_too_large",
+        fs,
+        console,
+        result,
+    ));
+}

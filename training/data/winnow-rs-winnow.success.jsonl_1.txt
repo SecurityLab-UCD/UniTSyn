@@ -1,0 +1,38 @@
+fn twolines(i: Partial<&str>) -> IResult<Partial<&str>, (&str, &str)> {
+        let (i, l1) = not_line_ending.parse_peek(i)?;
+        let (i, _) = line_ending.parse_peek(i)?;
+        let (i, l2) = not_line_ending.parse_peek(i)?;
+        let (i, _) = line_ending.parse_peek(i)?;
+
+        Ok((i, (l1, l2)))
+    }
+fn issue_655() {
+    use winnow::ascii::{line_ending, not_line_ending};
+    fn twolines(i: Partial<&str>) -> IResult<Partial<&str>, (&str, &str)> {
+        let (i, l1) = not_line_ending.parse_peek(i)?;
+        let (i, _) = line_ending.parse_peek(i)?;
+        let (i, l2) = not_line_ending.parse_peek(i)?;
+        let (i, _) = line_ending.parse_peek(i)?;
+
+        Ok((i, (l1, l2)))
+    }
+
+    assert_eq!(
+        twolines(Partial::new("foo\nbar\n")),
+        Ok((Partial::new(""), ("foo", "bar")))
+    );
+    assert_eq!(
+        twolines(Partial::new("féo\nbar\n")),
+        Ok((Partial::new(""), ("féo", "bar")))
+    );
+    assert_eq!(
+        twolines(Partial::new("foé\nbar\n")),
+        Ok((Partial::new(""), ("foé", "bar")))
+    );
+    assert_eq!(
+        twolines(Partial::new("foé\r\nbar\n")),
+        Ok((Partial::new(""), ("foé", "bar")))
+    );
+}
+
+#[cf

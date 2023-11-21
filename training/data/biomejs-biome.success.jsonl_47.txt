@@ -1,0 +1,63 @@
+pub fn is_err(&self) -> bool {
+        if let Self::WithOptions(rule) = self {
+            rule.level == RulePlainConfiguration::Error
+        } else {
+            matches!(self, Self::Plain(RulePlainConfiguration::Error))
+        }
+    }
+fn does_not_format_if_files_are_listed_in_ignore_option() {
+    let mut fs = MemoryFileSystem::default();
+    let mut console = BufferConsole::default();
+
+    let file_path = Path::new("biome.json");
+    fs.insert(
+        file_path.into(),
+        CONFIG_FORMATTER_AND_FILES_IGNORE.as_bytes(),
+    );
+
+    let file_path_test1 = Path::new("test1.js");
+    fs.insert(file_path_test1.into(), UNFORMATTED.as_bytes());
+
+    let file_path_test2 = Path::new("test2.js");
+    fs.insert(file_path_test2.into(), UNFORMATTED.as_bytes());
+
+    let result = run_cli(
+        DynRef::Borrowed(&mut fs),
+        &mut console,
+        Args::from(
+            [
+                ("format"),
+                file_path_test1.as_os_str().to_str().unwrap(),
+                file_path_test2.as_os_str().to_str().unwrap(),
+                ("--write"),
+            ]
+            .as_slice(),
+        ),
+    );
+
+    assert!(result.is_err(), "run_cli returned {result:?}");
+
+    let mut buffer = String::new();
+    fs.open(file_path_test1)
+        .unwrap()
+        .read_to_string(&mut buffer)
+        .unwrap();
+
+    assert_eq!(buffer, UNFORMATTED);
+
+    let mut buffer = String::new();
+    fs.open(file_path_test2)
+        .unwrap()
+        .read_to_string(&mut buffer)
+        .unwrap();
+
+    assert_eq!(buffer, UNFORMATTED);
+
+    assert_cli_snapshot(SnapshotPayload::new(
+        module_path!(),
+        "does_not_format_if_files_are_listed_in_ignore_option",
+        fs,
+        console,
+        result,
+    ));
+}

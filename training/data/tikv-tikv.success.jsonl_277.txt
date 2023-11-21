@@ -1,0 +1,33 @@
+pub fn must_get(&mut self, key: &[u8]) -> Option<Vec<u8>> {
+        self.get_impl(CF_DEFAULT, key, true)
+    }
+fn test_raftkv() {
+    let count = 1;
+    let mut cluster = new_server_cluster(0, count);
+    cluster.run();
+
+    // make sure leader has been elected.
+    assert_eq!(cluster.must_get(b"k1"), None);
+
+    let region = cluster.get_region(b"");
+    let leader_id = cluster.leader_of_region(region.get_id()).unwrap();
+    let mut storage = cluster.sim.rl().storages[&leader_id.get_id()].clone();
+
+    let mut ctx = Context::default();
+    ctx.set_region_id(region.get_id());
+    ctx.set_region_epoch(region.get_region_epoch().clone());
+    ctx.set_peer(region.get_peers()[0].clone());
+    let snap_ctx = SnapContext {
+        pb_ctx: &ctx,
+        ..Default::default()
+    };
+
+    get_put(snap_ctx.clone(), &mut storage);
+    batch(snap_ctx.clone(), &mut storage);
+    seek(snap_ctx.clone(), &mut storage);
+    near_seek(snap_ctx.clone(), &mut storage);
+    cf(snap_ctx, &mut storage);
+    empty_write(&ctx, &storage);
+    wrong_context(&ctx, &storage);
+    // TODO: test multiple node
+}

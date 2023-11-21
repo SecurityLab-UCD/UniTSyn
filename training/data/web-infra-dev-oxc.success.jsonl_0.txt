@@ -1,0 +1,20 @@
+pub fn is_empty(&self) -> bool {
+        self.body.is_empty() && self.directives.is_empty()
+    }
+fn test() {
+    let files = WalkDir::new("tests/terser/fixtures")
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|e| !e.file_type().is_dir())
+        .collect::<Vec<_>>();
+    assert!(!files.is_empty());
+    for file in files {
+        let path = file.path();
+        let source_text = std::fs::read_to_string(path).unwrap();
+        let source_type = SourceType::from_path(path).unwrap();
+        let allocator = Allocator::default();
+        let parser_return = Parser::new(&allocator, &source_text, source_type).parse();
+        let program = allocator.alloc(parser_return.program);
+        TestSuite::from_program(&source_text, program).execute_tests();
+    }
+}

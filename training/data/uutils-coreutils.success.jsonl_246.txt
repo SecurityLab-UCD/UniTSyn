@@ -1,0 +1,16 @@
+pub fn file_exists<P: AsRef<Path>>(&self, path: P) -> bool {
+        match fs::metadata(self.plus(path)) {
+            Ok(m) => m.is_file(),
+            Err(_) => false,
+        }
+    }
+fn test_rm_silently_accepts_presume_input_tty2() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file_2 = "test_rm_silently_accepts_presume_input_tty2";
+
+    at.touch(file_2);
+
+    ucmd.arg("---presume-input-tty").arg(file_2).succeeds();
+
+    assert!(!at.file_exists(file_2));
+}

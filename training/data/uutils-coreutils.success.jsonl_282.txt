@@ -1,0 +1,13 @@
+fn count(&self) -> usize {
+        self.collect().len()
+    }
+fn test_split_obs_lines_within_combined_shorts_tailing_suffix_length() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let name = "obs-lines-combined-shorts-tailing-suffix-length";
+    RandomFile::new(&at, name).add_lines(1000);
+    ucmd.args(&["-d200a4", name]).succeeds();
+
+    let glob = Glob::new(&at, ".", r"x\d\d\d\d$");
+    assert_eq!(glob.count(), 5);
+    assert_eq!(glob.collate(), at.read_bytes(name));
+}

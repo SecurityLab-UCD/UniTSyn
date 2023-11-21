@@ -1,0 +1,100 @@
+fn get(&self, mut req: Get) -> PdFuture<GetResponse> {
+        let timer = Instant::now();
+        self.fill_cluster_id_for(req.inner.mut_header());
+        let executor = move |client: &Client, req: GetRequest| {
+            let handler = {
+                let inner = client.inner.rl();
+                let r = inner
+                    .meta_storage
+                    .get_async_opt(&req, call_option_inner(&inner));
+                futures::future::ready(r).err_into().try_flatten()
+            };
+            Box::pin(async move {
+                fail::fail_point!("meta_storage_get", req.key.ends_with(b"rejectme"), |_| {
+                    Err(super::Error::Grpc(grpcio::Error::RemoteStopped))
+                });
+                let resp = handler.await?;
+                PD_REQUEST_HISTOGRAM_VEC
+                    .meta_storage_get
+                    .observe(timer.saturating_elapsed_secs());
+                Ok(resp)
+            }) as _
+        };
+
+        self.pd_client
+            .request(req.into(), executor, LEADER_CHANGE_RETRY)
+            .execute()
+    }
+fn test_txn_gc_keys_handled() {
+    let store_id = 1;
+    GC_COMPACTION_FILTER_MVCC_DELETION_MET.reset();
+    GC_COMPACTION_FILTER_MVCC_DELETION_HANDLED.reset();
+
+    let engine = TestEngineBuilder::new().build().unwrap();
+    let mut prefixed_engine = PrefixedEngine(engine.clone());
+
+    let (tx, _rx) = mpsc::channel();
+    let feature_gate = FeatureGate::default();
+    feature_gate.set_version("5.0.0").unwrap();
+    let mut gc_worker = GcWorker::new(
+        prefixed_engine.clone(),
+        tx,
+        GcConfig::default(),
+        feature_gate,
+        Arc::new(MockRegionInfoProvider::new(vec![])),
+    );
+    gc_worker.start(store_id).unwrap();
+
+    let mut r1 = Region::default();
+    r1.set_id(1);
+    r1.mut_region_epoch().set_version(1);
+    r1.set_start_key(b"".to_vec());
+    r1.set_end_key(b"".to_vec());
+    r1.mut_peers().push(Peer::default());
+    r1.mut_peers()[0].set_store_id(store_id);
+
+    let sp_provider = MockSafePointProvider(200);
+    let mut host = CoprocessorHost::<RocksEngine>::default();
+    let ri_provider = RegionInfoAccessor::new(&mut host);
+    let auto_gc_cfg = AutoGcConfig::new(sp_provider, ri_provider, 1);
+    let safe_point = Arc::new(AtomicU64::new(500));
+
+    gc_worker.start_auto_gc(auto_gc_cfg, safe_point).unwrap();
+    host.on_region_changed(&r1, RegionChangeEvent::Create, StateRole::Leader);
+
+    let db = engine.kv_engine().unwrap().as_inner().clone();
+    let cf = get_cf_handle(&db, CF_WRITE).unwrap();
+
+    for i in 0..3 {
+        let k = format!("k{:02}", i).into_bytes();
+        must_prewrite_put(&mut prefixed_engine, &k, b"value", &k, 101);
+        must_commit(&mut prefixed_engine, &k, 101, 102);
+        must_prewrite_delete(&mut prefixed_engine, &k, &k, 151);
+        must_commit(&mut prefixed_engine, &k, 151, 152);
+    }
+
+    db.flush_cf(cf, true, false).unwrap();
+
+    db.compact_range_cf(cf, None, None);
+
+    // This compaction can schedule gc task
+    db.compact_range_cf(cf, None, None);
+    thread::sleep(Duration::from_millis(100));
+
+    assert_eq!(
+        GC_COMPACTION_FILTER_MVCC_DELETION_MET
+            .with_label_values(&[STAT_TXN_KEYMODE])
+            .get(),
+        6
+    );
+
+    assert_eq!(
+        GC_COMPACTION_FILTER_MVCC_DELETION_HANDLED
+            .with_label_values(&[STAT_TXN_KEYMODE])
+            .get(),
+        3
+    );
+
+    GC_COMPACTION_FILTER_MVCC_DELETION_MET.reset();
+    GC_COMPACTION_FILTER_MVCC_DELETION_HANDLED.reset();
+}

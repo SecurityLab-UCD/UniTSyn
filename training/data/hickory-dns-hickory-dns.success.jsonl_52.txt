@@ -1,0 +1,16 @@
+pub fn id(&self) -> u16 {
+        self.id
+    }
+fn retry_on_retryable_error() {
+    let handle = RetryDnsHandle::new(
+        TestClient {
+            retries: 1,
+            error_response: ResolveError::from(std::io::Error::from(std::io::ErrorKind::TimedOut)),
+            attempts: Arc::new(AtomicU16::new(0)),
+        },
+        2,
+    );
+    let test1 = Message::new();
+    let result = block_on(handle.send(test1).first_answer()).expect("should have succeeded");
+    assert_eq!(result.id(), 1); // this is checking the number of iterations the TestClient ran
+}

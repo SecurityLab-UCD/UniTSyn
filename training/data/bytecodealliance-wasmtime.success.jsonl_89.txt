@@ -1,0 +1,34 @@
+fn len(&self) -> usize {
+            self.hash_table.len()
+        }
+fn test_trap_trace() -> Result<()> {
+    let mut store = Store::<()>::default();
+    let wat = r#"
+        (module $hello_mod
+            (func (export "run") (call $hello))
+            (func $hello (unreachable))
+        )
+    "#;
+
+    let module = Module::new(store.engine(), wat)?;
+    let instance = Instance::new(&mut store, &module, &[])?;
+    let run_func = instance.get_typed_func::<(), ()>(&mut store, "run")?;
+
+    let e = run_func.call(&mut store, ()).unwrap_err();
+
+    let trace = e.downcast_ref::<WasmBacktrace>().unwrap().frames();
+    assert_eq!(trace.len(), 2);
+    assert_eq!(trace[0].module().name().unwrap(), "hello_mod");
+    assert_eq!(trace[0].func_index(), 1);
+    assert_eq!(trace[0].func_name(), Some("hello"));
+    assert_eq!(trace[0].func_offset(), Some(1));
+    assert_eq!(trace[0].module_offset(), Some(0x26));
+    assert_eq!(trace[1].module().name().unwrap(), "hello_mod");
+    assert_eq!(trace[1].func_index(), 0);
+    assert_eq!(trace[1].func_name(), None);
+    assert_eq!(trace[1].func_offset(), Some(1));
+    assert_eq!(trace[1].module_offset(), Some(0x21));
+    assert_eq!(e.downcast::<Trap>()?, Trap::UnreachableCodeReached);
+
+    Ok(())
+}

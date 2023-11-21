@@ -1,0 +1,27 @@
+pub(crate) fn is_empty(&self) -> bool {
+        self.reads_complete == 0 && self.reads_partial == 0
+    }
+fn test_chown_no_change_to_user() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+
+    let result = scene.cmd("whoami").run();
+    if skipping_test_is_okay(&result, "whoami: cannot find name for user ID") {
+        return;
+    }
+    let user_name = String::from(result.stdout_str().trim());
+    assert!(!user_name.is_empty());
+
+    for (i, from) in ["42", ":42", "42:42"].iter().enumerate() {
+        let file = i.to_string();
+        at.touch(&file);
+        scene
+            .ucmd()
+            .arg("-v")
+            .arg(format!("--from={from}"))
+            .arg("43")
+            .arg(&file)
+            .succeeds()
+            .stdout_only(format!("ownership of '{file}' retained as {user_name}\n"));
+    }
+}

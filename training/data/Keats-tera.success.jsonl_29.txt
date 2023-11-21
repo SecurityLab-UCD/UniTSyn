@@ -1,0 +1,25 @@
+pub fn render(&self, template_name: &str, context: &Context) -> Result<String> {
+        let template = self.get_template(template_name)?;
+        let renderer = Renderer::new(template, self, context);
+        renderer.render()
+    }
+fn can_remove_whitespace_macros() {
+    let mut context = Context::new();
+    context.insert("numbers", &vec![1, 2, 3]);
+
+    let inputs = vec![
+        (r#" {%- import "macros" as macros -%} {{macros::hey()}}"#, "Hey!"),
+        (r#" {% import "macros" as macros %} {{macros::hey()}}"#, "Hey!"),
+        (r#" {%- import "macros" as macros %} {%- set hey = macros::hey() -%} {{hey}}"#, "Hey!"),
+    ];
+
+    for (input, expected) in inputs {
+        let mut tera = Tera::default();
+        tera.add_raw_templates(vec![
+            ("macros", "{% macro hey() -%} Hey! {%- endmacro %}"),
+            ("tpl", input),
+        ])
+        .unwrap();
+        assert_eq!(tera.render("tpl", &context).unwrap(), expected);
+    }
+}

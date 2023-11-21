@@ -1,0 +1,25 @@
+fn get_header(s: &str) -> String {
+        s.lines()
+            .next()
+            .unwrap()
+            .to_string()
+            .split_whitespace()
+            .nth(1)
+            .unwrap()
+            .trim()
+            .to_string()
+    }
+fn test_block_size_from_env() {
+    fn get_header(env_var: &str, env_value: &str) -> String {
+        let output = new_ucmd!()
+            .arg("--output=size")
+            .env(env_var, env_value)
+            .succeeds()
+            .stdout_move_str();
+        output.lines().next().unwrap().trim().to_string()
+    }
+
+    assert_eq!(get_header("DF_BLOCK_SIZE", "111"), "111B-blocks");
+    assert_eq!(get_header("BLOCK_SIZE", "222"), "222B-blocks");
+    assert_eq!(get_header("BLOCKSIZE", "333"), "333B-blocks");
+}

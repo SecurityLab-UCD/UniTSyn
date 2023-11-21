@@ -1,0 +1,52 @@
+pub fn is_in_joint(&self, region_id: u64) -> bool {
+        let region = block_on(self.get_region_by_id(region_id))
+            .unwrap()
+            .expect("region not exist");
+        region.get_peers().iter().any(|p| {
+            p.get_role() == PeerRole::IncomingVoter || p.get_role() == PeerRole::DemotingVoter
+        })
+    }
+fn test_restart_in_joint_state() {
+    let mut cluster = new_node_cluster(0, 3);
+    let pd_client = Arc::clone(&cluster.pd_client);
+    pd_client.disable_default_operator();
+    let region_id = cluster.run_conf_change();
+
+    cluster.must_put(b"k1", b"v1");
+
+    pd_client.must_add_peer(region_id, new_peer(2, 2));
+    pd_client.must_add_peer(region_id, new_learner_peer(3, 3));
+    must_get_equal(&cluster.get_engine(2), b"k1", b"v1");
+    must_get_equal(&cluster.get_engine(3), b"k1", b"v1");
+
+    // Enter joint
+    pd_client.must_joint_confchange(
+        region_id,
+        vec![
+            (ConfChangeType::AddLearnerNode, new_learner_peer(2, 2)),
+            (ConfChangeType::AddNode, new_peer(3, 3)),
+        ],
+    );
+    assert!(pd_client.is_in_joint(region_id));
+
+    cluster.stop_node(1);
+    sleep_ms(50);
+
+    cluster.run_node(1).unwrap();
+    cluster.must_transfer_leader(1, new_peer(1, 1));
+
+    // Still in joint state
+    assert!(pd_client.is_in_joint(region_id));
+    cluster.must_put(b"k2", b"v2");
+    must_get_equal(&cluster.get_engine(2), b"k2", b"v2");
+    must_get_equal(&cluster.get_engine(3), b"k2", b"v2");
+
+    // Leave joint
+    pd_client.must_leave_joint(region_id);
+
+    // Joint confchange finished
+    let region = cluster.get_region(b"k2");
+    must_has_peer(&region, 1, PeerRole::Voter);
+    must_has_peer(&region, 2, PeerRole::Learner);
+    must_has_peer(&region, 3, PeerRole::Voter);
+}

@@ -1,0 +1,14 @@
+pub fn fuel_consumed(&self) -> Option<u64> {
+        self.inner.fuel_consumed()
+    }
+fn manual_edge_cases() {
+    let mut config = Config::new();
+    config.consume_fuel(true);
+    let engine = Engine::new(&config).unwrap();
+    let mut store = Store::new(&engine, ());
+    store.add_fuel(u64::MAX).unwrap();
+    assert_eq!(store.fuel_consumed(), Some(0));
+    assert!(store.consume_fuel(u64::MAX).is_err());
+    assert!(store.consume_fuel(i64::MAX as u64 + 1).is_err());
+    assert_eq!(store.consume_fuel(i64::MAX as u64).unwrap(), 0);
+}

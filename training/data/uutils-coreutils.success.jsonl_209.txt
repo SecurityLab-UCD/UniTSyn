@@ -1,0 +1,25 @@
+pub fn file_exists<P: AsRef<Path>>(&self, path: P) -> bool {
+        match fs::metadata(self.plus(path)) {
+            Ok(m) => m.is_file(),
+            Err(_) => false,
+        }
+    }
+fn test_mv_numbered_if_existing_backup_nil() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file_a = "test_mv_backup_numbering_file_a";
+    let file_b = "test_mv_backup_numbering_file_b";
+    let file_b_backup = "test_mv_backup_numbering_file_b.~1~";
+
+    at.touch(file_a);
+    at.touch(file_b);
+    at.touch(file_b_backup);
+    ucmd.arg("--backup=nil")
+        .arg(file_a)
+        .arg(file_b)
+        .succeeds()
+        .no_stderr();
+
+    assert!(at.file_exists(file_b));
+    assert!(at.file_exists(file_b_backup));
+    assert!(at.file_exists(format!("{file_b}.~2~")));
+}

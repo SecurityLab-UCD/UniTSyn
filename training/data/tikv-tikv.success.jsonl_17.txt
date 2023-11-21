@@ -1,0 +1,9 @@
+pub fn path(mut self, path: impl AsRef<Path>) -> Self {
+        self.path = Some(path.as_ref().to_path_buf());
+        self
+    }
+fn path() {
+    let db = default_engine();
+    let path = db.tempdir.path().to_str().unwrap();
+    assert_eq!(db.engine.path(), path);
+}

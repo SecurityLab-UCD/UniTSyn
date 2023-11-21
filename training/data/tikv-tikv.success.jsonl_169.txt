@@ -1,0 +1,32 @@
+fn is_empty(&self) -> bool {
+        self.pending_writes.is_empty() && self.unpacked_size == 0
+    }
+fn test_analyze_sampling_bernoulli() {
+    let data = vec![
+        (1, Some("name:0"), 2),
+        (2, Some("name:4"), 3),
+        (4, Some("name:3"), 1),
+        (5, None, 4),
+        (6, Some("name:1"), 1),
+        (7, Some("name:1"), 1),
+        (8, Some("name:1"), 1),
+        (9, Some("name:2"), 1),
+        (10, Some("name:2"), 1),
+    ];
+
+    let product = ProductTable::new();
+    let (_, endpoint, _) = init_data_with_commit(&product, &data, true);
+
+    // Pass the 2nd column as a column group.
+    let req = new_analyze_sampling_req(&product, 1, 0, 0.5);
+    let resp = handle_request(&endpoint, req);
+    assert!(!resp.get_data().is_empty());
+    let mut analyze_resp = AnalyzeColumnsResp::default();
+    analyze_resp.merge_from_bytes(resp.get_data()).unwrap();
+    let collector = analyze_resp.get_row_collector();
+    // The column group is at 4th place and the data should be equal to the 2nd.
+    assert_eq!(collector.get_null_counts(), vec![0, 1, 0, 1]);
+    assert_eq!(collector.get_count(), 9);
+    assert_eq!(collector.get_fm_sketch().len(), 4);
+    assert_eq!(collector.get_total_size(), vec![72, 56, 9, 56]);
+}

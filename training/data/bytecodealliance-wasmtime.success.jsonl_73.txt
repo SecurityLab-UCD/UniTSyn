@@ -1,0 +1,41 @@
+pub fn size(&self, store: impl AsContext) -> u64 {
+        self.internal_size(store.as_context().0)
+    }
+fn memory_zeroed() -> Result<()> {
+    if skip_pooling_allocator_tests() {
+        return Ok(());
+    }
+
+    let mut pool = crate::small_pool_config();
+    pool.memory_pages(1).table_elements(0);
+    let mut config = Config::new();
+    config.allocation_strategy(InstanceAllocationStrategy::Pooling(pool));
+    config.dynamic_memory_guard_size(0);
+    config.static_memory_guard_size(0);
+    config.static_memory_maximum_size(65536);
+
+    let engine = Engine::new(&config)?;
+
+    let module = Module::new(&engine, r#"(module (memory (export "m") 1))"#)?;
+
+    // Instantiate the module repeatedly after writing data to the entire memory
+    for _ in 0..10 {
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[])?;
+        let memory = instance.get_memory(&mut store, "m").unwrap();
+
+        assert_eq!(memory.size(&store,), 1);
+        assert_eq!(memory.data_size(&store), 65536);
+
+        let ptr = memory.data_mut(&mut store).as_mut_ptr();
+
+        unsafe {
+            for i in 0..8192 {
+                assert_eq!(*ptr.cast::<u64>().offset(i), 0);
+            }
+            std::ptr::write_bytes(ptr, 0xFE, memory.data_size(&store));
+        }
+    }
+
+    Ok(())
+}

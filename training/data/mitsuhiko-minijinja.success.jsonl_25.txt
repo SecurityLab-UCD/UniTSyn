@@ -1,0 +1,20 @@
+pub fn apply_filter(&self, filter: &str, args: &[Value]) -> Result<Value, Error> {
+        match self.env.get_filter(filter) {
+            Some(filter) => filter.apply_to(self, args),
+            None => Err(Error::from(ErrorKind::UnknownFilter)),
+        }
+    }
+fn test_filter_basics() {
+    fn test(a: u32, b: u32) -> Result<u32, Error> {
+        Ok(a + b)
+    }
+
+    let mut env = Environment::new();
+    env.add_filter("test", test);
+    assert_eq!(
+        env.empty_state()
+            .apply_filter("test", args!(23, 42))
+            .unwrap(),
+        Value::from(65)
+    );
+}

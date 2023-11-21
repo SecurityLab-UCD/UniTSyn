@@ -1,0 +1,11 @@
+fn is_nan(self) -> bool {
+        self.is_special() && (self.to_bits() & Self::MANTISSA_MASK) != Self::Unsigned::ZERO
+    }
+fn sqrtd_spec_test() {
+    // Not Asserted: FE_INVALID exception is raised if argument is negative.
+    assert!(libm::sqrtd(-1.0).is_nan());
+    assert!(libm::sqrtd(f64::NAN).is_nan());
+    for f in [0.0, -0.0, f64::INFINITY].iter().copied() {
+        assert_eq!(libm::sqrtd(f), f);
+    }
+}

@@ -1,0 +1,29 @@
+fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        Some(bigint::compare(self, other))
+    }
+fn cmp_test() {
+    // Simple
+    let x = VecType::from_u64(1);
+    let y = VecType::from_u64(2);
+    assert_eq!(x.partial_cmp(&x), Some(cmp::Ordering::Equal));
+    assert_eq!(x.cmp(&x), cmp::Ordering::Equal);
+    assert_eq!(x.cmp(&y), cmp::Ordering::Less);
+
+    // Check asymmetric
+    let x = VecType::try_from(&[5, 1]).unwrap();
+    let y = VecType::from_u64(2);
+    assert_eq!(x.cmp(&x), cmp::Ordering::Equal);
+    assert_eq!(x.cmp(&y), cmp::Ordering::Greater);
+
+    // Check when we use reverse ordering properly.
+    let x = VecType::try_from(&[5, 1, 9]).unwrap();
+    let y = VecType::try_from(&[6, 2, 8]).unwrap();
+    assert_eq!(x.cmp(&x), cmp::Ordering::Equal);
+    assert_eq!(x.cmp(&y), cmp::Ordering::Greater);
+
+    // Complex scenario, check it properly uses reverse ordering.
+    let x = VecType::try_from(&[0, 1, 9]).unwrap();
+    let y = VecType::try_from(&[4294967295, 0, 9]).unwrap();
+    assert_eq!(x.cmp(&x), cmp::Ordering::Equal);
+    assert_eq!(x.cmp(&y), cmp::Ordering::Greater);
+}

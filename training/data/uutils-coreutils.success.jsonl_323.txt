@@ -1,0 +1,15 @@
+fn file_read(at: &AtPath, filename: &str) -> String {
+    let mut s = String::new();
+    at.open(filename).read_to_string(&mut s).unwrap();
+    s
+}
+fn test_split_separator_semicolon_line_bytes() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    ucmd.args(&["--line-bytes=4", "-t", ";", "separator_semicolon.txt"])
+        .succeeds();
+
+    assert_eq!(file_read(&at, "xaa"), "1;2;");
+    assert_eq!(file_read(&at, "xab"), "3;4;");
+    assert_eq!(file_read(&at, "xac"), "5;");
+    assert!(!at.plus("xad").exists());
+}

@@ -1,0 +1,78 @@
+pub fn response_code(&self) -> ResponseCode {
+        self.response_code
+    }
+async fn test_catalog_lookup() {
+    let example = create_example();
+    let test = create_test();
+    let origin = example.origin().clone();
+    let test_origin = test.origin().clone();
+
+    let mut catalog: Catalog = Catalog::new();
+    catalog.upsert(origin.clone(), Box::new(Arc::new(example)));
+    catalog.upsert(test_origin.clone(), Box::new(Arc::new(test)));
+
+    let mut question: Message = Message::new();
+
+    let mut query: Query = Query::new();
+    query.set_name(origin.into());
+
+    question.add_query(query);
+
+    // temp request
+    let question_bytes = question.to_bytes().unwrap();
+    let question_req = MessageRequest::from_bytes(&question_bytes).unwrap();
+    let question_req = Request::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
+
+    let response_handler = TestResponseHandler::new();
+    catalog
+        .lookup(&question_req, None, response_handler.clone())
+        .await;
+    let result = response_handler.into_message().await;
+
+    assert_eq!(result.response_code(), ResponseCode::NoError);
+    assert_eq!(result.message_type(), MessageType::Response);
+    assert!(result.header().authoritative());
+
+    let answers: &[Record] = result.answers();
+
+    assert!(!answers.is_empty());
+    assert_eq!(answers.first().unwrap().record_type(), RecordType::A);
+    assert_eq!(
+        answers.first().unwrap().data().unwrap(),
+        &RData::A(A::new(93, 184, 216, 34))
+    );
+
+    let ns = result.name_servers();
+    assert!(ns.is_empty());
+
+    // other zone
+    let mut question: Message = Message::new();
+    let mut query: Query = Query::new();
+    query.set_name(test_origin.into());
+
+    question.add_query(query);
+
+    // temp request
+    let question_bytes = question.to_bytes().unwrap();
+    let question_req = MessageRequest::from_bytes(&question_bytes).unwrap();
+    let question_req = Request::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
+
+    let response_handler = TestResponseHandler::new();
+    catalog
+        .lookup(&question_req, None, response_handler.clone())
+        .await;
+    let result = response_handler.into_message().await;
+
+    assert_eq!(result.response_code(), ResponseCode::NoError);
+    assert_eq!(result.message_type(), MessageType::Response);
+    assert!(result.header().authoritative());
+
+    let answers: &[Record] = result.answers();
+
+    assert!(!answers.is_empty());
+    assert_eq!(answers.first().unwrap().record_type(), RecordType::A);
+    assert_eq!(
+        answers.first().unwrap().data().unwrap(),
+        &RData::A(A::new(94, 184, 216, 34))
+    );
+}

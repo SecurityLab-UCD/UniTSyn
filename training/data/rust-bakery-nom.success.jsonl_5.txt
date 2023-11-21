@@ -1,0 +1,16 @@
+pub fn map<I, O1, O2, E, F, G>(mut parser: F, mut f: G) -> impl FnMut(I) -> IResult<I, O2, E>
+where
+  F: Parser<I, O1, E>,
+  G: FnMut(O1) -> O2,
+{
+  move |input: I| {
+    let (input, o1) = parser.parse(input)?;
+    Ok((input, f(o1)))
+  }
+}
+fn term_test() {
+  assert_eq!(
+    term(" 3 *  5   ").map(|(i, x)| (i, format!("{:?}", x))),
+    Ok(("", String::from("(3 * 5)")))
+  );
+}

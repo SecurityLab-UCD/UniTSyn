@@ -1,0 +1,21 @@
+pub fn dir_exists(&self, path: &str) -> bool {
+        match fs::metadata(self.plus(path)) {
+            Ok(m) => m.is_dir(),
+            Err(_) => false,
+        }
+    }
+fn test_install_several_directories() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let dir1 = "dir1";
+    let dir2 = "dir2";
+    let dir3 = "dir3";
+    let directories_arg = "-d";
+
+    ucmd.args(&[directories_arg, dir1, dir2, dir3])
+        .succeeds()
+        .no_stderr();
+
+    assert!(at.dir_exists(dir1));
+    assert!(at.dir_exists(dir2));
+    assert!(at.dir_exists(dir3));
+}

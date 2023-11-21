@@ -1,0 +1,30 @@
+pub fn get_attr(&self, key: &str) -> Result<Value, Error> {
+        Ok(match self.0 {
+            ValueRepr::Undefined => return Err(Error::from(ErrorKind::UndefinedError)),
+            ValueRepr::Map(ref items, _) => items.get(&KeyRef::Str(key)).cloned(),
+            ValueRepr::Dynamic(ref dy) => match dy.kind() {
+                ObjectKind::Struct(s) => s.get_field(key),
+                ObjectKind::Plain | ObjectKind::Seq(_) => None,
+            },
+            _ => None,
+        }
+        .unwrap_or(Value::UNDEFINED))
+    }
+fn test_context_merge_custom() {
+    struct X;
+    impl StructObject for X {
+        fn get_field(&self, name: &str) -> Option<Value> {
+            match name {
+                "a" => Some(Value::from(1)),
+                "b" => Some(Value::from(2)),
+                _ => None,
+            }
+        }
+    }
+
+    let x = Value::from_struct_object(X);
+    let ctx = context! { a => 42, ..x };
+
+    assert_eq!(ctx.get_attr("a").unwrap(), Value::from(42));
+    assert_eq!(ctx.get_attr("b").unwrap(), Value::from(2));
+}

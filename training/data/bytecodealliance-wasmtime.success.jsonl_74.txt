@@ -1,0 +1,44 @@
+pub fn size(&self) -> u32 {
+        match self {
+            Table::Static { size, .. } => *size,
+            Table::Dynamic { elements, .. } => elements.len().try_into().unwrap(),
+        }
+    }
+fn table_zeroed() -> Result<()> {
+    if skip_pooling_allocator_tests() {
+        return Ok(());
+    }
+
+    let pool = crate::small_pool_config();
+    let mut config = Config::new();
+    config.allocation_strategy(InstanceAllocationStrategy::Pooling(pool));
+    config.dynamic_memory_guard_size(0);
+    config.static_memory_guard_size(0);
+    config.static_memory_maximum_size(65536);
+
+    let engine = Engine::new(&config)?;
+
+    let module = Module::new(&engine, r#"(module (table (export "t") 10 funcref))"#)?;
+
+    // Instantiate the module repeatedly after filling table elements
+    for _ in 0..10 {
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[])?;
+        let table = instance.get_table(&mut store, "t").unwrap();
+        let f = Func::wrap(&mut store, || {});
+
+        assert_eq!(table.size(&store), 10);
+
+        for i in 0..10 {
+            match table.get(&mut store, i).unwrap() {
+                Val::FuncRef(r) => assert!(r.is_none()),
+                _ => panic!("expected a funcref"),
+            }
+            table
+                .set(&mut store, i, Val::FuncRef(Some(f.clone())))
+                .unwrap();
+        }
+    }
+
+    Ok(())
+}

@@ -1,0 +1,31 @@
+pub fn file_exists<P: AsRef<Path>>(&self, path: P) -> bool {
+        match fs::metadata(self.plus(path)) {
+            Ok(m) => m.is_file(),
+            Err(_) => false,
+        }
+    }
+fn test_mv_strip_slashes() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+    let dir = "test_mv_strip_slashes_dir";
+    let file = "test_mv_strip_slashes_file";
+    let mut source = file.to_owned();
+    source.push('/');
+
+    at.mkdir(dir);
+    at.touch(file);
+
+    scene.ucmd().arg(&source).arg(dir).fails();
+
+    assert!(!at.file_exists(format!("{dir}/{file}")));
+
+    scene
+        .ucmd()
+        .arg("--strip-trailing-slashes")
+        .arg(source)
+        .arg(dir)
+        .succeeds()
+        .no_stderr();
+
+    assert!(at.file_exists(format!("{dir}/{file}")));
+}

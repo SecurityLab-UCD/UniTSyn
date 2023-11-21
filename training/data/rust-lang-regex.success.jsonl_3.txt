@@ -1,0 +1,20 @@
+pub fn len(&self) -> usize {
+        self.s.len()
+    }
+fn capture_misc() {
+    let re = regex!(r"(.)(?P<a>a)?(.)(?P<b>.)");
+    let cap = re.captures(t!("abc")).unwrap();
+
+    assert_eq!(5, cap.len());
+
+    assert_eq!((0, 3), { let m = cap.get(0).unwrap(); (m.start(), m.end()) });
+    assert_eq!(None, cap.get(2));
+    assert_eq!((2, 3), { let m = cap.get(4).unwrap(); (m.start(), m.end()) });
+
+    assert_eq!(t!("abc"), match_text!(cap.get(0).unwrap()));
+    assert_eq!(None, cap.get(2));
+    assert_eq!(t!("c"), match_text!(cap.get(4).unwrap()));
+
+    assert_eq!(None, cap.name("a"));
+    assert_eq!(t!("c"), match_text!(cap.name("b").unwrap()));
+}

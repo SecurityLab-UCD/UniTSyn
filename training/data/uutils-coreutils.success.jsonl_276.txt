@@ -1,0 +1,13 @@
+fn count(&self) -> usize {
+        self.collect().len()
+    }
+fn test_split_additional_suffix() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let name = "split_additional_suffix";
+    RandomFile::new(&at, name).add_lines(2000);
+    ucmd.args(&["--additional-suffix", ".txt", name]).succeeds();
+
+    let glob = Glob::new(&at, ".", r"x[[:alpha:]][[:alpha:]].txt$");
+    assert_eq!(glob.count(), 2);
+    assert_eq!(glob.collate(), at.read_bytes(name));
+}

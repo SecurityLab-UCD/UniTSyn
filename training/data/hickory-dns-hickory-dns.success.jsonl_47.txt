@@ -1,0 +1,71 @@
+pub fn answers(answers: LookupRecords, additionals: Option<LookupRecords>) -> Self {
+        Self::Records {
+            answers,
+            additionals,
+        }
+    }
+fn test_user_provided_server_order() {
+    use hickory_proto::rr::Record;
+
+    let mut options = ResolverOpts::default();
+
+    options.num_concurrent_reqs = 1;
+    options.server_ordering_strategy = ServerOrderingStrategy::UserProvidedOrder;
+
+    let query = Query::query(Name::from_str("www.example.com.").unwrap(), RecordType::A);
+
+    let preferred_record = v4_record(query.name().clone(), Ipv4Addr::new(127, 0, 0, 1));
+    let secondary_record = v4_record(query.name().clone(), Ipv4Addr::new(127, 0, 0, 2));
+
+    let preferred_server_records = vec![preferred_record; 10];
+    let secondary_server_records = vec![secondary_record; 10];
+
+    let to_dns_response = |records: Vec<Record>| -> Vec<Result<DnsResponse, ResolveError>> {
+        records
+            .iter()
+            .map(|record| {
+                Ok(DnsResponse::from_message(message(
+                    query.clone(),
+                    vec![record.clone()],
+                    vec![],
+                    vec![],
+                ))
+                .unwrap())
+            })
+            .collect()
+    };
+
+    // Specify different IP addresses for each name server to ensure that they
+    // are considered separately.
+    let preferred_nameserver = mock_nameserver_with_addr(
+        to_dns_response(preferred_server_records.clone()),
+        Ipv4Addr::new(128, 0, 0, 1).into(),
+        Default::default(),
+    );
+    let secondary_nameserver = mock_nameserver_with_addr(
+        to_dns_response(secondary_server_records.clone()),
+        Ipv4Addr::new(129, 0, 0, 1).into(),
+        Default::default(),
+    );
+
+    let pool = mock_nameserver_pool(
+        vec![preferred_nameserver, secondary_nameserver],
+        vec![],
+        None,
+        options,
+    );
+
+    // The returned records should consistently be from the preferred name
+    // server until the configured records are exhausted. Subsequently, the
+    // secondary server should be used.
+    preferred_server_records
+        .into_iter()
+        .chain(secondary_server_records)
+        .for_each(|expected_record| {
+            let request = message(query.clone(), vec![], vec![], vec![]);
+            let future = pool.send(request).first_answer();
+
+            let response = block_on(future).unwrap();
+            assert_eq!(response.answers()[0], expected_record);
+        });
+}

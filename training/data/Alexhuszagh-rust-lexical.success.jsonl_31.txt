@@ -1,0 +1,46 @@
+pub const fn flags(&self) -> u128 {
+        FORMAT & flags::FLAG_MASK
+    }
+fn ignore_test() {
+    let fmt = format::NumberFormat::<{ format::IGNORE }> {};
+    assert_eq!(fmt.flags(), format::DIGIT_SEPARATOR_FLAG_MASK);
+    assert_eq!(fmt.digit_separator(), b'_');
+    assert_eq!(fmt.required_integer_digits(), false);
+    assert_eq!(fmt.required_fraction_digits(), false);
+    assert_eq!(fmt.required_exponent_digits(), false);
+    assert_eq!(fmt.required_mantissa_digits(), false);
+    assert_eq!(fmt.required_digits(), false);
+    assert_eq!(fmt.no_positive_mantissa_sign(), false);
+    assert_eq!(fmt.required_mantissa_sign(), false);
+    assert_eq!(fmt.no_exponent_notation(), false);
+    assert_eq!(fmt.no_positive_exponent_sign(), false);
+    assert_eq!(fmt.required_exponent_sign(), false);
+    assert_eq!(fmt.no_exponent_without_fraction(), false);
+    assert_eq!(fmt.no_special(), false);
+    assert_eq!(fmt.case_sensitive_special(), false);
+    assert_eq!(fmt.no_integer_leading_zeros(), false);
+    assert_eq!(fmt.no_float_leading_zeros(), false);
+    assert_eq!(fmt.required_exponent_notation(), false);
+    assert_eq!(fmt.case_sensitive_exponent(), false);
+    #[cfg(feature = "power-of-two")]
+    assert_eq!(fmt.case_sensitive_base_prefix(), false);
+    #[cfg(feature = "power-of-two")]
+    assert_eq!(fmt.case_sensitive_base_suffix(), false);
+    assert_eq!(fmt.integer_internal_digit_separator(), true);
+    assert_eq!(fmt.fraction_internal_digit_separator(), true);
+    assert_eq!(fmt.exponent_internal_digit_separator(), true);
+    assert_eq!(fmt.internal_digit_separator(), true);
+    assert_eq!(fmt.integer_leading_digit_separator(), true);
+    assert_eq!(fmt.fraction_leading_digit_separator(), true);
+    assert_eq!(fmt.exponent_leading_digit_separator(), true);
+    assert_eq!(fmt.leading_digit_separator(), true);
+    assert_eq!(fmt.integer_trailing_digit_separator(), true);
+    assert_eq!(fmt.fraction_trailing_digit_separator(), true);
+    assert_eq!(fmt.exponent_trailing_digit_separator(), true);
+    assert_eq!(fmt.trailing_digit_separator(), true);
+    assert_eq!(fmt.integer_consecutive_digit_separator(), true);
+    assert_eq!(fmt.fraction_consecutive_digit_separator(), true);
+    assert_eq!(fmt.exponent_consecutive_digit_separator(), true);
+    assert_eq!(fmt.consecutive_digit_separator(), true);
+    assert_eq!(fmt.special_digit_separator(), true);
+}

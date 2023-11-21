@@ -1,0 +1,49 @@
+fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        let mut endpoint = self.0.state.lock().unwrap();
+        if endpoint.driver.is_none() {
+            endpoint.driver = Some(cx.waker().clone());
+        }
+
+        let now = Instant::now();
+        let mut keep_going = false;
+        keep_going |= endpoint.drive_recv(cx, now)?;
+        keep_going |= endpoint.handle_events(cx, &self.0.shared);
+        keep_going |= endpoint.drive_send(cx)?;
+
+        if !endpoint.incoming.is_empty() {
+            self.0.shared.incoming.notify_waiters();
+        }
+
+        if endpoint.ref_count == 0 && endpoint.connections.is_empty() {
+            Poll::Ready(Ok(()))
+        } else {
+            drop(endpoint);
+            // If there is more work to do schedule the endpoint task again.
+            // `wake_by_ref()` is called outside the lock to minimize
+            // lock contention on a multithreaded runtime.
+            if keep_going {
+                cx.waker().wake_by_ref();
+            }
+            Poll::Pending
+        }
+    }
+fn datagram_unsupported() {
+    let _guard = subscribe();
+    let server = ServerConfig {
+        transport: Arc::new(TransportConfig {
+            datagram_receive_buffer_size: None,
+            ..TransportConfig::default()
+        }),
+        ..server_config()
+    };
+    let mut pair = Pair::new(Default::default(), server);
+    let (client_ch, server_ch) = pair.connect();
+    assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
+    assert_matches!(pair.client_datagrams(client_ch).max_size(), None);
+
+    match pair.client_datagrams(client_ch).send(Bytes::new()) {
+        Err(SendDatagramError::UnsupportedByPeer) => {}
+        Err(e) => panic!("unexpected error: {e}"),
+        Ok(_) => panic!("unexpected success"),
+    }
+}

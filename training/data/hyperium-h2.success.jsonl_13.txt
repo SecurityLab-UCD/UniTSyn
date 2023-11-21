@@ -1,0 +1,68 @@
+pub fn status(self, value: StatusCode) -> Self {
+        let (id, mut pseudo, fields) = self.into_parts();
+
+        pseudo.set_status(value);
+
+        Mock(frame::Headers::new(id, pseudo, fields))
+    }
+async fn reserved_capacity_assigned_in_multi_window_updates() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
+
+        let (response, mut stream) = client.send_request(request, false).unwrap();
+
+        // Consume the capacity
+        let payload = vec![0; frame::DEFAULT_INITIAL_WINDOW_SIZE as usize];
+        stream.send_data(payload.into(), false).unwrap();
+
+        // Reserve more data than we want
+        stream.reserve_capacity(10);
+
+        let mut stream = h2.drive(util::wait_for_capacity(stream, 5)).await;
+        stream.send_data("hello".into(), false).unwrap();
+        stream.send_data("world".into(), true).unwrap();
+
+        let response = h2.drive(response).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        // Wait for the connection to close
+        h2.await.unwrap();
+    };
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(frames::headers(1).request("POST", "https://http2.akamai.com/"))
+            .await;
+        srv.recv_frame(frames::data(1, vec![0u8; 16_384])).await;
+        srv.recv_frame(frames::data(1, vec![0u8; 16_384])).await;
+        srv.recv_frame(frames::data(1, vec![0u8; 16_384])).await;
+        srv.recv_frame(frames::data(1, vec![0u8; 16_383])).await;
+        idle_ms(100).await;
+        // Increase the connection window
+        srv.send_frame(frames::window_update(0, 10)).await;
+        // Incrementally increase the stream window
+        srv.send_frame(frames::window_update(1, 4)).await;
+        idle_ms(50).await;
+        srv.send_frame(frames::window_update(1, 1)).await;
+        // Receive first chunk
+        srv.recv_frame(frames::data(1, "hello")).await;
+        srv.send_frame(frames::window_update(1, 5)).await;
+        // Receive second chunk
+        srv.recv_frame(frames::data(1, "world").eos()).await;
+        srv.send_frame(frames::headers(1).response(204).eos()).await;
+        /*
+        .recv_frame(frames::data(1, "hello").eos())
+        .send_frame(frames::window_update(1, 5))
+        */
+    };
+    join(srv, h2).await;
+}

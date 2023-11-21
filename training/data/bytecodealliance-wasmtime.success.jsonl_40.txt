@@ -1,0 +1,25 @@
+pub fn i32(i: i32) -> ValRaw {
+        // Note that this is intentionally not setting the `i32` field, instead
+        // setting the `i64` field with a zero-extended version of `i`. For more
+        // information on this see the comments on `Lower for Result` in the
+        // `wasmtime` crate. Otherwise though all `ValRaw` constructors are
+        // otherwise constrained to guarantee that the initial 64-bits are
+        // always initialized.
+        ValRaw::u64((i as u32).into())
+    }
+fn call_array_to_native() -> Result<()> {
+    let mut store = Store::<()>::default();
+    let func = Func::wrap(&mut store, |a: i32, b: i32, c: i32| -> (i32, i32, i32) {
+        (a * 10, b * 10, c * 10)
+    });
+    let mut results = [Val::I32(0), Val::I32(0), Val::I32(0)];
+    func.call(
+        &mut store,
+        &[Val::I32(10), Val::I32(20), Val::I32(30)],
+        &mut results,
+    )?;
+    assert_eq!(results[0].i32(), Some(100));
+    assert_eq!(results[1].i32(), Some(200));
+    assert_eq!(results[2].i32(), Some(300));
+    Ok(())
+}

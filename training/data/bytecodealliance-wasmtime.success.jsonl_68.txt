@@ -1,0 +1,23 @@
+pub fn contains<C: Comparator<K>>(&self, key: K, forest: &SetForest<K>, comp: &C) -> bool {
+        self.root
+            .expand()
+            .and_then(|root| Path::default().find(key, root, &forest.nodes, comp))
+            .is_some()
+    }
+fn checks_incompatible_target() -> Result<()> {
+    let mut target = target_lexicon::Triple::host();
+    target.operating_system = target_lexicon::OperatingSystem::Unknown;
+    match Module::new(
+        &Engine::new(Config::new().target(&target.to_string())?)?,
+        "(module)",
+    ) {
+        Ok(_) => unreachable!(),
+        Err(e) => assert!(
+            format!("{:?}", e).contains("configuration does not match the host"),
+            "bad error: {:?}",
+            e
+        ),
+    }
+
+    Ok(())
+}

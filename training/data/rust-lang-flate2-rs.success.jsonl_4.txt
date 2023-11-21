@@ -1,0 +1,25 @@
+fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        // If we don't have any buffered data and we're doing a massive read
+        // (larger than our internal buffer), bypass our internal buffer
+        // entirely.
+        if self.pos == self.cap && buf.len() >= self.buf.len() {
+            return self.inner.read(buf);
+        }
+        let nread = {
+            let mut rem = self.fill_buf()?;
+            rem.read(buf)?
+        };
+        self.consume(nread);
+        Ok(nread)
+    }
+fn zlib_decoder_empty_read() {
+    let original: &[u8] = b"Lorem ipsum dolor sit amet.";
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(original).unwrap();
+    let encoded: Vec<u8> = encoder.finish().unwrap();
+    let mut decoder = flate2::read::ZlibDecoder::new(encoded.as_slice());
+    assert_eq!(decoder.read(&mut []).unwrap(), 0);
+    let mut decoded = Vec::new();
+    decoder.read_to_end(&mut decoded).unwrap();
+    assert_eq!(decoded.as_slice(), original);
+}

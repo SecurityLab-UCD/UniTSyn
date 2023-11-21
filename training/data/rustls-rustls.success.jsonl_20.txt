@@ -1,0 +1,13 @@
+pub fn is_handshaking(&self) -> bool {
+        !(self.may_send_application_data && self.may_receive_application_data)
+    }
+fn server_complete_io_for_handshake_eof() {
+    let (_, mut server) = make_pair(KeyType::Rsa);
+    let mut input = io::Cursor::new(Vec::new());
+
+    assert!(server.is_handshaking());
+    let err = server
+        .complete_io(&mut input)
+        .unwrap_err();
+    assert_eq!(io::ErrorKind::UnexpectedEof, err.kind());
+}

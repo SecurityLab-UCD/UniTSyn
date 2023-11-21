@@ -1,0 +1,24 @@
+fn value(&self) -> V::SelfType<'_> {
+        V::from_bytes(&self.data)
+    }
+fn tuple4_type() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+
+    let table_def: TableDefinition<(&str, u8, u16, u32), (u16, u32)> =
+        TableDefinition::new("table");
+
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(table_def).unwrap();
+        table.insert(&("hello", 5, 6, 7), &(0, 123)).unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(table_def).unwrap();
+    assert_eq!(
+        table.get(&("hello", 5, 6, 7)).unwrap().unwrap().value(),
+        (0, 123)
+    );
+}

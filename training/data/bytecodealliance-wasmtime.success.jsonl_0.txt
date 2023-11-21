@@ -1,0 +1,19 @@
+pub fn match_directive<'a>(comment: &'a str, directive: &str) -> Option<&'a str> {
+    assert!(
+        directive.ends_with(':'),
+        "Directive must include trailing colon"
+    );
+    let text = comment.trim_start_matches(';').trim_start();
+    if text.starts_with(directive) {
+        Some(text[directive.len()..].trim())
+    } else {
+        None
+    }
+}
+fn test_match_directive() {
+    assert_eq!(match_directive("; foo: bar  ", "foo:"), Some("bar"));
+    assert_eq!(match_directive(" foo:bar", "foo:"), Some("bar"));
+    assert_eq!(match_directive("foo:bar", "foo:"), Some("bar"));
+    assert_eq!(match_directive(";x foo: bar", "foo:"), None);
+    assert_eq!(match_directive(";;; foo: bar", "foo:"), Some("bar"));
+}

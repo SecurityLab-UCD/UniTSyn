@@ -1,0 +1,17 @@
+pub fn file_exists<P: AsRef<Path>>(&self, path: P) -> bool {
+        match fs::metadata(self.plus(path)) {
+            Ok(m) => m.is_file(),
+            Err(_) => false,
+        }
+    }
+fn test_install_copy_file() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file1 = "source_file";
+    let file2 = "target_file";
+
+    at.touch(file1);
+    ucmd.arg(file1).arg(file2).succeeds().no_stderr();
+
+    assert!(at.file_exists(file1));
+    assert!(at.file_exists(file2));
+}

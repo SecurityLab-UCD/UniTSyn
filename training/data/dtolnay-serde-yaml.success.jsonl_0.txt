@@ -1,0 +1,44 @@
+pub fn to_string<T>(value: &T) -> Result<String>
+where
+    T: ?Sized + ser::Serialize,
+{
+    let mut vec = Vec::with_capacity(128);
+    to_writer(&mut vec, value)?;
+    String::from_utf8(vec).map_err(|error| error::new(ErrorImpl::FromUtf8(error)))
+}
+fn test_serialize_nested_enum() {
+    #[derive(Serialize, Debug)]
+    enum Outer {
+        Inner(Inner),
+    }
+    #[derive(Serialize, Debug)]
+    enum Inner {
+        Newtype(usize),
+        Tuple(usize, usize),
+        Struct { x: usize },
+    }
+
+    let expected = "serializing nested enums in YAML is not supported yet";
+
+    let e = Outer::Inner(Inner::Newtype(0));
+    let error = serde_yaml::to_string(&e).unwrap_err();
+    assert_eq!(error.to_string(), expected);
+
+    let e = Outer::Inner(Inner::Tuple(0, 0));
+    let error = serde_yaml::to_string(&e).unwrap_err();
+    assert_eq!(error.to_string(), expected);
+
+    let e = Outer::Inner(Inner::Struct { x: 0 });
+    let error = serde_yaml::to_string(&e).unwrap_err();
+    assert_eq!(error.to_string(), expected);
+
+    let e = Value::Tagged(Box::new(TaggedValue {
+        tag: Tag::new("Outer"),
+        value: Value::Tagged(Box::new(TaggedValue {
+            tag: Tag::new("Inner"),
+            value: Value::Null,
+        })),
+    }));
+    let error = serde_yaml::to_string(&e).unwrap_err();
+    assert_eq!(error.to_string(), expected);
+}

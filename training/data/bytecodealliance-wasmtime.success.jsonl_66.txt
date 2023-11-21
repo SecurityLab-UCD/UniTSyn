@@ -1,0 +1,40 @@
+pub unsafe fn load(ptr: *mut Self) -> Self {
+        let other = &*ptr;
+        VMMemoryDefinition {
+            base: other.base,
+            current_length: other.current_length().into(),
+        }
+    }
+fn funcs_live_on_to_fight_another_day() -> Result<()> {
+    struct DropMe(Arc<AtomicUsize>);
+
+    impl Drop for DropMe {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, SeqCst);
+        }
+    }
+
+    let flag = Arc::new(AtomicUsize::new(0));
+    let engine = Engine::default();
+    let mut linker = Linker::new(&engine);
+    let drop_me = DropMe(flag.clone());
+    linker.func_wrap("", "", move || {
+        let _ = &drop_me;
+    })?;
+    assert_eq!(flag.load(SeqCst), 0);
+
+    let get_and_call = || -> Result<()> {
+        assert_eq!(flag.load(SeqCst), 0);
+        let mut store = Store::new(&engine, ());
+        let func = linker.get(&mut store, "", "").unwrap();
+        func.into_func().unwrap().call(&mut store, &[], &mut [])?;
+        assert_eq!(flag.load(SeqCst), 0);
+        Ok(())
+    };
+
+    get_and_call()?;
+    get_and_call()?;
+    drop(linker);
+    assert_eq!(flag.load(SeqCst), 1);
+    Ok(())
+}

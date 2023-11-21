@@ -1,0 +1,24 @@
+pub fn contains<C: Comparator<K>>(&self, key: K, forest: &SetForest<K>, comp: &C) -> bool {
+        self.root
+            .expand()
+            .and_then(|root| Path::default().find(key, root, &forest.nodes, comp))
+            .is_some()
+    }
+fn trap_start_function_import() -> Result<()> {
+    let mut store = Store::<()>::default();
+    let binary = wat::parse_str(
+        r#"
+            (module $a
+                (import "" "" (func $foo))
+                (start $foo)
+            )
+        "#,
+    )?;
+
+    let module = Module::new(store.engine(), &binary)?;
+    let sig = FuncType::new(None, None);
+    let func = Func::new(&mut store, sig, |_, _, _| bail!("user trap"));
+    let err = Instance::new(&mut store, &module, &[func.into()]).unwrap_err();
+    assert!(format!("{err:?}").contains("user trap"));
+    Ok(())
+}

@@ -1,0 +1,25 @@
+fn len(&self) -> std::io::Result<i64> {
+        match self {
+            Self::File(f) => Ok(f.metadata()?.len().try_into().unwrap_or(i64::MAX)),
+            _ => Ok(0),
+        }
+    }
+fn test_ascii_5_gibi_to_file() {
+    let tname = "ascii-5G";
+    let tmp_fn = format!("TESTFILE-{}.tmp", &tname);
+
+    let (fix, mut ucmd) = at_and_ucmd!();
+    ucmd.args(&[
+        "status=none",
+        "count=5G",
+        "iflag=count_bytes",
+        "if=/dev/zero",
+        of!(tmp_fn),
+    ])
+    .run()
+    .no_stderr()
+    .no_stdout()
+    .success();
+
+    assert_eq!(5 * 1024 * 1024 * 1024, fix.metadata(&tmp_fn).len());
+}

@@ -1,0 +1,43 @@
+pub unsafe fn load(ptr: *mut Self) -> Self {
+        let other = &*ptr;
+        VMMemoryDefinition {
+            base: other.base,
+            current_length: other.current_length().into(),
+        }
+    }
+fn drop_func() -> Result<()> {
+    static HITS: AtomicUsize = AtomicUsize::new(0);
+    struct A;
+
+    impl Drop for A {
+        fn drop(&mut self) {
+            HITS.fetch_add(1, SeqCst);
+        }
+    }
+
+    let engine = Engine::default();
+    let mut linker = Linker::<()>::new(&engine);
+    linker.allow_shadowing(true);
+
+    let a = A;
+    linker.func_wrap("", "", move || {
+        let _ = &a;
+    })?;
+
+    assert_eq!(HITS.load(SeqCst), 0);
+
+    // Define the function again to ensure redefined functions are dropped
+
+    let a = A;
+    linker.func_wrap("", "", move || {
+        let _ = &a;
+    })?;
+
+    assert_eq!(HITS.load(SeqCst), 1);
+
+    drop(linker);
+
+    assert_eq!(HITS.load(SeqCst), 2);
+
+    Ok(())
+}

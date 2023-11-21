@@ -1,0 +1,28 @@
+fn len(&self) -> usize {
+            self.hash_table.len()
+        }
+fn test_trap_stack_overflow() -> Result<()> {
+    let mut store = Store::<()>::default();
+    let wat = r#"
+        (module $rec_mod
+            (func $run (export "run") (call $run))
+        )
+    "#;
+
+    let module = Module::new(store.engine(), wat)?;
+    let instance = Instance::new(&mut store, &module, &[])?;
+    let run_func = instance.get_typed_func::<(), ()>(&mut store, "run")?;
+
+    let e = run_func.call(&mut store, ()).unwrap_err();
+
+    let trace = e.downcast_ref::<WasmBacktrace>().unwrap().frames();
+    assert!(trace.len() >= 32);
+    for i in 0..trace.len() {
+        assert_eq!(trace[i].module().name().unwrap(), "rec_mod");
+        assert_eq!(trace[i].func_index(), 0);
+        assert_eq!(trace[i].func_name(), Some("run"));
+    }
+    assert_eq!(e.downcast::<Trap>()?, Trap::StackOverflow);
+
+    Ok(())
+}

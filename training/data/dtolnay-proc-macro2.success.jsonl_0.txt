@@ -1,0 +1,8 @@
+pub fn is_empty(&self) -> bool {
+        self.inner.len() == 0
+    }
+fn closed_immediately() {
+    let stream = "/**/".parse::<TokenStream>().unwrap();
+    let tokens = stream.into_iter().collect::<Vec<_>>();
+    assert!(tokens.is_empty(), "not empty -- {:?}", tokens);
+}

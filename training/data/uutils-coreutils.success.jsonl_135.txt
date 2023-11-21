@@ -1,0 +1,27 @@
+pub fn file_exists<P: AsRef<Path>>(&self, path: P) -> bool {
+        match fs::metadata(self.plus(path)) {
+            Ok(m) => m.is_file(),
+            Err(_) => false,
+        }
+    }
+fn test_install_backup_never() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+
+    let file_a = "test_install_backup_numbering_file_a";
+    let file_b = "test_install_backup_numbering_file_b";
+
+    at.touch(file_a);
+    at.touch(file_b);
+    scene
+        .ucmd()
+        .arg("--backup=never")
+        .arg(file_a)
+        .arg(file_b)
+        .succeeds()
+        .no_stderr();
+
+    assert!(at.file_exists(file_a));
+    assert!(at.file_exists(file_b));
+    assert!(at.file_exists(format!("{file_b}~")));
+}

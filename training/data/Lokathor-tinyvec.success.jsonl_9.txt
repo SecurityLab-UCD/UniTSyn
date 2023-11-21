@@ -1,0 +1,19 @@
+pub fn capacity(&self) -> usize {
+    // Note: This shouldn't use A::CAPACITY, because unsafe code can't rely on
+    // any Array invariants. This ensures that at the very least, the returned
+    // value is a valid length for a subslice of the backing array.
+    self.data.as_slice().len()
+  }
+fn TinyVec_try_reserve() {
+  let mut tv: TinyVec<[i32; 4]> = Default::default();
+  assert_eq!(tv.capacity(), 4);
+  tv.extend_from_slice(&[1, 2]);
+  assert_eq!(tv.capacity(), 4);
+  assert!(tv.try_reserve(2).is_ok());
+  assert_eq!(tv.capacity(), 4);
+  assert!(tv.try_reserve(4).is_ok());
+  assert!(tv.capacity() >= 6);
+  tv.extend_from_slice(&[3, 4, 5, 6]);
+  assert!(tv.try_reserve(4).is_ok());
+  assert!(tv.capacity() >= 10);
+}

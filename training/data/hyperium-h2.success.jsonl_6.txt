@@ -1,0 +1,32 @@
+pub fn payload(&self) -> &T {
+        &self.data
+    }
+async fn update_max_frame_len_at_rest() {
+    use futures::StreamExt;
+    use tokio::io::AsyncReadExt;
+
+    h2_support::trace_init!();
+    // TODO: add test for updating max frame length in flight as well?
+    let mut codec = raw_codec! {
+        read => [
+            0, 0, 5, 0, 0, 0, 0, 0, 1,
+            "hello",
+            0, 64, 1, 0, 0, 0, 0, 0, 1,
+            vec![0; 16_385],
+        ];
+    };
+
+    assert_eq!(poll_frame!(Data, codec).payload(), &b"hello"[..]);
+
+    codec.set_max_recv_frame_size(16_384);
+
+    assert_eq!(codec.max_recv_frame_size(), 16_384);
+    assert_eq!(
+        codec.next().await.unwrap().unwrap_err().to_string(),
+        "frame with invalid size"
+    );
+
+    // drain codec buffer
+    let mut buf = Vec::new();
+    codec.get_mut().read_to_end(&mut buf).await.unwrap();
+}

@@ -1,0 +1,33 @@
+pub fn contains<C: Comparator<K>>(&self, key: K, forest: &SetForest<K>, comp: &C) -> bool {
+        self.root
+            .expand()
+            .and_then(|root| Path::default().find(key, root, &forest.nodes, comp))
+            .is_some()
+    }
+fn test_anyhow_error_return() -> Result<()> {
+    let mut store = Store::<()>::default();
+    let wat = r#"
+        (module
+        (func $hello (import "" "hello"))
+        (func (export "run") (call $hello))
+        )
+    "#;
+
+    let module = Module::new(store.engine(), wat)?;
+    let hello_type = FuncType::new(None, None);
+    let hello_func = Func::new(&mut store, hello_type, |_, _, _| {
+        Err(anyhow::Error::msg("test 1234"))
+    });
+
+    let instance = Instance::new(&mut store, &module, &[hello_func.into()])?;
+    let run_func = instance.get_typed_func::<(), ()>(&mut store, "run")?;
+
+    let e = run_func.call(&mut store, ()).unwrap_err();
+    assert!(!e.to_string().contains("test 1234"));
+    assert!(format!("{:?}", e).contains("Caused by:\n    test 1234"));
+
+    assert!(e.downcast_ref::<Trap>().is_none());
+    assert!(e.downcast_ref::<WasmBacktrace>().is_some());
+
+    Ok(())
+}

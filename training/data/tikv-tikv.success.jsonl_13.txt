@@ -1,0 +1,9 @@
+pub fn len(&self) -> usize {
+        self.events.len()
+    }
+fn default_names() {
+    let db = default_engine();
+    let names = db.engine.cf_names();
+    assert_eq!(names.len(), 1);
+    assert_eq!(names[0], CF_DEFAULT);
+}

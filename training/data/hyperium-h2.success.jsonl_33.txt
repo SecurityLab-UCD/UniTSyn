@@ -1,0 +1,44 @@
+pub fn status(self, value: StatusCode) -> Self {
+        let (id, mut pseudo, fields) = self.into_parts();
+
+        pseudo.set_status(value);
+
+        Mock(frame::Headers::new(id, pseudo, fields))
+    }
+async fn configure_max_frame_size() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let h2 = async move {
+        let (mut client, h2) = client::Builder::new()
+            .max_frame_size(16_384 * 2)
+            .handshake::<_, Bytes>(io)
+            .await
+            .expect("handshake");
+
+        let req = async move {
+            let resp = client.get("https://example.com/").await.expect("response");
+            assert_eq!(resp.status(), StatusCode::OK);
+            let body = resp.into_parts().1;
+            let buf = util::concat(body).await.expect("body");
+            assert_eq!(buf.len(), 16_385);
+        };
+
+        join(async move { h2.await.expect("client") }, req).await;
+    };
+    // a good peer
+    srv.codec_mut().set_max_send_frame_size(16_384 * 2);
+
+    let srv = async move {
+        let _ = srv.assert_client_handshake().await;
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200)).await;
+        srv.send_frame(frames::data(1, vec![0; 16_385]).eos()).await;
+    };
+    join(srv, h2).await;
+}

@@ -1,0 +1,9 @@
+pub fn stdout_str(&self) -> &str {
+        std::str::from_utf8(&self.stdout).unwrap()
+    }
+fn test_version_flag() {
+    let version_short = new_ucmd!().arg("-V").succeeds();
+    let version_long = new_ucmd!().arg("--version").succeeds();
+
+    assert_eq!(version_short.stdout_str(), version_long.stdout_str());
+}

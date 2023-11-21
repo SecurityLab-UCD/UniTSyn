@@ -1,0 +1,9 @@
+pub fn read_lines(input: &str) -> IResult<&str, Vec<&str>> {
+    repeat(0.., unpeek(read_line)).parse_peek(input)
+}
+fn read_lines_test() {
+    let res = Ok(("", vec!["Duck", "Dog", "Cow"]));
+
+    assert_eq!(read_lines("Duck\nDog\nCow\n"), res);
+    assert_eq!(read_lines("Duck\nDog\nCow"), res);
+}

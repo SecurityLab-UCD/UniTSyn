@@ -1,0 +1,15 @@
+pub(crate) fn is_empty(&self) -> bool {
+        self.reads_complete == 0 && self.reads_partial == 0
+    }
+fn test_symlink_target_only() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let dir = "test_symlink_target_only";
+
+    at.mkdir(dir);
+
+    assert!(!ucmd
+        .args(&["-s", "-t", dir])
+        .fails()
+        .stderr_str()
+        .is_empty());
+}

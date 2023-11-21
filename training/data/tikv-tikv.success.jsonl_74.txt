@@ -1,0 +1,32 @@
+pub fn contains(&self, op: IoOp) -> bool {
+        match *self {
+            IoRateLimitMode::WriteOnly => op == IoOp::Write,
+            IoRateLimitMode::ReadOnly => op == IoOp::Read,
+            _ => true,
+        }
+    }
+fn test_region_error_in_scan() {
+    let data = vec![
+        (1, Some("name:0"), 2),
+        (2, Some("name:4"), 3),
+        (4, Some("name:3"), 1),
+        (5, Some("name:1"), 4),
+    ];
+
+    let product = ProductTable::new();
+    let (_cluster, raft_engine, mut ctx) = new_raft_engine(1, "");
+    ctx.set_isolation_level(IsolationLevel::Si);
+
+    let (_, endpoint, _) =
+        init_data_with_engine_and_commit(ctx.clone(), raft_engine, &product, &data, true);
+
+    fail::cfg("region_snapshot_seek", "return()").unwrap();
+    let req = DagSelect::from(&product).build_with(ctx, &[0]);
+    let resp = handle_request(&endpoint, req);
+
+    assert!(
+        resp.get_region_error()
+            .get_message()
+            .contains("region seek error")
+    );
+}

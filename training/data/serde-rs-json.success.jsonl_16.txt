@@ -1,0 +1,63 @@
+pub fn compare(x: &[Limb], y: &[Limb]) -> cmp::Ordering {
+        if x.len() > y.len() {
+            cmp::Ordering::Greater
+        } else if x.len() < y.len() {
+            cmp::Ordering::Less
+        } else {
+            let iter = x.iter().rev().zip(y.iter().rev());
+            for (&xi, &yi) in iter {
+                if xi > yi {
+                    return cmp::Ordering::Greater;
+                } else if xi < yi {
+                    return cmp::Ordering::Less;
+                }
+            }
+            // Equal case.
+            cmp::Ordering::Equal
+        }
+    }
+fn compare_test() {
+    // Simple
+    let x = Bigint {
+        data: from_u32(&[1]),
+    };
+    let y = Bigint {
+        data: from_u32(&[2]),
+    };
+    assert_eq!(x.compare(&y), cmp::Ordering::Less);
+    assert_eq!(x.compare(&x), cmp::Ordering::Equal);
+    assert_eq!(y.compare(&x), cmp::Ordering::Greater);
+
+    // Check asymmetric
+    let x = Bigint {
+        data: from_u32(&[5, 1]),
+    };
+    let y = Bigint {
+        data: from_u32(&[2]),
+    };
+    assert_eq!(x.compare(&y), cmp::Ordering::Greater);
+    assert_eq!(x.compare(&x), cmp::Ordering::Equal);
+    assert_eq!(y.compare(&x), cmp::Ordering::Less);
+
+    // Check when we use reverse ordering properly.
+    let x = Bigint {
+        data: from_u32(&[5, 1, 9]),
+    };
+    let y = Bigint {
+        data: from_u32(&[6, 2, 8]),
+    };
+    assert_eq!(x.compare(&y), cmp::Ordering::Greater);
+    assert_eq!(x.compare(&x), cmp::Ordering::Equal);
+    assert_eq!(y.compare(&x), cmp::Ordering::Less);
+
+    // Complex scenario, check it properly uses reverse ordering.
+    let x = Bigint {
+        data: from_u32(&[0, 1, 9]),
+    };
+    let y = Bigint {
+        data: from_u32(&[4294967295, 0, 9]),
+    };
+    assert_eq!(x.compare(&y), cmp::Ordering::Greater);
+    assert_eq!(x.compare(&x), cmp::Ordering::Equal);
+    assert_eq!(y.compare(&x), cmp::Ordering::Less);
+}

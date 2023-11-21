@@ -1,0 +1,87 @@
+pub fn contains<C: Comparator<K>>(&self, key: K, forest: &SetForest<K>, comp: &C) -> bool {
+        self.root
+            .expand()
+            .and_then(|root| Path::default().find(key, root, &forest.nodes, comp))
+            .is_some()
+    }
+fn catch_trap_calling_across_stores() -> Result<()> {
+    let _ = env_logger::try_init();
+
+    let engine = Engine::default();
+
+    let mut child_store = Store::new(&engine, ());
+    let child_module = Module::new(
+        child_store.engine(),
+        r#"
+            (module $child
+              (func $trap (export "trap")
+                unreachable
+              )
+            )
+        "#,
+    )?;
+    let child_instance = Instance::new(&mut child_store, &child_module, &[])?;
+
+    struct ParentCtx {
+        child_store: Store<()>,
+        child_instance: Instance,
+    }
+
+    let mut linker = Linker::new(&engine);
+    linker.func_wrap(
+        "host",
+        "catch_child_trap",
+        move |mut caller: Caller<'_, ParentCtx>| {
+            let mut ctx = caller.as_context_mut();
+            let data = ctx.data_mut();
+            let func = data
+                .child_instance
+                .get_typed_func::<(), ()>(&mut data.child_store, "trap")
+                .expect("trap function should be exported");
+
+            let trap = func.call(&mut data.child_store, ()).unwrap_err();
+            assert!(
+                format!("{trap:?}").contains("unreachable"),
+                "trap should contain 'unreachable', got: {trap:?}"
+            );
+
+            let trace = trap.downcast_ref::<WasmBacktrace>().unwrap().frames();
+
+            assert_eq!(trace.len(), 1);
+            assert_eq!(trace[0].func_name(), Some("trap"));
+            // For now, we only get stack frames for Wasm in this store, not
+            // across all stores.
+            //
+            // assert_eq!(trace[1].func_name(), Some("run"));
+
+            Ok(())
+        },
+    )?;
+
+    let mut store = Store::new(
+        &engine,
+        ParentCtx {
+            child_store,
+            child_instance,
+        },
+    );
+
+    let parent_module = Module::new(
+        store.engine(),
+        r#"
+            (module $parent
+              (func $host.catch_child_trap (import "host" "catch_child_trap"))
+              (func $run (export "run")
+                call $host.catch_child_trap
+              )
+            )
+        "#,
+    )?;
+
+    let parent_instance = linker.instantiate(&mut store, &parent_module)?;
+
+    let func = parent_instance.get_typed_func::<(), ()>(&mut store, "run")?;
+    func.call(store, ())?;
+
+    Ok(())
+}

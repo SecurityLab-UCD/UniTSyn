@@ -1,0 +1,52 @@
+pub fn is_err(&self) -> bool {
+        if let Self::WithOptions(rule) = self {
+            rule.level == RulePlainConfiguration::Error
+        } else {
+            matches!(self, Self::Plain(RulePlainConfiguration::Error))
+        }
+    }
+fn upgrade_severity() {
+    let mut fs = MemoryFileSystem::default();
+    let mut console = BufferConsole::default();
+    let file_path = Path::new("biome.json");
+    fs.insert(
+        file_path.into(),
+        CONFIG_LINTER_UPGRADE_DIAGNOSTIC.as_bytes(),
+    );
+
+    let file_path = Path::new("file.js");
+    fs.insert(file_path.into(), UPGRADE_SEVERITY_CODE.as_bytes());
+
+    let result = run_cli(
+        DynRef::Borrowed(&mut fs),
+        &mut console,
+        Args::from([("lint"), file_path.as_os_str().to_str().unwrap()].as_slice()),
+    );
+
+    assert!(result.is_err(), "run_cli returned {result:?}");
+
+    let messages = &console.out_buffer;
+
+    let error_count = messages
+        .iter()
+        .filter(|m| m.level == LogLevel::Error)
+        .filter(|m| {
+            let content = format!("{:?}", m.content);
+            content.contains("style/noNegationElse")
+        })
+        .count();
+
+    assert_eq!(
+        error_count, 1,
+        "expected 1 error-level message in console buffer, found {error_count:?}:\n{:?}",
+        console.out_buffer
+    );
+
+    assert_cli_snapshot(SnapshotPayload::new(
+        module_path!(),
+        "upgrade_severity",
+        fs,
+        console,
+        result,
+    ));
+}

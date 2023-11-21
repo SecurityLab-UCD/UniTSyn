@@ -1,0 +1,20 @@
+pub fn apply_filter(&self, filter: &str, args: &[Value]) -> Result<Value, Error> {
+        match self.env.get_filter(filter) {
+            Some(filter) => filter.apply_to(self, args),
+            None => Err(Error::from(ErrorKind::UnknownFilter)),
+        }
+    }
+fn test_rest_args() {
+    fn sum(val: u32, rest: Rest<u32>) -> u32 {
+        rest.iter().fold(val, |a, b| a + b)
+    }
+
+    let mut env = Environment::new();
+    env.add_filter("sum", sum);
+    assert_eq!(
+        env.empty_state()
+            .apply_filter("sum", args!(1, 2, 3, 4))
+            .unwrap(),
+        Value::from(1 + 2 + 3 + 4)
+    );
+}

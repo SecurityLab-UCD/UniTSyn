@@ -1,0 +1,27 @@
+fn smallest_key(&self) -> &[u8] {
+        panic!()
+    }
+fn external_sst_info_key_values_with_delete() -> Result<()> {
+    let tempdir = tempdir();
+    let sst_path = tempdir
+        .path()
+        .join("test-data.sst")
+        .to_string_lossy()
+        .to_string();
+    let sst_builder = <KvTestEngine as SstExt>::SstWriterBuilder::new();
+    let mut sst_writer = sst_builder.build(&sst_path)?;
+
+    sst_writer.delete(b"k1")?;
+
+    let info = sst_writer.finish()?;
+
+    assert_eq!(b"k1", info.smallest_key());
+    assert_eq!(b"k1", info.largest_key());
+    assert_eq!(1, info.num_entries());
+
+    let size = fs::metadata(&sst_path).unwrap().len();
+
+    assert_eq!(size, info.file_size());
+
+    Ok(())
+}

@@ -1,0 +1,19 @@
+fn expr(input: &[u8]) -> IResult<&[u8], i64> {
+  let (input, init) = term(input)?;
+  fold_many0(
+    pair(one_of("+-"), term),
+    move || init,
+    |acc, (op, val)| {
+      if op == '+' {
+        acc + val
+      } else {
+        acc - val
+      }
+    },
+  )(input)
+}
+fn expr_test() {
+  assert_eq!(expr(" 1 +  2 "), Ok(("", 3)));
+  assert_eq!(expr(" 12 + 6 - 4+  3"), Ok(("", 17)));
+  assert_eq!(expr(" 1 + 2*3 + 4"), Ok(("", 11)));
+}

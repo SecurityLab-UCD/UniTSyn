@@ -1,0 +1,32 @@
+pub fn map(&self) -> JsObject {
+        self.map.clone()
+    }
+fn eph_allocation_chains() {
+    run_test(|| {
+        let gc_value = Gc::new(String::from("foo"));
+
+        {
+            let cloned_gc = gc_value.clone();
+            let weak = WeakGc::new(&cloned_gc);
+            let wrap = Gc::new(weak);
+
+            assert_eq!(wrap.upgrade().as_deref().map(String::as_str), Some("foo"));
+
+            let eph = Ephemeron::new(&wrap, 3);
+
+            drop(cloned_gc);
+            force_collect();
+            assert_eq!(wrap.upgrade().as_deref().map(String::as_str), Some("foo"));
+            assert_eq!(eph.value(), Some(3));
+
+            drop(gc_value);
+            force_collect();
+            assert!(wrap.upgrade().is_none());
+            assert_eq!(eph.value(), Some(3));
+
+            drop(wrap);
+            force_collect();
+            assert!(eph.value().is_none());
+        }
+    });
+}

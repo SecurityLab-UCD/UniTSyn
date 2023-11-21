@@ -1,0 +1,40 @@
+fn get(&self, _: &[u8]) -> Option<&[u8]> {
+        None
+    }
+fn test_txn_create_compaction_filter() {
+    GC_COMPACTION_FILTER_PERFORM.reset();
+    GC_COMPACTION_FILTER_SKIP.reset();
+
+    let mut cfg = DbConfig::default();
+    cfg.writecf.disable_auto_compactions = true;
+    cfg.writecf.dynamic_level_bytes = false;
+    let dir = tempfile::TempDir::new().unwrap();
+    let builder = TestEngineBuilder::new().path(dir.path());
+    let mut engine = builder.build_with_cfg(&cfg).unwrap();
+    let raw_engine = engine.get_rocksdb();
+
+    let mut gc_runner = TestGcRunner::new(0);
+    let value = vec![b'v'; 512];
+
+    must_prewrite_put(&mut engine, b"zkey", &value, b"zkey", 100);
+    must_commit(&mut engine, b"zkey", 100, 110);
+
+    gc_runner
+        .safe_point(TimeStamp::new(1).into_inner())
+        .gc(&raw_engine);
+    assert_eq!(
+        GC_COMPACTION_FILTER_PERFORM
+            .with_label_values(&[STAT_TXN_KEYMODE])
+            .get(),
+        1
+    );
+    assert_eq!(
+        GC_COMPACTION_FILTER_SKIP
+            .with_label_values(&[STAT_TXN_KEYMODE])
+            .get(),
+        1
+    );
+
+    GC_COMPACTION_FILTER_PERFORM.reset();
+    GC_COMPACTION_FILTER_SKIP.reset();
+}

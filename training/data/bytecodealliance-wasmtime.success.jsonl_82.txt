@@ -1,0 +1,25 @@
+pub fn to_string(&self) -> String {
+        format!("label{}", self.0)
+    }
+fn fill_wrong() {
+    let mut store = Store::<()>::default();
+    let ty = TableType::new(ValType::FuncRef, 1, None);
+    let table = Table::new(&mut store, ty, Val::FuncRef(None)).unwrap();
+    assert_eq!(
+        table
+            .fill(&mut store, 0, Val::ExternRef(None), 1)
+            .map_err(|e| e.to_string())
+            .unwrap_err(),
+        "value does not match table element type"
+    );
+
+    let ty = TableType::new(ValType::ExternRef, 1, None);
+    let table = Table::new(&mut store, ty, Val::ExternRef(None)).unwrap();
+    assert_eq!(
+        table
+            .fill(&mut store, 0, Val::FuncRef(None), 1)
+            .map_err(|e| e.to_string())
+            .unwrap_err(),
+        "value does not match table element type"
+    );
+}

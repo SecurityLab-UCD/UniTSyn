@@ -1,0 +1,24 @@
+pub fn stdout_str(&self) -> &str {
+        std::str::from_utf8(&self.stdout).unwrap()
+    }
+fn test_output_is_random_permutation() {
+    let input_seq = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    let input = input_seq
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<String>>()
+        .join("\n");
+
+    let result = new_ucmd!().pipe_in(input.as_bytes()).succeeds();
+    result.no_stderr();
+
+    let mut result_seq: Vec<i32> = result
+        .stdout_str()
+        .split('\n')
+        .filter(|x| !x.is_empty())
+        .map(|x| x.parse().unwrap())
+        .collect();
+    result_seq.sort_unstable();
+    assert_ne!(result.stdout_str(), input, "Output is not randomized");
+    assert_eq!(result_seq, input_seq, "Output is not a permutation");
+}

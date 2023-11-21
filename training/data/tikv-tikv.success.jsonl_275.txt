@@ -1,0 +1,66 @@
+fn clone(&self) -> Self {
+        let refs = self.refs.fetch_add(1, atomic::Ordering::SeqCst);
+
+        trace!(
+            "Storage referenced"; "original_ref" => refs
+        );
+
+        Self {
+            engine: self.engine.clone(),
+            sched: self.sched.clone(),
+            read_pool: self.read_pool.clone(),
+            refs: self.refs.clone(),
+            max_key_size: self.max_key_size,
+            concurrency_manager: self.concurrency_manager.clone(),
+            api_version: self.api_version,
+            causal_ts_provider: self.causal_ts_provider.clone(),
+            resource_tag_factory: self.resource_tag_factory.clone(),
+            quota_limiter: self.quota_limiter.clone(),
+            _phantom: PhantomData,
+        }
+    }
+fn test_raft_storage_store_not_match() {
+    let (_cluster, storage, mut ctx) = new_raft_storage();
+
+    let key = Key::from_raw(b"key");
+    assert_eq!(storage.get(ctx.clone(), &key, 5).unwrap().0, None);
+    storage
+        .prewrite(
+            ctx.clone(),
+            vec![Mutation::make_put(key.clone(), b"value".to_vec())],
+            b"key".to_vec(),
+            10,
+        )
+        .unwrap();
+    storage
+        .commit(ctx.clone(), vec![key.clone()], 10, 15)
+        .unwrap();
+    assert_eq!(
+        storage.get(ctx.clone(), &key, 20).unwrap().0.unwrap(),
+        b"value".to_vec()
+    );
+
+    // Test store not match.
+    let mut peer = ctx.get_peer().clone();
+    let store_id = peer.get_store_id();
+
+    peer.set_store_id(store_id + 1);
+    ctx.set_peer(peer);
+    storage.get(ctx.clone(), &key, 20).unwrap_err();
+    let res = storage.get(ctx.clone(), &key, 20);
+    if let StorageError(box StorageErrorInner::Txn(TxnError(box TxnErrorInner::Engine(KvError(
+        box KvErrorInner::Request(ref e),
+    ))))) = *res.as_ref().err().unwrap()
+    {
+        assert!(e.has_store_not_match());
+    } else {
+        panic!("expect store_not_match, but got {:?}", res);
+    }
+    storage
+        .batch_get(ctx.clone(), &[key.clone()], 20)
+        .unwrap_err();
+    storage
+        .scan(ctx.clone(), key, None, 1, false, 20)
+        .unwrap_err();
+    storage.scan_locks(ctx, 20, None, None, 100).unwrap_err();
+}

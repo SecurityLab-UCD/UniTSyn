@@ -1,0 +1,15 @@
+fn factor(i: &str) -> IResult<&str, Expr> {
+  alt((
+    map(
+      map_res(delimited(multispace, digit, multispace), FromStr::from_str),
+      Expr::Value,
+    ),
+    parens,
+  ))(i)
+}
+fn factor_test() {
+  assert_eq!(factor("3"), Ok(("", 3)));
+  assert_eq!(factor(" 12"), Ok(("", 12)));
+  assert_eq!(factor("537  "), Ok(("", 537)));
+  assert_eq!(factor("  24   "), Ok(("", 24)));
+}

@@ -1,0 +1,104 @@
+pub fn leader_of_region(&mut self, region_id: u64) -> Option<metapb::Peer> {
+        let timer = Instant::now_coarse();
+        let timeout = Duration::from_secs(5);
+        let mut store_ids = None;
+        while timer.saturating_elapsed() < timeout {
+            match self.voter_store_ids_of_region(region_id) {
+                None => thread::sleep(Duration::from_millis(10)),
+                Some(ids) => {
+                    store_ids = Some(ids);
+                    break;
+                }
+            }
+        }
+        let store_ids = store_ids?;
+        if let Some(l) = self.leaders.get(&region_id) {
+            // leader may be stopped in some tests.
+            if self.valid_leader_id(region_id, l.get_store_id()) {
+                return Some(l.clone());
+            }
+        }
+        self.reset_leader_of_region(region_id);
+        let mut leader = None;
+        let mut leaders = HashMap::default();
+
+        let node_ids = self.sim.rl().get_node_ids();
+        // For some tests, we stop the node but pd still has this information,
+        // and we must skip this.
+        let alive_store_ids: Vec<_> = store_ids
+            .iter()
+            .filter(|id| node_ids.contains(id))
+            .cloned()
+            .collect();
+        while timer.saturating_elapsed() < timeout {
+            for store_id in &alive_store_ids {
+                let l = match self.query_leader(*store_id, region_id, Duration::from_secs(1)) {
+                    None => continue,
+                    Some(l) => l,
+                };
+                leaders
+                    .entry(l.get_id())
+                    .or_insert((l, vec![]))
+                    .1
+                    .push(*store_id);
+            }
+            if let Some((_, (l, c))) = leaders.iter().max_by_key(|(_, (_, c))| c.len()) {
+                if c.contains(&l.get_store_id()) {
+                    leader = Some(l.clone());
+                    // Technically, correct calculation should use two quorum when in joint
+                    // state. Here just for simplicity.
+                    if c.len() > store_ids.len() / 2 {
+                        break;
+                    }
+                }
+            }
+            debug!("failed to detect leaders"; "leaders" => ?leaders, "store_ids" => ?store_ids);
+            sleep_ms(10);
+            leaders.clear();
+        }
+
+        if let Some(l) = leader {
+            self.leaders.insert(region_id, l);
+        }
+
+        self.leaders.get(&region_id).cloned()
+    }
+fn test_leader_drop_with_pessimistic_lock() {
+    let mut cluster = new_server_cluster(0, 3);
+    cluster.run();
+    cluster.must_transfer_leader(1, new_peer(1, 1));
+
+    let txn_ext = cluster
+        .must_get_snapshot_of_region(1)
+        .ext()
+        .get_txn_ext()
+        .unwrap()
+        .clone();
+    txn_ext
+        .pessimistic_locks
+        .write()
+        .insert(vec![(
+            Key::from_raw(b"k1"),
+            PessimisticLock {
+                primary: b"k1".to_vec().into_boxed_slice(),
+                start_ts: 10.into(),
+                ttl: 1000,
+                for_update_ts: 10.into(),
+                min_commit_ts: 10.into(),
+                last_change_ts: 5.into(),
+                versions_to_last_change: 3,
+            },
+        )])
+        .unwrap();
+
+    // Isolate node 1, leader should be transferred to another node.
+    cluster.add_send_filter(IsolationFilterFactory::new(1));
+    cluster.must_put(b"k1", b"v1");
+    assert_ne!(cluster.leader_of_region(1).unwrap().id, 1);
+
+    // When peer 1 becomes leader again, the pessimistic locks should be cleared
+    // before.
+    cluster.clear_send_filters();
+    cluster.must_transfer_leader(1, new_peer(1, 1));
+    assert!(txn_ext.pessimistic_locks.read().is_empty());
+}

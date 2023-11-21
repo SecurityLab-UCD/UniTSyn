@@ -1,0 +1,16 @@
+pub fn borrow_mut(&self) -> GcRefMut<'_, T> {
+        match self.try_borrow_mut() {
+            Ok(value) => value,
+            Err(e) => panic!("{}", e),
+        }
+    }
+fn gc_basic_cell_allocation() {
+    run_test(|| {
+        let gc_cell = Gc::new(GcRefCell::new(16_u16));
+
+        force_collect();
+        Harness::assert_collections(1);
+        Harness::assert_bytes_allocated();
+        assert_eq!(*gc_cell.borrow_mut(), 16);
+    });
+}

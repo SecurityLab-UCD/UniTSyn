@@ -1,0 +1,43 @@
+pub fn is_err(&self) -> bool {
+        if let Self::WithOptions(rule) = self {
+            rule.level == RulePlainConfiguration::Error
+        } else {
+            matches!(self, Self::Plain(RulePlainConfiguration::Error))
+        }
+    }
+fn does_not_format_ignored_files() {
+    let mut console = BufferConsole::default();
+    let mut fs = MemoryFileSystem::default();
+    let file_path = Path::new("biome.json");
+    fs.insert(file_path.into(), CONFIG_FORMATTER_IGNORED_FILES.as_bytes());
+
+    let file_path = Path::new("test.js");
+    fs.insert(file_path.into(), UNFORMATTED.as_bytes());
+
+    let result = run_cli(
+        DynRef::Borrowed(&mut fs),
+        &mut console,
+        Args::from([("format"), ("test.js"), ("--write")].as_slice()),
+    );
+
+    assert!(result.is_err(), "run_cli returned {result:?}");
+
+    let mut file = fs
+        .open(file_path)
+        .expect("formatting target file was removed by the CLI");
+
+    let mut content = String::new();
+    file.read_to_string(&mut content)
+        .expect("failed to read file from memory FS");
+
+    assert_eq!(content, UNFORMATTED);
+
+    drop(file);
+    assert_cli_snapshot(SnapshotPayload::new(
+        module_path!(),
+        "does_not_format_ignored_files",
+        fs,
+        console,
+        result,
+    ));
+}

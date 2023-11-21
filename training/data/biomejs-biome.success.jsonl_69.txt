@@ -1,0 +1,19 @@
+pub fn has_errors(&self) -> bool {
+        self.diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.is_error())
+    }
+fn quick_test() {
+    let source = r#"{
+        "javascript": {
+            "formatter": {
+                "overrides": [
+                {}]
+            }
+        }
+    }"#;
+    let result = deserialize_from_json_str::<Configuration>(source, JsonParserOptions::default());
+
+    dbg!(result.diagnostics());
+    assert!(!result.has_errors());
+}

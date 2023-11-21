@@ -1,0 +1,22 @@
+pub(crate) fn is_empty(&self) -> bool {
+        self.reads_complete == 0 && self.reads_partial == 0
+    }
+fn test_root_preserve() {
+    let scene = TestScenario::new(util_name!());
+
+    let result = scene.cmd("whoami").run();
+    if skipping_test_is_okay(&result, "whoami: cannot find name for user ID") {
+        return;
+    }
+    let user_name = String::from(result.stdout_str().trim());
+    assert!(!user_name.is_empty());
+
+    let result = scene
+        .ucmd()
+        .arg("--preserve-root")
+        .arg("-R")
+        .arg(user_name)
+        .arg("/")
+        .fails();
+    result.stderr_contains("chown: it is dangerous to operate recursively");
+}

@@ -1,0 +1,13 @@
+pub fn get<Q>(&self, key: &Q) -> Option<&Value>
+    where
+        String: Borrow<Q>,
+        Q: ?Sized + Ord + Eq + Hash,
+    {
+        self.map.get(key)
+    }
+fn test_serialize_unsized_value_to_raw_value() {
+    assert_eq!(
+        serde_json::value::to_raw_value("foobar").unwrap().get(),
+        r#""foobar""#,
+    );
+}

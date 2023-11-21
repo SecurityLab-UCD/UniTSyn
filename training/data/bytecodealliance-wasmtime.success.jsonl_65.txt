@@ -1,0 +1,16 @@
+pub fn is_some(&self) -> bool {
+        !self.0.is_reserved_value()
+    }
+fn get_host_function() -> Result<()> {
+    let engine = Engine::default();
+    let module = Module::new(&engine, r#"(module (import "mod" "f1" (func)))"#)?;
+
+    let mut linker = Linker::new(&engine);
+    linker.func_wrap("mod", "f1", || {})?;
+    let mut store = Store::new(&engine, ());
+    assert!(linker
+        .get_by_import(&mut store, &module.imports().nth(0).unwrap())
+        .is_some());
+
+    Ok(())
+}

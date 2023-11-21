@@ -1,0 +1,73 @@
+pub fn capacity(&self) -> usize {
+        self.inner.capacity() as usize
+    }
+async fn stream_close_by_data_frame_releases_capacity() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let window_size = frame::DEFAULT_INITIAL_WINDOW_SIZE as usize;
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
+
+        // Send request
+        let (resp1, mut s1) = client.send_request(request, false).unwrap();
+
+        // This effectively reserves the entire connection window
+        s1.reserve_capacity(window_size);
+
+        // The capacity should be immediately available as nothing else is
+        // happening on the stream.
+        assert_eq!(s1.capacity(), window_size);
+
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
+
+        // Create a second stream
+        let (resp2, mut s2) = client.send_request(request, false).unwrap();
+
+        // Request capacity
+        s2.reserve_capacity(5);
+
+        // There should be no available capacity (as it is being held up by
+        // the previous stream
+        assert_eq!(s2.capacity(), 0);
+
+        // Closing the previous stream by sending an empty data frame will
+        // release the capacity to s2
+        s1.send_data("".into(), true).unwrap();
+
+        // The capacity should be available
+        assert_eq!(s2.capacity(), 5);
+
+        // Send the frame
+        s2.send_data("hello".into(), true).unwrap();
+
+        // Drive both streams to prevent the handles from being dropped
+        // (which will send a RST_STREAM) before the connection is closed.
+        h2.drive(resp1).await.unwrap();
+        h2.drive(resp2).await.unwrap();
+    };
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(frames::headers(1).request("POST", "https://http2.akamai.com/"))
+            .await;
+        srv.send_frame(frames::headers(1).response(200)).await;
+        srv.recv_frame(frames::headers(3).request("POST", "https://http2.akamai.com/"))
+            .await;
+        srv.send_frame(frames::headers(3).response(200)).await;
+        srv.recv_frame(frames::data(1, &b""[..]).eos()).await;
+        srv.recv_frame(frames::data(3, &b"hello"[..]).eos()).await;
+    };
+    join(srv, h2).await;
+}

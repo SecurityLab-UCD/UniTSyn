@@ -1,0 +1,58 @@
+pub fn to_string(&self) -> String {
+        format!("label{}", self.0)
+    }
+fn pass_guest_back_as_borrow() -> Result<()> {
+    let engine = super::engine();
+    let c = Component::new(
+        &engine,
+        r#"
+            (component
+                (type $t' (resource (rep i32)))
+
+                (export $t "t" (type $t'))
+
+                (core func $new (canon resource.new $t))
+
+                (core module $m
+                    (import "" "new" (func $new (param i32) (result i32)))
+
+                    (func (export "mk") (result i32)
+                        (call $new (i32.const 100))
+                    )
+
+                    (func (export "take") (param i32)
+                        (if (i32.ne (local.get 0) (i32.const 100)) (then (unreachable)))
+                    )
+                )
+                (core instance $i (instantiate $m
+                    (with "" (instance
+                        (export "new" (func $new))
+                    ))
+                ))
+
+                (func (export "mk") (result (own $t))
+                    (canon lift (core func $i "mk")))
+                (func (export "take") (param "x" (borrow $t))
+                    (canon lift (core func $i "take")))
+            )
+        "#,
+    )?;
+
+    let mut store = Store::new(&engine, ());
+    let i = Linker::new(&engine).instantiate(&mut store, &c)?;
+    let mk = i.get_typed_func::<(), (ResourceAny,)>(&mut store, "mk")?;
+    let take = i.get_typed_func::<(&ResourceAny,), ()>(&mut store, "take")?;
+
+    let (resource,) = mk.call(&mut store, ())?;
+    mk.post_return(&mut store)?;
+    take.call(&mut store, (&resource,))?;
+    take.post_return(&mut store)?;
+
+    resource.resource_drop(&mut store)?;
+
+    // Should not be valid to use `resource` again
+    let err = take.call(&mut store, (&resource,)).unwrap_err();
+    assert_eq!(err.to_string(), "unknown handle index 0");
+
+    Ok(())
+}

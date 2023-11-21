@@ -1,0 +1,31 @@
+pub(crate) fn is_empty(&self) -> bool {
+        // `cmp rdi, -1` -- basically: `repr as i64 == -1`
+        let empty = Self::empty();
+        let is_empty = self.head == empty.head && self.tail == empty.tail;
+        // The empty representation does nothing on Drop. We can't let this one
+        // drop normally because `impl Drop for Identifier` calls is_empty; that
+        // would be an infinite recursion.
+        mem::forget(empty);
+        is_empty
+    }
+fn test_new() {
+    fn test(identifier: Prerelease, expected: &str) {
+        assert_eq!(identifier.is_empty(), expected.is_empty());
+        assert_eq!(identifier.len(), expected.len());
+        assert_eq!(identifier.as_str(), expected);
+        assert_eq!(identifier, identifier);
+        assert_eq!(identifier, identifier.clone());
+    }
+
+    let ref mut string = String::new();
+    let limit = if cfg!(miri) { 40 } else { 280 }; // miri is slow
+    for _ in 0..limit {
+        test(prerelease(string), string);
+        string.push('1');
+    }
+
+    if !cfg!(miri) {
+        let ref string = string.repeat(20000);
+        test(prerelease(string), string);
+    }
+}

@@ -1,0 +1,16 @@
+pub fn dir_exists(&self, path: &str) -> bool {
+        match fs::metadata(self.plus(path)) {
+            Ok(m) => m.is_dir(),
+            Err(_) => false,
+        }
+    }
+fn test_install_twice_dir() {
+    let dir = "dir";
+    let scene = TestScenario::new(util_name!());
+
+    scene.ucmd().arg("-d").arg(dir).succeeds();
+    scene.ucmd().arg("-d").arg(dir).succeeds();
+    let at = &scene.fixtures;
+
+    assert!(at.dir_exists(dir));
+}

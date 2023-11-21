@@ -1,0 +1,15 @@
+pub(crate) fn value(&self) -> Option<&V> {
+        // SAFETY: the garbage collector ensures `ptr` is valid as long as `data` is `Some`.
+        unsafe { self.data.get().map(|ptr| &ptr.as_ref().value) }
+    }
+fn eph_basic_alloc_dump_test() {
+    run_test(|| {
+        let gc_value = Gc::new(String::from("gc here"));
+        let _gc_two = Gc::new("hmmm");
+
+        let eph = Ephemeron::new(&gc_value, 4);
+        let _fourth = Gc::new("tail");
+
+        assert_eq!(eph.value(), Some(4));
+    });
+}

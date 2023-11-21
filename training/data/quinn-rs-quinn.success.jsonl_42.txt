@@ -1,0 +1,13 @@
+pub fn initiator(self) -> Side {
+        if self.0 & 0x1 == 0 {
+            Side::Client
+        } else {
+            Side::Server
+        }
+    }
+fn test_something() {
+    let data = [];
+    let s = StreamId::new(data.side, data.dir, data.index);
+    assert_eq!(s.initiator(), data.side);
+    assert_eq!(s.dir(), data.dir);
+}

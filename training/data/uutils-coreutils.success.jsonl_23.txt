@@ -1,0 +1,15 @@
+pub(crate) fn read(mut self, operands: &[&str]) -> Result<Self, ParseError> {
+        for operand in operands {
+            self.parse_operand(operand)?;
+        }
+
+        Ok(self)
+    }
+fn test_cp_with_dirs_t() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    ucmd.arg("-t")
+        .arg(TEST_COPY_TO_FOLDER)
+        .arg(TEST_HELLO_WORLD_SOURCE)
+        .succeeds();
+    assert_eq!(at.read(TEST_COPY_TO_FOLDER_FILE), "Hello, World!\n");
+}

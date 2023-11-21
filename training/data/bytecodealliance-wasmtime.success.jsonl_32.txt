@@ -1,0 +1,36 @@
+pub fn is_none(&self) -> bool {
+        self.0.is_reserved_value()
+    }
+fn get_set_funcref_globals_via_api() -> anyhow::Result<()> {
+    let mut cfg = Config::new();
+    cfg.wasm_reference_types(true);
+    let engine = Engine::new(&cfg)?;
+    let mut store = Store::new(&engine, ());
+
+    let f = Func::wrap(&mut store, || {});
+
+    // Initialize with a null funcref.
+
+    let global = Global::new(
+        &mut store,
+        GlobalType::new(ValType::FuncRef, Mutability::Var),
+        Val::FuncRef(None),
+    )?;
+    assert!(global.get(&mut store).unwrap_funcref().is_none());
+
+    global.set(&mut store, Val::FuncRef(Some(f.clone())))?;
+    let f2 = global.get(&mut store).unwrap_funcref().cloned().unwrap();
+    assert_eq!(f.ty(&store), f2.ty(&store));
+
+    // Initialize with a non-null funcref.
+
+    let global = Global::new(
+        &mut store,
+        GlobalType::new(ValType::FuncRef, Mutability::Var),
+        Val::FuncRef(Some(f.clone())),
+    )?;
+    let f2 = global.get(&mut store).unwrap_funcref().cloned().unwrap();
+    assert_eq!(f.ty(&store), f2.ty(&store));
+
+    Ok(())
+}

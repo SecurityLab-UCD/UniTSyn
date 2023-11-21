@@ -1,0 +1,32 @@
+pub(crate) fn from_u32(x: &[u32]) -> Vec<Limb> {
+    x.iter().cloned().collect()
+}
+fn iadd_small_test() {
+    // Overflow check (single)
+    // This should set all the internal data values to 0, the top
+    // value to (1<<31), and the bottom value to (4>>1).
+    // This is because the max_value + 1 leads to all 0s, we set the
+    // topmost bit to 1.
+    let mut x = Bigint {
+        data: from_u32(&[4294967295]),
+    };
+    x.iadd_small(5);
+    assert_eq!(x.data, from_u32(&[4, 1]));
+
+    // No overflow, single value
+    let mut x = Bigint {
+        data: from_u32(&[5]),
+    };
+    x.iadd_small(7);
+    assert_eq!(x.data, from_u32(&[12]));
+
+    // Single carry, internal overflow
+    let mut x = Bigint::from_u64(0x80000000FFFFFFFF);
+    x.iadd_small(7);
+    assert_eq!(x.data, from_u32(&[6, 0x80000001]));
+
+    // Double carry, overflow
+    let mut x = Bigint::from_u64(0xFFFFFFFFFFFFFFFF);
+    x.iadd_small(7);
+    assert_eq!(x.data, from_u32(&[6, 0, 1]));
+}

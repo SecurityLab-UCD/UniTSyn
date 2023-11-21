@@ -1,0 +1,20 @@
+pub fn contains(&self, op: IoOp) -> bool {
+        match *self {
+            IoRateLimitMode::WriteOnly => op == IoOp::Write,
+            IoRateLimitMode::ReadOnly => op == IoOp::Read,
+            _ => true,
+        }
+    }
+fn test_deadline_2() {
+    // It should not even take any snapshots when request is outdated from the
+    // beginning.
+    let product = ProductTable::new();
+    let (_, endpoint) = init_with_data(&product, &[]);
+    let req = DagSelect::from(&product).build();
+
+    fail::cfg("rockskv_async_snapshot", "panic").unwrap();
+    fail::cfg("deadline_check_fail", "return()").unwrap();
+    let resp = handle_request(&endpoint, req);
+
+    assert!(resp.get_other_error().contains("exceeding the deadline"));
+}

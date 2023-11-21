@@ -1,0 +1,7 @@
+fn size(x: u32) -> TextSize {
+    TextSize::from(x)
+}
+fn math() {
+    assert_eq!(size(10) + size(5), size(15));
+    assert_eq!(size(10) - size(5), size(5));
+}

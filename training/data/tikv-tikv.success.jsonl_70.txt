@@ -1,0 +1,17 @@
+pub fn contains(&self, op: IoOp) -> bool {
+        match *self {
+            IoRateLimitMode::WriteOnly => op == IoOp::Write,
+            IoRateLimitMode::ReadOnly => op == IoOp::Read,
+            _ => true,
+        }
+    }
+fn test_parse_request_failed() {
+    let product = ProductTable::new();
+    let (_, endpoint) = init_with_data(&product, &[]);
+    let req = DagSelect::from(&product).build();
+
+    fail::cfg("coprocessor_parse_request", "return()").unwrap();
+    let resp = handle_request(&endpoint, req);
+
+    assert!(resp.get_other_error().contains("unsupported tp"));
+}

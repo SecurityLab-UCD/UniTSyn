@@ -1,0 +1,10 @@
+pub fn captures_len(&self) -> usize {
+        self.0.capture_names().len()
+    }
+fn capture_names() {
+    let re = regex!(r"(.)(?P<a>.)");
+    assert_eq!(3, re.captures_len());
+    assert_eq!((3, Some(3)), re.capture_names().size_hint());
+    assert_eq!(vec![None, None, Some("a")],
+               re.capture_names().collect::<Vec<_>>());
+}

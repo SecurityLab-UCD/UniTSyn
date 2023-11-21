@@ -1,0 +1,63 @@
+pub fn capacity(&self, stream: &mut store::Ptr) -> WindowSize {
+        stream.capacity(self.prioritize.max_buffer_size())
+    }
+async fn send_recv_data() {
+    h2_support::trace_init!();
+
+    let mock = mock_io::Builder::new()
+        .handshake()
+        .write(&[
+            // POST /
+            0, 0, 16, 1, 4, 0, 0, 0, 1, 131, 135, 65, 139, 157, 41, 172, 75, 143, 168, 233, 25, 151,
+            33, 233, 132,
+        ])
+        .write(&[
+            // DATA
+            0, 0, 5, 0, 1, 0, 0, 0, 1, 104, 101, 108, 108, 111,
+        ])
+        .write(frames::SETTINGS_ACK)
+        // Read response
+        .read(&[
+            // HEADERS
+            0, 0, 1, 1, 4, 0, 0, 0, 1, 136, // DATA
+            0, 0, 5, 0, 1, 0, 0, 0, 1, 119, 111, 114, 108, 100,
+        ])
+        .build();
+
+    let (mut client, mut h2) = client::Builder::new().handshake(mock).await.unwrap();
+
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("https://http2.akamai.com/")
+        .body(())
+        .unwrap();
+
+    tracing::info!("sending request");
+    let (response, mut stream) = client.send_request(request, false).unwrap();
+
+    // Reserve send capacity
+    stream.reserve_capacity(5);
+
+    assert_eq!(stream.capacity(), 5);
+
+    // Send the data
+    stream.send_data("hello".as_bytes(), true).unwrap();
+
+    // Get the response
+    let resp = h2.run(response).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Take the body
+    let (_, body) = resp.into_parts();
+
+    // Wait for all the data frames to be received
+    let bytes: Vec<_> = h2.run(body.try_collect()).await.unwrap();
+
+    // One byte chunk
+    assert_eq!(1, bytes.len());
+
+    assert_eq!(bytes[0], &b"world"[..]);
+
+    // The H2 connection is closed
+    h2.await.unwrap();
+}

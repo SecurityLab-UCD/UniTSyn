@@ -1,0 +1,21 @@
+fn is_empty(&self) -> bool {
+        self.pending_writes.is_empty() && self.unpacked_size == 0
+    }
+fn test_invalid_range() {
+    let data = vec![
+        (1, Some("name:0"), 2),
+        (2, Some("name:4"), 3),
+        (4, Some("name:3"), 1),
+        (5, Some("name:1"), 4),
+    ];
+
+    let product = ProductTable::new();
+    let (_, endpoint) = init_with_data(&product, &data);
+
+    let mut select = DagSelect::from(&product);
+    select.key_ranges[0].set_start(b"xxx".to_vec());
+    select.key_ranges[0].set_end(b"zzz".to_vec());
+    let req = select.build();
+    let resp = handle_request(&endpoint, req);
+    assert!(!resp.get_other_error().is_empty());
+}

@@ -1,0 +1,24 @@
+pub const fn is_valid(&self) -> bool {
+        if !is_valid_ascii(self.exponent) {
+            false
+        } else if !is_valid_ascii(self.decimal_point) {
+            false
+        } else if !self.nan_str_is_valid() {
+            false
+        } else if !self.inf_str_is_valid() {
+            false
+        } else if !self.infinity_string_is_valid() {
+            false
+        } else {
+            true
+        }
+    }
+fn options_tests() {
+    const X: Options = Options::new();
+    assert!(X.is_valid());
+    assert_eq!(X, Options::default());
+    assert!(OptionsBuilder::new().build().is_ok());
+    assert!(OptionsBuilder::default().build().is_ok());
+    assert!(OptionsBuilder::default().is_valid());
+    assert_eq!(X.rebuild(), Options::builder());
+}

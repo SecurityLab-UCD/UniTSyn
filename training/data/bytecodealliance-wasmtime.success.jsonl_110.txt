@@ -1,0 +1,50 @@
+pub fn call(&self, arguments: &[DataValue]) -> Vec<DataValue> {
+        let mut values = UnboxedValues::make_arguments(arguments, &self.func_signature);
+        let arguments_address = values.as_mut_ptr();
+
+        let function_ptr = self.module.get_finalized_function(self.func_id);
+        let trampoline_ptr = self.module.get_finalized_function(self.trampoline_id);
+
+        let callable_trampoline: fn(*const u8, *mut u128) -> () =
+            unsafe { mem::transmute(trampoline_ptr) };
+        callable_trampoline(function_ptr, arguments_address);
+
+        values.collect_returns(&self.func_signature)
+    }
+fn bools() -> Result<()> {
+    let component = r#"
+        (component
+            (core module $m
+                (func (export "pass") (param i32) (result i32) local.get 0)
+            )
+            (core instance $i (instantiate $m))
+
+            (func (export "u32-to-bool") (param "a" u32) (result bool)
+                (canon lift (core func $i "pass"))
+            )
+            (func (export "bool-to-u32") (param "a" bool) (result u32)
+                (canon lift (core func $i "pass"))
+            )
+        )
+    "#;
+
+    let engine = super::engine();
+    let component = Component::new(&engine, component)?;
+    let mut store = Store::new(&engine, ());
+    let instance = Linker::new(&engine).instantiate(&mut store, &component)?;
+    let u32_to_bool = instance.get_typed_func::<(u32,), (bool,)>(&mut store, "u32-to-bool")?;
+    let bool_to_u32 = instance.get_typed_func::<(bool,), (u32,)>(&mut store, "bool-to-u32")?;
+
+    assert_eq!(bool_to_u32.call(&mut store, (false,))?, (0,));
+    bool_to_u32.post_return(&mut store)?;
+    assert_eq!(bool_to_u32.call(&mut store, (true,))?, (1,));
+    bool_to_u32.post_return(&mut store)?;
+    assert_eq!(u32_to_bool.call(&mut store, (0,))?, (false,));
+    u32_to_bool.post_return(&mut store)?;
+    assert_eq!(u32_to_bool.call(&mut store, (1,))?, (true,));
+    u32_to_bool.post_return(&mut store)?;
+    assert_eq!(u32_to_bool.call(&mut store, (2,))?, (true,));
+    u32_to_bool.post_return(&mut store)?;
+
+    Ok(())
+}

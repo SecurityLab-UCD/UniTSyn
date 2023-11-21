@@ -1,0 +1,50 @@
+pub fn is_symlink(&self, path: &str) -> bool {
+        log_info("is_symlink", self.plus_as_string(path));
+        match fs::symlink_metadata(self.plus(path)) {
+            Ok(m) => m.file_type().is_symlink(),
+            Err(_) => false,
+        }
+    }
+fn test_cp_no_deref_link_onto_link() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    at.copy(TEST_HELLO_WORLD_SOURCE, TEST_HELLO_WORLD_DEST);
+
+    #[cfg(not(windows))]
+    let _r = fs::symlink(
+        TEST_HELLO_WORLD_SOURCE,
+        at.subdir.join(TEST_HELLO_WORLD_SOURCE_SYMLINK),
+    );
+    #[cfg(windows)]
+    let _r = symlink_file(
+        TEST_HELLO_WORLD_SOURCE,
+        at.subdir.join(TEST_HELLO_WORLD_SOURCE_SYMLINK),
+    );
+
+    #[cfg(not(windows))]
+    let _r = fs::symlink(
+        TEST_HELLO_WORLD_DEST,
+        at.subdir.join(TEST_HELLO_WORLD_DEST_SYMLINK),
+    );
+    #[cfg(windows)]
+    let _r = symlink_file(
+        TEST_HELLO_WORLD_DEST,
+        at.subdir.join(TEST_HELLO_WORLD_DEST_SYMLINK),
+    );
+
+    ucmd.arg("-P")
+        .arg(TEST_HELLO_WORLD_SOURCE_SYMLINK)
+        .arg(TEST_HELLO_WORLD_DEST_SYMLINK)
+        .succeeds();
+
+    // Ensure that the target of the destination was not modified.
+    assert!(!at
+        .symlink_metadata(TEST_HELLO_WORLD_DEST)
+        .file_type()
+        .is_symlink());
+    assert!(at
+        .symlink_metadata(TEST_HELLO_WORLD_DEST_SYMLINK)
+        .file_type()
+        .is_symlink());
+    assert_eq!(at.read(TEST_HELLO_WORLD_DEST_SYMLINK), "Hello, World!\n");
+}

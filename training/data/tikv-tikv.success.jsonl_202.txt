@@ -1,0 +1,70 @@
+pub fn is_in_joint(&self, region_id: u64) -> bool {
+        let region = block_on(self.get_region_by_id(region_id))
+            .unwrap()
+            .expect("region not exist");
+        region.get_peers().iter().any(|p| {
+            p.get_role() == PeerRole::IncomingVoter || p.get_role() == PeerRole::DemotingVoter
+        })
+    }
+fn test_enter_joint_state() {
+    let mut cluster = new_node_cluster(0, 4);
+    let pd_client = Arc::clone(&cluster.pd_client);
+    pd_client.disable_default_operator();
+    let region_id = cluster.run_conf_change();
+
+    cluster.must_put(b"k1", b"v1");
+
+    // normal confchange request will not enter joint state
+    pd_client.must_add_peer(region_id, new_peer(2, 2));
+    assert!(!pd_client.is_in_joint(region_id));
+    pd_client.must_add_peer(region_id, new_peer(3, 3));
+    assert!(!pd_client.is_in_joint(region_id));
+    must_get_equal(&cluster.get_engine(2), b"k1", b"v1");
+    must_get_equal(&cluster.get_engine(3), b"k1", b"v1");
+
+    // confchange_v2 request with one conchange request will not enter joint state
+    pd_client.must_joint_confchange(
+        region_id,
+        vec![(ConfChangeType::RemoveNode, new_peer(3, 3))],
+    );
+    assert!(!pd_client.is_in_joint(region_id));
+    must_get_none(&cluster.get_engine(3), b"k1");
+    pd_client.must_joint_confchange(region_id, vec![(ConfChangeType::AddNode, new_peer(3, 3))]);
+    assert!(!pd_client.is_in_joint(region_id));
+    must_get_equal(&cluster.get_engine(3), b"k1", b"v1");
+
+    // Enter joint
+    pd_client.must_joint_confchange(
+        region_id,
+        vec![
+            (ConfChangeType::AddLearnerNode, new_learner_peer(3, 3)),
+            (ConfChangeType::AddNode, new_peer(4, 4)),
+        ],
+    );
+    assert!(pd_client.is_in_joint(region_id));
+
+    // In joint state any confchange request besides leave joint request
+    // will be rejected
+    let resp = call_conf_change(
+        &mut cluster,
+        region_id,
+        ConfChangeType::RemoveNode,
+        new_learner_peer(3, 3),
+    )
+    .unwrap();
+    must_contains_error(&resp, "in joint");
+
+    let resp = call_conf_change_v2(
+        &mut cluster,
+        region_id,
+        vec![change_peer(
+            ConfChangeType::RemoveNode,
+            new_learner_peer(3, 3),
+        )],
+    )
+    .unwrap();
+    must_contains_error(&resp, "in joint");
+
+    // Leave joint
+    pd_client.must_leave_joint(region_id);
+}

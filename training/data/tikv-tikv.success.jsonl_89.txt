@@ -1,0 +1,84 @@
+pub fn get_id(&self) -> DownstreamId {
+        self.id
+    }
+fn test_node_failed_merge_before_succeed_merge() {
+    let mut cluster = new_node_cluster(0, 3);
+    configure_for_merge(&mut cluster.cfg);
+    cluster.cfg.raft_store.merge_max_log_gap = 30;
+    cluster.cfg.raft_store.store_batch_system.max_batch_size = Some(1);
+    cluster.cfg.raft_store.store_batch_system.pool_size = 2;
+    let pd_client = Arc::clone(&cluster.pd_client);
+    pd_client.disable_default_operator();
+
+    cluster.run();
+
+    for i in 0..10 {
+        cluster.must_put(format!("k{}", i).as_bytes(), b"v1");
+    }
+    let region = pd_client.get_region(b"k1").unwrap();
+    cluster.must_split(&region, b"k5");
+
+    let left = pd_client.get_region(b"k1").unwrap();
+    let mut right = pd_client.get_region(b"k5").unwrap();
+    let left_peer_1 = find_peer(&left, 1).cloned().unwrap();
+    cluster.must_transfer_leader(left.get_id(), left_peer_1);
+
+    let left_peer_3 = find_peer(&left, 3).cloned().unwrap();
+    assert_eq!(left_peer_3.get_id(), 1003);
+
+    // Prevent sched_merge_tick to propose CommitMerge
+    let schedule_merge_fp = "on_schedule_merge";
+    fail::cfg(schedule_merge_fp, "return").unwrap();
+
+    // To minimize peers log gap for merging
+    cluster.must_put(b"k11", b"v2");
+    must_get_equal(&cluster.get_engine(2), b"k11", b"v2");
+    must_get_equal(&cluster.get_engine(3), b"k11", b"v2");
+    // Make peer 1003 can't receive PrepareMerge and RollbackMerge log
+    cluster.add_send_filter(IsolationFilterFactory::new(3));
+
+    cluster.must_try_merge(left.get_id(), right.get_id());
+
+    // Change right region's epoch to make this merge failed
+    cluster.must_split(&right, b"k8");
+    fail::remove(schedule_merge_fp);
+    // Wait for left region to rollback merge
+    cluster.must_put(b"k12", b"v2");
+    // Prevent apply fsm applying the `PrepareMerge` and `RollbackMerge` log after
+    // cleaning send filter.
+    let before_handle_normal_1003_fp = "before_handle_normal_1003";
+    fail::cfg(before_handle_normal_1003_fp, "return").unwrap();
+    cluster.clear_send_filters();
+
+    right = pd_client.get_region(b"k5").unwrap();
+    let right_peer_1 = find_peer(&right, 1).cloned().unwrap();
+    cluster.must_transfer_leader(right.get_id(), right_peer_1);
+    // Add some data for checking data integrity check at a later time
+    for i in 0..5 {
+        cluster.must_put(format!("k2{}", i).as_bytes(), b"v3");
+    }
+    // Do a really succeed merge
+    pd_client.must_merge(left.get_id(), right.get_id());
+    // Wait right region to send CatchUpLogs to left region.
+    sleep_ms(100);
+    // After executing CatchUpLogs in source peer fsm, the committed log will send
+    // to apply fsm in the end of this batch. So even the first
+    // `on_ready_prepare_merge` is executed after CatchUplogs, the latter
+    // committed logs is still sent to apply fsm if CatchUpLogs and
+    // `on_ready_prepare_merge` is in different batch.
+    //
+    // In this case, the data is complete because the wrong up-to-date msg from the
+    // first `on_ready_prepare_merge` is sent after all committed log.
+    // Sleep a while to wait apply fsm to send `on_ready_prepare_merge` to peer fsm.
+    let after_send_to_apply_1003_fp = "after_send_to_apply_1003";
+    fail::cfg(after_send_to_apply_1003_fp, "sleep(300)").unwrap();
+
+    fail::remove(before_handle_normal_1003_fp);
+    // Wait `after_send_to_apply_1003` timeout
+    sleep_ms(300);
+    fail::remove(after_send_to_apply_1003_fp);
+    // Check the data integrity
+    for i in 0..5 {
+        must_get_equal(&cluster.get_engine(3), format!("k2{}", i).as_bytes(), b"v3");
+    }
+}

@@ -1,0 +1,19 @@
+fn hex_color(input: &str) -> IResult<&str, Color> {
+  let (input, _) = tag("#")(input)?;
+  let (input, (red, green, blue)) = tuple((hex_primary, hex_primary, hex_primary))(input)?;
+
+  Ok((input, Color { red, green, blue }))
+}
+fn parse_color() {
+  assert_eq!(
+    hex_color("#2F14DF"),
+    Ok((
+      "",
+      Color {
+        red: 47,
+        green: 20,
+        blue: 223,
+      }
+    ))
+  );
+}

@@ -1,0 +1,24 @@
+fn len(&self) -> std::io::Result<i64> {
+        match self {
+            Self::File(f) => Ok(f.metadata()?.len().try_into().unwrap_or(i64::MAX)),
+            _ => Ok(0),
+        }
+    }
+fn test_notrunc_does_not_truncate() {
+    // Set up test if needed (eg. after failure)
+    let fname = "this-file-exists-notrunc.txt";
+    let fpath = fixture_path!(fname);
+    match fpath.metadata() {
+        Ok(m) if m.len() == 256 => {}
+        _ => build_test_file!(&fpath, &build_ascii_block(256)),
+    }
+
+    let (fix, mut ucmd) = at_and_ucmd!();
+    ucmd.args(&["status=none", "conv=notrunc", of!(&fname), "if=null.txt"])
+        .run()
+        .no_stdout()
+        .no_stderr()
+        .success();
+
+    assert_eq!(256, fix.metadata(fname).len());
+}

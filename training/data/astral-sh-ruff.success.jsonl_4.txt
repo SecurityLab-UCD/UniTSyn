@@ -1,0 +1,14 @@
+fn finish(&self) -> u64 {
+        self.inner.finish()
+    }
+fn enum_unit_variant() {
+    let mut key = CacheKeyHasher::new();
+
+    let variant = Enum::Unit;
+    variant.cache_key(&mut key);
+
+    let mut hash = CacheKeyHasher::new();
+    variant.hash(&mut hash);
+
+    assert_eq!(hash.finish(), key.finish());
+}

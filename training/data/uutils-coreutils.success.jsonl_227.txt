@@ -1,0 +1,25 @@
+pub fn dir_exists(&self, path: &str) -> bool {
+        match fs::metadata(self.plus(path)) {
+            Ok(m) => m.is_dir(),
+            Err(_) => false,
+        }
+    }
+fn test_mv_backup_dir() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let dir_a = "test_mv_backup_dir_dir_a";
+    let dir_b = "test_mv_backup_dir_dir_b";
+
+    at.mkdir(dir_a);
+    at.mkdir(dir_b);
+    ucmd.arg("-vbT")
+        .arg(dir_a)
+        .arg(dir_b)
+        .succeeds()
+        .stdout_only(format!(
+            "renamed '{dir_a}' -> '{dir_b}' (backup: '{dir_b}~')\n"
+        ));
+
+    assert!(!at.dir_exists(dir_a));
+    assert!(at.dir_exists(dir_b));
+    assert!(at.dir_exists(&format!("{dir_b}~")));
+}

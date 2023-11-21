@@ -1,0 +1,22 @@
+pub fn data(&self) -> &T {
+        self.inner.data()
+    }
+async fn instantiate_async() -> Result<(), Error> {
+    let mut config = Config::new();
+    config.async_support(true);
+    let engine = Engine::new(&config)?;
+    let mut store = Store::new(&engine, State::default());
+    store.call_hook(State::call_hook);
+
+    let m = Module::new(store.engine(), "(module)")?;
+    Instance::new_async(&mut store, &m, &[]).await?;
+    assert_eq!(store.data().calls_into_wasm, 0);
+    assert_eq!(store.data().calls_into_host, 0);
+
+    let m = Module::new(store.engine(), "(module (func) (start 0))")?;
+    Instance::new_async(&mut store, &m, &[]).await?;
+    assert_eq!(store.data().calls_into_wasm, 1);
+    assert_eq!(store.data().calls_into_host, 0);
+
+    Ok(())
+}

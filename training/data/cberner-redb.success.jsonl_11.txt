@@ -1,0 +1,31 @@
+fn value(&self) -> V::SelfType<'_> {
+        V::from_bytes(&self.data)
+    }
+fn abort() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(STR_TABLE).unwrap();
+        table.insert("hello", "aborted").unwrap();
+        assert_eq!("aborted", table.get("hello").unwrap().unwrap().value());
+    }
+    write_txn.abort().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(STR_TABLE);
+    assert!(table.is_err());
+
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(STR_TABLE).unwrap();
+        table.insert("hello", "world").unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(STR_TABLE).unwrap();
+    assert_eq!("world", table.get("hello").unwrap().unwrap().value());
+    assert_eq!(table.len().unwrap(), 1);
+}

@@ -1,0 +1,26 @@
+pub fn file_exists<P: AsRef<Path>>(&self, path: P) -> bool {
+        match fs::metadata(self.plus(path)) {
+            Ok(m) => m.is_file(),
+            Err(_) => false,
+        }
+    }
+fn test_mv_move_file_between_dirs() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let dir1 = "test_mv_move_file_between_dirs_dir1";
+    let dir2 = "test_mv_move_file_between_dirs_dir2";
+    let file = "test_mv_move_file_between_dirs_file";
+
+    at.mkdir(dir1);
+    at.mkdir(dir2);
+    at.touch(format!("{dir1}/{file}"));
+
+    assert!(at.file_exists(format!("{dir1}/{file}")));
+
+    ucmd.arg(&format!("{dir1}/{file}"))
+        .arg(dir2)
+        .succeeds()
+        .no_stderr();
+
+    assert!(!at.file_exists(format!("{dir1}/{file}")));
+    assert!(at.file_exists(format!("{dir2}/{file}")));
+}

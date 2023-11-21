@@ -1,0 +1,13 @@
+pub(crate) fn nth_bit(n: u64) -> u64 {
+    let bits: u64 = mem::size_of::<u64>() as u64 * 8;
+    debug_assert!(n < bits, "nth_bit() overflow in shl.");
+
+    1 << n
+}
+fn nth_bit_test() {
+    assert_eq!(nth_bit(0u64), 0b1);
+    assert_eq!(nth_bit(1u64), 0b10);
+    assert_eq!(nth_bit(2u64), 0b100);
+    assert_eq!(nth_bit(10u64), 0b10000000000);
+    assert_eq!(nth_bit(31u64), 0b10000000000000000000000000000000);
+}

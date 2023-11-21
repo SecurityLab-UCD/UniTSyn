@@ -1,0 +1,54 @@
+pub fn status(self, value: StatusCode) -> Self {
+        let (id, mut pseudo, fields) = self.into_parts();
+
+        pseudo.set_status(value);
+
+        Mock(frame::Headers::new(id, pseudo, fields))
+    }
+async fn send_headers_recv_data_single_frame() {
+    h2_support::trace_init!();
+
+    let mock = mock_io::Builder::new()
+        .handshake()
+        // Write GET /
+        .write(&[
+            0, 0, 16, 1, 5, 0, 0, 0, 1, 130, 135, 65, 139, 157, 41, 172, 75, 143, 168, 233, 25,
+            151, 33, 233, 132,
+        ])
+        .write(frames::SETTINGS_ACK)
+        // Read response
+        .read(&[
+            0, 0, 1, 1, 4, 0, 0, 0, 1, 136, 0, 0, 5, 0, 0, 0, 0, 0, 1, 104, 101, 108, 108, 111, 0,
+            0, 5, 0, 1, 0, 0, 0, 1, 119, 111, 114, 108, 100,
+        ])
+        .build();
+
+    let (mut client, mut h2) = client::handshake(mock).await.unwrap();
+
+    // Send the request
+    let request = Request::builder()
+        .uri("https://http2.akamai.com/")
+        .body(())
+        .unwrap();
+
+    tracing::info!("sending request");
+    let (response, _) = client.send_request(request, true).unwrap();
+
+    let resp = h2.run(response).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Take the body
+    let (_, body) = resp.into_parts();
+
+    // Wait for all the data frames to be received
+    let bytes: Vec<_> = h2.run(body.try_collect()).await.unwrap();
+
+    // Two data frames
+    assert_eq!(2, bytes.len());
+
+    assert_eq!(bytes[0], &b"hello"[..]);
+    assert_eq!(bytes[1], &b"world"[..]);
+
+    // The H2 connection is closed
+    h2.await.unwrap();
+}

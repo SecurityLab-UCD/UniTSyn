@@ -1,0 +1,48 @@
+pub fn status(self, value: StatusCode) -> Self {
+        let (id, mut pseudo, fields) = self.into_parts();
+
+        pseudo.set_status(value);
+
+        Mock(frame::Headers::new(id, pseudo, fields))
+    }
+async fn closed_streams_are_released() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+        let request = Request::get("https://example.com/").body(()).unwrap();
+
+        // Send request
+        let (response, _) = client.send_request(request, true).unwrap();
+        let response = h2.drive(response).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        // There are no active streams
+        assert_eq!(0, client.num_active_streams());
+
+        // The response contains a handle for the body. This keeps the
+        // stream wired.
+        assert_eq!(1, client.num_wired_streams());
+
+        let (_, body) = response.into_parts();
+        assert!(body.is_end_stream());
+        drop(body);
+
+        // The stream state is now free
+        assert_eq!(0, client.num_wired_streams());
+    };
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(204).eos()).await;
+    };
+    join(srv, h2).await;
+}

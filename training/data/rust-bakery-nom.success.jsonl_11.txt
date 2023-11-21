@@ -1,0 +1,26 @@
+fn twolines(i: &str) -> IResult<&str, (&str, &str)> {
+    let (i, l1) = not_line_ending(i)?;
+    let (i, _) = line_ending(i)?;
+    let (i, l2) = not_line_ending(i)?;
+    let (i, _) = line_ending(i)?;
+
+    Ok((i, (l1, l2)))
+  }
+fn issue_655() {
+  use nom::character::streaming::{line_ending, not_line_ending};
+  fn twolines(i: &str) -> IResult<&str, (&str, &str)> {
+    let (i, l1) = not_line_ending(i)?;
+    let (i, _) = line_ending(i)?;
+    let (i, l2) = not_line_ending(i)?;
+    let (i, _) = line_ending(i)?;
+
+    Ok((i, (l1, l2)))
+  }
+
+  assert_eq!(twolines("foo\nbar\n"), Ok(("", ("foo", "bar"))));
+  assert_eq!(twolines("féo\nbar\n"), Ok(("", ("féo", "bar"))));
+  assert_eq!(twolines("foé\nbar\n"), Ok(("", ("foé", "bar"))));
+  assert_eq!(twolines("foé\r\nbar\n"), Ok(("", ("foé", "bar"))));
+}
+
+#[cf

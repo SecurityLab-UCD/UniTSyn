@@ -1,0 +1,42 @@
+pub fn compute_float64(q: i32, w: u64) -> (i32, u64) {
+    let num = Number {
+        exponent: q,
+        mantissa: w,
+        many_digits: false,
+    };
+    let fp = bellerophon::<f64>(&num);
+    (fp.exp, fp.mant)
+}
+fn compute_float_f64_test() {
+    // These test near-halfway cases for double-precision floats.
+    assert_eq!(compute_float64(0, 9007199254740992), (1076, 0));
+    assert_eq!(compute_float64(0, 9007199254740993), (1065 + f64::INVALID_FP, 9223372036854776832));
+    assert_eq!(compute_float64(0, 9007199254740994), (1076, 1));
+    assert_eq!(compute_float64(0, 9007199254740995), (1065 + f64::INVALID_FP, 9223372036854778880));
+    assert_eq!(compute_float64(0, 9007199254740996), (1076, 2));
+    assert_eq!(compute_float64(0, 18014398509481984), (1077, 0));
+    assert_eq!(
+        compute_float64(0, 18014398509481986),
+        (1066 + f64::INVALID_FP, 9223372036854776832)
+    );
+    assert_eq!(compute_float64(0, 18014398509481988), (1077, 1));
+    assert_eq!(
+        compute_float64(0, 18014398509481990),
+        (1066 + f64::INVALID_FP, 9223372036854778880)
+    );
+    assert_eq!(compute_float64(0, 18014398509481992), (1077, 2));
+
+    // These are examples of the above tests, with
+    // digits from the exponent shifted to the mantissa.
+    assert_eq!(compute_float64(-3, 9007199254740992000), (1076, 0));
+    assert_eq!(
+        compute_float64(-3, 9007199254740993000),
+        (1065 + f64::INVALID_FP, 9223372036854776832)
+    );
+    assert_eq!(compute_float64(-3, 9007199254740994000), (1076, 1));
+    assert_eq!(
+        compute_float64(-3, 9007199254740995000),
+        (1065 + f64::INVALID_FP, 9223372036854778879)
+    );
+    assert_eq!(compute_float64(-3, 9007199254740996000), (1076, 2));
+}

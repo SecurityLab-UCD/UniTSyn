@@ -1,0 +1,48 @@
+pub fn len(&self) -> usize {
+        self.cols.len()
+    }
+fn test_decrease_async_ios() {
+    let mut cluster = new_node_cluster(0, 1);
+    cluster.cfg.raft_store.store_io_pool_size = 4;
+    cluster.pd_client.disable_default_operator();
+    cluster.run();
+
+    // Save current async-io tids before shrinking
+    let org_writers_tids = get_async_writers_tids();
+    assert_eq!(4, org_writers_tids.len());
+    // Request can be handled as usual
+    cluster.must_put(b"k1", b"v1");
+    must_get_equal(&cluster.get_engine(1), b"k1", b"v1");
+
+    // Update config, shrink from 4 to 1
+    {
+        let sim = cluster.sim.rl();
+        let cfg_controller = sim.get_cfg_controller().unwrap();
+        let change = {
+            let mut change = HashMap::new();
+            change.insert("raftstore.store-io-pool-size".to_owned(), "1".to_owned());
+            change
+        };
+
+        cfg_controller.update(change).unwrap();
+        assert_eq!(
+            cfg_controller.get_current().raft_store.store_io_pool_size,
+            1
+        );
+        // Wait for the completion of decreasing async-ios
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+
+    // Save current async-io tids after scaling down, and compared with the
+    // orginial one before shrinking. As the decreasing of async-ios won't
+    // release asynchronous writers, the thread num should not be updated.
+    let cur_writers_tids = get_async_writers_tids();
+    assert_eq!(cur_writers_tids.len(), org_writers_tids.len());
+    // After shrinking, all the left tids must be there before
+    for tid in cur_writers_tids {
+        assert!(org_writers_tids.contains(&tid));
+    }
+    // Request can be handled as usual
+    cluster.must_put(b"k2", b"v2");
+    must_get_equal(&cluster.get_engine(1), b"k2", b"v2");
+}

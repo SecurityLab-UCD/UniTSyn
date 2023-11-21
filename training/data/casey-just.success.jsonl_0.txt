@@ -1,0 +1,7 @@
+pub(crate) fn stdout(mut self, stdout: impl Into<String>) -> Self {
+    self.stdout = stdout.into();
+    self
+  }
+fn junk_is_other() {
+  assert_eq!(stdout("refs/tags/asdf"), "::set-output name=value::other\n");
+}

@@ -1,0 +1,39 @@
+pub fn data<'a, T: 'a>(&self, store: impl Into<StoreContext<'a, T>>) -> &'a [u8] {
+        unsafe {
+            let store = store.into();
+            let definition = &*store[self.0].definition;
+            debug_assert!(!self.ty(store).is_shared());
+            slice::from_raw_parts(definition.base, definition.current_length())
+        }
+    }
+fn memory_init() -> Result<()> {
+    let mut pool = crate::small_pool_config();
+    pool.memory_pages(2).table_elements(0);
+    let mut config = Config::new();
+    config.allocation_strategy(InstanceAllocationStrategy::Pooling(pool));
+
+    let engine = Engine::new(&config)?;
+
+    let module = Module::new(
+        &engine,
+        r#"
+            (module
+                (memory (export "m") 2)
+                (data (i32.const 65530) "this data spans multiple pages")
+                (data (i32.const 10) "hello world")
+            )
+        "#,
+    )?;
+
+    let mut store = Store::new(&engine, ());
+    let instance = Instance::new(&mut store, &module, &[])?;
+    let memory = instance.get_memory(&mut store, "m").unwrap();
+
+    assert_eq!(
+        &memory.data(&store)[65530..65560],
+        b"this data spans multiple pages"
+    );
+    assert_eq!(&memory.data(&store)[10..21], b"hello world");
+
+    Ok(())
+}

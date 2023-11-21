@@ -1,0 +1,45 @@
+pub fn dir_exists(&self, path: &str) -> bool {
+        match fs::metadata(self.plus(path)) {
+            Ok(m) => m.is_dir(),
+            Err(_) => false,
+        }
+    }
+fn test_rm_descend_directory() {
+    // This test descends into each directory and deletes the files and folders inside of them
+    // This test will have the rm process asks 6 question and us answering Y to them will delete all the files and folders
+
+    // Needed for talking with stdin on platforms where CRLF or LF matters
+    const END_OF_LINE: &str = if cfg!(windows) { "\r\n" } else { "\n" };
+
+    let yes = format!("y{END_OF_LINE}");
+
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+
+    let file_1 = "a/at.txt";
+    let file_2 = "a/b/bt.txt";
+
+    at.mkdir_all("a/b/");
+    at.touch(file_1);
+    at.touch(file_2);
+
+    let mut child = scene
+        .ucmd()
+        .set_stdin(Stdio::piped())
+        .arg("-ri")
+        .arg("a")
+        .run_no_wait();
+    child.try_write_in(yes.as_bytes()).unwrap();
+    child.try_write_in(yes.as_bytes()).unwrap();
+    child.try_write_in(yes.as_bytes()).unwrap();
+    child.try_write_in(yes.as_bytes()).unwrap();
+    child.try_write_in(yes.as_bytes()).unwrap();
+    child.try_write_in(yes.as_bytes()).unwrap();
+
+    child.wait().unwrap();
+
+    assert!(!at.dir_exists("a/b"));
+    assert!(!at.dir_exists("a"));
+    assert!(!at.file_exists(file_1));
+    assert!(!at.file_exists(file_2));
+}

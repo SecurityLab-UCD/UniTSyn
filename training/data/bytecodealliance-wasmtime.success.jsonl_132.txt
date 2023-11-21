@@ -1,0 +1,55 @@
+pub fn contains<C: Comparator<K>>(&self, key: K, forest: &SetForest<K>, comp: &C) -> bool {
+        self.root
+            .expand()
+            .and_then(|root| Path::default().find(key, root, &forest.nodes, comp))
+            .is_some()
+    }
+fn passthrough_wrong_type() -> Result<()> {
+    let engine = super::engine();
+    let c = Component::new(
+        &engine,
+        r#"
+            (component
+                (import "t" (type $t (sub resource)))
+                (import "f" (func $f (param "a" (borrow $t)) (result (own $t))))
+
+                (core func $f (canon lower (func $f)))
+
+                (core module $m
+                    (import "" "f" (func $f (param i32) (result i32)))
+                    (func (export "f2") (param i32)
+                        (drop (call $f (local.get 0)))
+                    )
+                )
+                (core instance $i (instantiate $m
+                    (with "" (instance
+                        (export "f" (func $f))
+                    ))
+                ))
+
+                (func (export "f2") (param "x" (borrow $t))
+                    (canon lift (core func $i "f2")))
+            )
+        "#,
+    )?;
+
+    struct MyType;
+
+    let mut store = Store::new(&engine, ());
+    let mut linker = Linker::new(&engine);
+    linker.root().resource::<MyType>("t", |_, _| Ok(()))?;
+    linker
+        .root()
+        .func_wrap("f", |_cx, (r,): (Resource<MyType>,)| Ok((r,)))?;
+    let i = linker.instantiate(&mut store, &c)?;
+
+    let f = i.get_typed_func::<(&Resource<MyType>,), ()>(&mut store, "f2")?;
+
+    let resource = Resource::new_own(100);
+    let err = f.call(&mut store, (&resource,)).unwrap_err();
+    assert!(
+        format!("{err:?}").contains("cannot lower a `borrow` resource into an `own`"),
+        "bad error: {err:?}"
+    );
+    Ok(())
+}

@@ -1,0 +1,79 @@
+fn len(&self) -> usize {
+            self.hash_table.len()
+        }
+async fn async_then_sync_trap() -> Result<()> {
+    // Test the trapping and capturing the stack with the following sequence of
+    // calls:
+    //
+    // a[async] ---> b[host] ---> c[sync]
+
+    drop(env_logger::try_init());
+
+    let wat = r#"
+        (module
+            (import "" "b" (func $b))
+            (func $a (export "a")
+                call $b
+            )
+            (func $c (export "c")
+                unreachable
+            )
+        )
+    "#;
+
+    let mut sync_store = Store::new(&Engine::default(), ());
+
+    let sync_module = Module::new(sync_store.engine(), wat)?;
+
+    let mut sync_linker = Linker::new(sync_store.engine());
+    sync_linker.func_wrap("", "b", |_caller: Caller<_>| unreachable!())?;
+
+    let sync_instance = sync_linker.instantiate(&mut sync_store, &sync_module)?;
+
+    struct AsyncCtx {
+        sync_instance: Instance,
+        sync_store: Store<()>,
+    }
+
+    let mut async_store = Store::new(
+        &Engine::new(Config::new().async_support(true)).unwrap(),
+        AsyncCtx {
+            sync_instance,
+            sync_store,
+        },
+    );
+
+    let async_module = Module::new(async_store.engine(), wat)?;
+
+    let mut async_linker = Linker::new(async_store.engine());
+    async_linker.func_wrap("", "b", move |mut caller: Caller<AsyncCtx>| {
+        log::info!("Called `b`...");
+        let sync_instance = caller.data().sync_instance;
+        let sync_store = &mut caller.data_mut().sync_store;
+
+        log::info!("Calling `c`...");
+        let c = sync_instance
+            .get_typed_func::<(), ()>(&mut *sync_store, "c")
+            .unwrap();
+        c.call(sync_store, ())?;
+        Ok(())
+    })?;
+
+    let async_instance = async_linker
+        .instantiate_async(&mut async_store, &async_module)
+        .await?;
+
+    log::info!("Calling `a`...");
+    let a = async_instance
+        .get_typed_func::<(), ()>(&mut async_store, "a")
+        .unwrap();
+    let trap = a.call_async(&mut async_store, ()).await.unwrap_err();
+
+    let trace = trap.downcast_ref::<WasmBacktrace>().unwrap().frames();
+    // We don't support cross-store or cross-engine symbolication currently, so
+    // the other frames are ignored.
+    assert_eq!(trace.len(), 1);
+    assert_eq!(trace[0].func_name(), Some("c"));
+
+    Ok(())
+}

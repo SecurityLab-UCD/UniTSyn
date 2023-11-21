@@ -1,0 +1,61 @@
+pub fn owned(&self) -> bool {
+        match self.state.load(Relaxed) {
+            BORROW => false,
+            _ => true,
+        }
+    }
+fn thread_through_borrow() -> Result<()> {
+    let engine = super::engine();
+    let c = Component::new(
+        &engine,
+        r#"
+            (component
+                (import "t" (type $t (sub resource)))
+                (import "f" (func $f (param "x" (borrow $t))))
+
+                (core func $f (canon lower (func $f)))
+                (core func $drop (canon resource.drop $t))
+
+                (core module $m
+                    (import "" "f" (func $f (param i32)))
+                    (import "" "drop" (func $drop (param i32)))
+                    (func (export "f2") (param i32)
+                        (call $f (local.get 0))
+                        (call $f (local.get 0))
+                        (call $drop (local.get 0))
+                    )
+                )
+                (core instance $i (instantiate $m
+                    (with "" (instance
+                        (export "f" (func $f))
+                        (export "drop" (func $drop))
+                    ))
+                ))
+
+                (func (export "f2") (param "x" (borrow $t))
+                    (canon lift (core func $i "f2")))
+            )
+        "#,
+    )?;
+
+    struct MyType;
+
+    let mut store = Store::new(&engine, ());
+    let mut linker = Linker::new(&engine);
+    linker.root().resource::<MyType>("t", |_, _| Ok(()))?;
+    linker
+        .root()
+        .func_wrap("f", |_cx, (r,): (Resource<MyType>,)| {
+            assert!(!r.owned());
+            assert_eq!(r.rep(), 100);
+            Ok(())
+        })?;
+    let i = linker.instantiate(&mut store, &c)?;
+
+    let f = i.get_typed_func::<(&Resource<MyType>,), ()>(&mut store, "f2")?;
+
+    let resource = Resource::new_own(100);
+    f.call(&mut store, (&resource,))?;
+    f.post_return(&mut store)?;
+    Ok(())
+}

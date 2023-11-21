@@ -1,0 +1,86 @@
+fn to_string(lit: Literal) -> String {
+    let formatted = lit.to_string();
+
+    let mut it = formatted.chars();
+    assert_eq!(it.next(), Some('"'));
+
+    let mut rv = String::new();
+    loop {
+        match it.next() {
+            Some('"') => match it.next() {
+                Some(_) => panic!(),
+                None => break,
+            },
+            Some('\\') => match it.next() {
+                Some('x') => {
+                    let hi = it.next().unwrap().to_digit(16).unwrap();
+                    let lo = it.next().unwrap().to_digit(16).unwrap();
+                    let v = (hi << 16) | lo;
+                    rv.push(v as u8 as char);
+                }
+                Some('u') => {
+                    assert_eq!(it.next(), Some('{'));
+                    let mut c = it.next().unwrap();
+                    let mut ch = 0;
+                    while let Some(v) = c.to_digit(16) {
+                        ch *= 16;
+                        ch |= v;
+                        c = it.next().unwrap();
+                    }
+                    assert_eq!(c, '}');
+                    rv.push(::std::char::from_u32(ch).unwrap());
+                }
+                Some('0') => rv.push('\0'),
+                Some('\\') => rv.push('\\'),
+                Some('\"') => rv.push('\"'),
+                Some('r') => rv.push('\r'),
+                Some('n') => rv.push('\n'),
+                Some('t') => rv.push('\t'),
+                Some(_) => panic!(),
+                None => panic!(),
+            },
+            Some(c) => rv.push(c),
+            None => panic!(),
+        }
+    }
+
+    rv
+}
+fn drop_guest_twice() -> Result<()> {
+    let engine = super::engine();
+    let c = Component::new(
+        &engine,
+        r#"
+            (component
+                (type $t' (resource (rep i32)))
+
+                (export $t "t" (type $t'))
+
+                (core func $ctor (canon resource.new $t))
+                (func (export "ctor") (param "x" u32) (result (own $t))
+                    (canon lift (core func $ctor)))
+
+                (core func $dtor (canon resource.drop $t))
+                (func (export "dtor") (param "x" (own $t))
+                    (canon lift (core func $dtor)))
+            )
+        "#,
+    )?;
+
+    let mut store = Store::new(&engine, ());
+    let i = Linker::new(&engine).instantiate(&mut store, &c)?;
+    let ctor = i.get_typed_func::<(u32,), (ResourceAny,)>(&mut store, "ctor")?;
+    let dtor = i.get_typed_func::<(&ResourceAny,), ()>(&mut store, "dtor")?;
+
+    let (t,) = ctor.call(&mut store, (100,))?;
+    ctor.post_return(&mut store)?;
+    dtor.call(&mut store, (&t,))?;
+    dtor.post_return(&mut store)?;
+
+    assert_eq!(
+        dtor.call(&mut store, (&t,)).unwrap_err().to_string(),
+        "unknown handle index 0"
+    );
+
+    Ok(())
+}

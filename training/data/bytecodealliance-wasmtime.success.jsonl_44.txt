@@ -1,0 +1,26 @@
+pub fn strong_count(&self) -> usize {
+        self.extern_data().ref_count.load(Ordering::SeqCst)
+    }
+fn global_init_no_leak() -> anyhow::Result<()> {
+    let (mut store, module) = ref_types_module(
+        false,
+        r#"
+            (module
+                (import "" "" (global externref))
+                (global externref (global.get 0))
+            )
+        "#,
+    )?;
+
+    let externref = ExternRef::new(());
+    let global = Global::new(
+        &mut store,
+        GlobalType::new(ValType::ExternRef, Mutability::Const),
+        externref.clone().into(),
+    )?;
+    Instance::new(&mut store, &module, &[global.into()])?;
+    drop(store);
+    assert_eq!(externref.strong_count(), 1);
+
+    Ok(())
+}

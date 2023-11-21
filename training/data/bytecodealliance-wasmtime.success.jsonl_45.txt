@@ -1,0 +1,42 @@
+pub fn i32(val: i32) -> Self {
+        Self::I32(val as u32)
+    }
+fn smoke() -> anyhow::Result<()> {
+    let mut store = Store::<()>::default();
+    let g = Global::new(
+        &mut store,
+        GlobalType::new(ValType::I32, Mutability::Const),
+        0.into(),
+    )?;
+    assert_eq!(g.get(&mut store).i32(), Some(0));
+    assert!(g.set(&mut store, 0.into()).is_err());
+
+    let g = Global::new(
+        &mut store,
+        GlobalType::new(ValType::I32, Mutability::Const),
+        1i32.into(),
+    )?;
+    assert_eq!(g.get(&mut store).i32(), Some(1));
+
+    let g = Global::new(
+        &mut store,
+        GlobalType::new(ValType::I64, Mutability::Const),
+        2i64.into(),
+    )?;
+    assert_eq!(g.get(&mut store).i64(), Some(2));
+
+    let g = Global::new(
+        &mut store,
+        GlobalType::new(ValType::F32, Mutability::Const),
+        3.0f32.into(),
+    )?;
+    assert_eq!(g.get(&mut store).f32(), Some(3.0));
+
+    let g = Global::new(
+        &mut store,
+        GlobalType::new(ValType::F64, Mutability::Const),
+        4.0f64.into(),
+    )?;
+    assert_eq!(g.get(&mut store).f64(), Some(4.0));
+    Ok(())
+}

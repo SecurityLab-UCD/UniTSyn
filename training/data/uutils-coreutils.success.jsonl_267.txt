@@ -1,0 +1,35 @@
+fn len(&self) -> std::io::Result<i64> {
+        match self {
+            Self::File(f) => Ok(f.metadata()?.len().try_into().unwrap_or(i64::MAX)),
+            _ => Ok(0),
+        }
+    }
+fn test_head_count() {
+    let repeat_limit = 5;
+    let input_seq = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    let input = input_seq
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<String>>()
+        .join("\n");
+
+    let result = new_ucmd!()
+        .args(&["-n", &repeat_limit.to_string()])
+        .pipe_in(input.as_bytes())
+        .succeeds();
+    result.no_stderr();
+
+    let mut result_seq: Vec<i32> = result
+        .stdout_str()
+        .split('\n')
+        .filter(|x| !x.is_empty())
+        .map(|x| x.parse().unwrap())
+        .collect();
+    result_seq.sort_unstable();
+    assert_eq!(result_seq.len(), repeat_limit, "Output is not limited");
+    assert!(
+        result_seq.iter().all(|x| input_seq.contains(x)),
+        "Output includes element not from input: {}",
+        result.stdout_str()
+    );
+}

@@ -1,0 +1,13 @@
+fn wait_for_signal(&mut self) -> Option<i32> {
+        let sig = self.child.wait().expect("cannot wait on target").signal();
+        self.killed = true;
+        sig
+    }
+fn test_kill_with_signal_number_old_form() {
+    let mut target = Target::new();
+    new_ucmd!()
+        .arg("-9")
+        .arg(format!("{}", target.pid()))
+        .succeeds();
+    assert_eq!(target.wait_for_signal(), Some(9));
+}

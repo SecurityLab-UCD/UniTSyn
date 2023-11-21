@@ -1,0 +1,25 @@
+pub fn file_exists<P: AsRef<Path>>(&self, path: P) -> bool {
+        match fs::metadata(self.plus(path)) {
+            Ok(m) => m.is_file(),
+            Err(_) => false,
+        }
+    }
+fn test_install_creating_leading_dirs() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+
+    let source = "create_leading_test_file";
+    let target = "dir1/dir2/dir3/test_file";
+
+    at.touch(source);
+
+    scene
+        .ucmd()
+        .arg("-D")
+        .arg(source)
+        .arg(at.plus(target))
+        .succeeds()
+        .no_stderr();
+
+    assert!(at.file_exists(target));
+}

@@ -1,0 +1,50 @@
+fn value(&self) -> V::SelfType<'_> {
+        V::from_bytes(&self.data)
+    }
+fn ref_get_signatures() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(SLICE_TABLE).unwrap();
+        for i in 0..10u8 {
+            table.insert([i].as_slice(), [i + 1].as_slice()).unwrap();
+        }
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(SLICE_TABLE).unwrap();
+
+    let zero = vec![0u8];
+    assert_eq!(&[1], table.get([0].as_slice()).unwrap().unwrap().value());
+    assert_eq!(&[1], table.get(b"\0".as_slice()).unwrap().unwrap().value());
+    assert_eq!(&[1], table.get(zero.as_slice()).unwrap().unwrap().value());
+
+    let start = vec![0u8];
+    let end = vec![10u8];
+    let mut iter = table.range::<&[u8]>(..).unwrap();
+    for i in 0..10 {
+        assert_eq!(iter.next().unwrap().unwrap().1.value(), &[i + 1]);
+    }
+    assert!(iter.next().is_none());
+
+    let mut iter = table.range(start.as_slice()..&end).unwrap();
+    for i in 0..10 {
+        assert_eq!(iter.next().unwrap().unwrap().1.value(), &[i + 1]);
+    }
+    assert!(iter.next().is_none());
+    drop(iter);
+
+    let mut iter = table.range(start.as_slice()..end.as_slice()).unwrap();
+    for i in 0..10 {
+        assert_eq!(iter.next().unwrap().unwrap().1.value(), &[i + 1]);
+    }
+    assert!(iter.next().is_none());
+
+    let mut iter = table.range([0u8].as_slice()..[10u8].as_slice()).unwrap();
+    for i in 0..10u8 {
+        assert_eq!(iter.next().unwrap().unwrap().1.value(), [i + 1].as_slice());
+    }
+    assert!(iter.next().is_none());
+}

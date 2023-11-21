@@ -1,0 +1,8 @@
+pub fn get_item_by_index(&self, idx: usize) -> Result<Value, Error> {
+        self.get_item(&Value(ValueRepr::U64(idx as _)))
+    }
+fn test_value_by_index() {
+    let val = Value::from(vec![1u32, 2, 3]);
+    assert_eq!(val.get_item_by_index(0).unwrap(), Value::from(1));
+    assert!(val.get_item_by_index(4).unwrap().is_undefined());
+}

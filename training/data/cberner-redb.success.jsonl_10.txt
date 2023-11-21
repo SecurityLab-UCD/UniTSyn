@@ -1,0 +1,20 @@
+fn is_empty(&self) -> Result<bool> {
+        self.len().map(|x| x == 0)
+    }
+fn is_empty() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(STR_TABLE).unwrap();
+        assert!(table.is_empty().unwrap());
+        table.insert("hello", "world").unwrap();
+        assert!(!table.is_empty().unwrap());
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(STR_TABLE).unwrap();
+    assert!(!table.is_empty().unwrap());
+}

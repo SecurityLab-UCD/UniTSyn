@@ -1,0 +1,18 @@
+pub const fn is_valid(&self) -> bool {
+        self.error().is_success()
+    }
+fn invalid_inf_test() {
+    let mut builder = OptionsBuilder::default();
+    builder = builder.inf_string(Some(b"innnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnf"));
+    assert!(!builder.is_valid());
+    builder = builder.inf_string(Some(b"nan"));
+    assert!(!builder.is_valid());
+    builder = builder.inf_string(Some(b"in00f"));
+    assert!(!builder.is_valid());
+    assert!(builder.build().is_err());
+    builder = builder.inf_string(Some(b"inf"));
+    assert!(builder.is_valid());
+    assert!(builder.build().is_ok());
+    builder = builder.inf_string(None);
+    assert!(builder.is_valid());
+}

@@ -1,0 +1,34 @@
+pub fn contains<C: Comparator<K>>(&self, key: K, forest: &SetForest<K>, comp: &C) -> bool {
+        self.root
+            .expand()
+            .and_then(|root| Path::default().find(key, root, &forest.nodes, comp))
+            .is_some()
+    }
+fn test_async_host_func_pending() {
+    let engine = Engine::default();
+    let mut linker = Linker::new(&engine);
+    atoms::add_to_linker(&mut linker, |cx| cx).unwrap();
+    let mut store = store(&engine);
+
+    let shim_mod = shim_module(&engine);
+    let shim_inst = linker.instantiate(&mut store, &shim_mod).unwrap();
+
+    let result_location: i32 = 0;
+
+    // This input triggers the host func pending forever
+    let input: i32 = TRIGGER_PENDING as i32;
+    let trap = shim_inst
+        .get_func(&mut store, "double_int_return_float_shim")
+        .unwrap()
+        .call(
+            &mut store,
+            &[input.into(), result_location.into()],
+            &mut [Val::I32(0)],
+        )
+        .unwrap_err();
+    assert!(
+        format!("{:?}", trap).contains("Cannot wait on pending future"),
+        "expected get a pending future Trap from dummy executor, got: {}",
+        trap
+    );
+}

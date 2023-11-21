@@ -1,0 +1,14 @@
+pub const fn to_bits(self) -> u16 {
+        self.bits
+    }
+fn from_f32_test() {
+    assert_eq!(f16::from_f32(2.980232e-08).to_bits(), 0);
+    assert_eq!(f16::from_f32(2.9802322e-08).to_bits(), 0);
+    assert_eq!(f16::from_f32(2.9802326e-08).to_bits(), 1);
+    assert_eq!(f16::from_f32(5.960464e-08).to_bits(), 1);
+    assert_eq!(f16::from_f32(5.9604645e-08).to_bits(), 1);
+    assert_eq!(f16::from_f32(5.960465e-08).to_bits(), 1);
+    assert!(f16::from_f32(f32::NAN).is_nan());
+    assert!(f16::from_f32(f32::INFINITY).is_inf());
+    assert!(f16::from_f32(f32::NEG_INFINITY).is_inf());
+}

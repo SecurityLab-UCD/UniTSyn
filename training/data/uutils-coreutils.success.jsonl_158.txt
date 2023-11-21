@@ -1,0 +1,36 @@
+pub fn file_exists<P: AsRef<Path>>(&self, path: P) -> bool {
+        match fs::metadata(self.plus(path)) {
+            Ok(m) => m.is_file(),
+            Err(_) => false,
+        }
+    }
+fn test_symlink_interactive() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+    let file = "test_symlink_interactive_file";
+    let link = "test_symlink_interactive_file_link";
+
+    at.touch(file);
+    at.touch(link);
+
+    scene
+        .ucmd()
+        .args(&["-i", "-s", file, link])
+        .pipe_in("n")
+        .fails()
+        .no_stdout();
+
+    assert!(at.file_exists(file));
+    assert!(!at.is_symlink(link));
+
+    scene
+        .ucmd()
+        .args(&["-i", "-s", file, link])
+        .pipe_in("Yesh") // spell-checker:disable-line
+        .succeeds()
+        .no_stdout();
+
+    assert!(at.file_exists(file));
+    assert!(at.is_symlink(link));
+    assert_eq!(at.resolve_link(link), file);
+}

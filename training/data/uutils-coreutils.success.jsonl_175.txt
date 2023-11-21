@@ -1,0 +1,13 @@
+pub fn resolve_link(&self, path: &str) -> String {
+        log_info("resolve_link", self.plus_as_string(path));
+        match fs::read_link(self.plus(path)) {
+            Ok(p) => self.minus_as_string(p.to_str().unwrap()),
+            Err(_) => String::new(),
+        }
+    }
+fn test_relative_recursive() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    at.mkdir("dir");
+    ucmd.args(&["-sr", "dir", "dir/recursive"]).succeeds();
+    assert_eq!(at.resolve_link("dir/recursive"), ".");
+}

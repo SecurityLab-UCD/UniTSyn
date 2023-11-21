@@ -1,0 +1,9 @@
+pub fn len(&self) -> usize {
+        self.vec.len()
+    }
+fn remove_entry_multi_0() {
+    let mut headers = HeaderMap::new();
+    let cookies = remove_all_values(&mut headers, SET_COOKIE);
+    assert_eq!(cookies.len(), 0);
+    assert_eq!(headers.len(), 0);
+}

@@ -1,0 +1,10 @@
+pub fn schema_version(&self) -> i64 {
+        self.version
+    }
+fn test_new_journal() {
+    let conn = Connection::open_in_memory().expect("could not create in memory DB");
+    assert_eq!(
+        Journal::new(conn).expect("new Journal").schema_version(),
+        -1
+    );
+}

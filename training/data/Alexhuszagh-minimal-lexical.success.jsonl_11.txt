@@ -1,0 +1,9 @@
+pub fn hi64(&self) -> (u64, bool) {
+        bigint::hi64(&self.data)
+    }
+fn hi64_test() {
+    assert_eq!(VecType::from_u64(0xA).hi64(), (0xA000000000000000, false));
+    assert_eq!(VecType::from_u64(0xAB).hi64(), (0xAB00000000000000, false));
+    assert_eq!(VecType::from_u64(0xAB00000000).hi64(), (0xAB00000000000000, false));
+    assert_eq!(VecType::from_u64(0xA23456789A).hi64(), (0xA23456789A000000, false));
+}

@@ -1,0 +1,19 @@
+fn nothing(i: Partial<&[u8]>) -> IResult<Partial<&[u8]>, &[u8]> {
+        take_till0(|_| true).parse_peek(i)
+    }
+fn take_till0_issue() {
+    use winnow::token::take_till0;
+
+    fn nothing(i: Partial<&[u8]>) -> IResult<Partial<&[u8]>, &[u8]> {
+        take_till0(|_| true).parse_peek(i)
+    }
+
+    assert_eq!(
+        nothing(Partial::new(b"")),
+        Err(ErrMode::Incomplete(Needed::new(1)))
+    );
+    assert_eq!(
+        nothing(Partial::new(b"abc")),
+        Ok((Partial::new(&b"abc"[..]), &b""[..]))
+    );
+}

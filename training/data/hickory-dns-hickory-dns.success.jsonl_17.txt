@@ -1,0 +1,60 @@
+pub fn eq_case(&self, other: &Self) -> bool {
+        self.cmp_with_f::<CaseSensitive>(other) == Ordering::Equal
+    }
+fn test_query_edns(client: &mut AsyncClient) -> impl Future<Output = ()> {
+    let name = Name::from_ascii("WWW.example.com").unwrap();
+    let mut edns = Edns::new();
+    // garbage subnet value, but lets check
+    edns.options_mut()
+        .insert(EdnsOption::Subnet("1.2.0.0/16".parse().unwrap()));
+
+    // TODO: write builder
+    let mut msg = Message::new();
+    msg.add_query({
+        let mut query = Query::query(name.clone(), RecordType::A);
+        query.set_query_class(DNSClass::IN);
+        query
+    })
+    .set_id(rand::random::<u16>())
+    .set_message_type(MessageType::Query)
+    .set_op_code(OpCode::Query)
+    .set_recursion_desired(true)
+    .set_edns(edns)
+    .extensions_mut()
+    .as_mut()
+    .map(|edns| edns.set_max_payload(1232).set_version(0));
+
+    client
+        .send(msg)
+        .first_answer()
+        .map_ok(move |response| {
+            println!("response records: {response:?}");
+            assert!(response
+                .queries()
+                .first()
+                .expect("expected query")
+                .name()
+                .eq_case(&name));
+
+            let record = &response.answers()[0];
+            assert_eq!(record.name(), &name);
+            assert_eq!(record.record_type(), RecordType::A);
+            assert_eq!(record.dns_class(), DNSClass::IN);
+            assert!(response.extensions().is_some());
+            assert_eq!(
+                response
+                    .extensions()
+                    .as_ref()
+                    .unwrap()
+                    .option(EdnsCode::Subnet)
+                    .unwrap(),
+                &EdnsOption::Subnet("1.2.0.0/16".parse().unwrap())
+            );
+            if let RData::A(ref address) = *record.data().unwrap() {
+                assert_eq!(address, &A::new(93, 184, 216, 34))
+            } else {
+                panic!();
+            }
+        })
+        .map(|r: Result<_, _>| r.expect("query failed"))
+}

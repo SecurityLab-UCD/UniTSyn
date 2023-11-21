@@ -1,0 +1,27 @@
+fn len(&self) -> Result<u64> {
+        let mut count = 0;
+        for item in self.iter()? {
+            let (_, values) = item?;
+            for v in values {
+                v?;
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
+fn len() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(STR_TABLE).unwrap();
+        table.insert("hello", "world").unwrap();
+        table.insert("hello2", "world2").unwrap();
+        table.insert("hi", "world").unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(STR_TABLE).unwrap();
+    assert_eq!(table.len().unwrap(), 3);
+}

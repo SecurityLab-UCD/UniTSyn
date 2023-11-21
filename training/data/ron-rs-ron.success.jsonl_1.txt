@@ -1,0 +1,17 @@
+pub fn from_str<'a, T>(&self, s: &'a str) -> SpannedResult<T>
+    where
+        T: de::Deserialize<'a>,
+    {
+        self.from_bytes(s.as_bytes())
+    }
+fn test_simple() {
+    assert_eq!(
+        from_str(
+            "/*
+ * We got a hexadecimal number here!
+ *
+ */0x507"
+        ),
+        Ok(0x507)
+    );
+}

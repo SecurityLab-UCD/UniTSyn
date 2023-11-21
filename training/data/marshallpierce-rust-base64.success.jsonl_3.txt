@@ -1,0 +1,16 @@
+pub fn encode<T: AsRef<[u8]>>(input: T) -> String {
+    STANDARD.encode(input)
+}
+fn display_wrapper_matches_normal_encode() {
+    let mut bytes = Vec::<u8>::with_capacity(256);
+
+    for i in 0..255 {
+        bytes.push(i);
+    }
+    bytes.push(255);
+
+    assert_eq!(
+        STANDARD.encode(&bytes),
+        format!("{}", display::Base64Display::new(&bytes, &STANDARD))
+    );
+}

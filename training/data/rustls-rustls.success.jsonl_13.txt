@@ -1,0 +1,29 @@
+fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.tls_conn.writer().write(bytes)
+    }
+fn client_respects_buffer_limit_post_handshake() {
+    let (mut client, mut server) = make_pair(KeyType::Rsa);
+
+    do_handshake(&mut client, &mut server);
+    client.set_buffer_limit(Some(48));
+
+    assert_eq!(
+        client
+            .writer()
+            .write(b"01234567890123456789")
+            .unwrap(),
+        20
+    );
+    assert_eq!(
+        client
+            .writer()
+            .write(b"01234567890123456789")
+            .unwrap(),
+        6
+    );
+
+    transfer(&mut client, &mut server);
+    server.process_new_packets().unwrap();
+
+    check_read(&mut server.reader(), b"01234567890123456789012345");
+}

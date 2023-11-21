@@ -1,0 +1,24 @@
+fn file_read(at: &AtPath, filename: &str) -> String {
+    let mut s = String::new();
+    at.open(filename).read_to_string(&mut s).unwrap();
+    s
+}
+fn test_number_n() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file_read = |f| {
+        let mut s = String::new();
+        at.open(f).read_to_string(&mut s).unwrap();
+        s
+    };
+    ucmd.args(&["-n", "5", "asciilowercase.txt"]).succeeds();
+    assert_eq!(file_read("xaa"), "abcde");
+    assert_eq!(file_read("xab"), "fghij");
+    assert_eq!(file_read("xac"), "klmno");
+    assert_eq!(file_read("xad"), "pqrst");
+    assert_eq!(file_read("xae"), "uvwxyz\n");
+    #[cfg(unix)]
+    new_ucmd!()
+        .args(&["--number=100", "/dev/null"])
+        .succeeds()
+        .stdout_only("");
+}

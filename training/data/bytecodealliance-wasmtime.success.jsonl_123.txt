@@ -1,0 +1,35 @@
+pub fn to_string(&self) -> String {
+        format!("label{}", self.0)
+    }
+fn mismatch_intrinsics() -> Result<()> {
+    let engine = super::engine();
+    let c = Component::new(
+        &engine,
+        r#"
+            (component
+                (type $t' (resource (rep i32)))
+                (type $u' (resource (rep i32)))
+
+                (export $t "t" (type $t'))
+                (export $u "u" (type $u'))
+
+                ;; note the mismatch where this is an intrinsic for `u` but
+                ;; we're typing it as `t`
+                (core func $t_ctor (canon resource.new $u))
+
+                (func (export "ctor") (param "x" u32) (result (own $t))
+                    (canon lift (core func $t_ctor)))
+            )
+        "#,
+    )?;
+
+    let mut store = Store::new(&engine, ());
+    let i = Linker::new(&engine).instantiate(&mut store, &c)?;
+    let ctor = i.get_typed_func::<(u32,), (ResourceAny,)>(&mut store, "ctor")?;
+    assert_eq!(
+        ctor.call(&mut store, (100,)).unwrap_err().to_string(),
+        "unknown handle index 0"
+    );
+
+    Ok(())
+}

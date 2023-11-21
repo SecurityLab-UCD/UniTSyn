@@ -1,0 +1,33 @@
+fn next(&mut self) -> Option<Self::Item> {
+        match self.state.next(self.bytes) {
+            None => None,
+            Some(Ok(a)) => Some(Ok(a.map(|range| &self.bytes[range]).into())),
+            Some(Err(e)) => Some(Err(e)),
+        }
+    }
+fn test_closing_bracket_in_double_quote_attr() {
+    let mut r = Reader::from_str(r#"<a attr=">" check="2"></a>"#);
+    r.trim_text(true);
+    match r.read_event() {
+        Ok(Start(e)) => {
+            let mut attrs = e.attributes();
+            assert_eq!(
+                attrs.next(),
+                Some(Ok(Attribute {
+                    key: QName(b"attr"),
+                    value: Cow::Borrowed(b">"),
+                }))
+            );
+            assert_eq!(
+                attrs.next(),
+                Some(Ok(Attribute {
+                    key: QName(b"check"),
+                    value: Cow::Borrowed(b"2"),
+                }))
+            );
+            assert_eq!(attrs.next(), None);
+        }
+        x => panic!("expected <a attr='>'>, got {:?}", x),
+    }
+    next_eq!(r, End, b"a");
+}

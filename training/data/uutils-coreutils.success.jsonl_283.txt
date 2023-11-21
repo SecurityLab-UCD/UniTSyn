@@ -1,0 +1,19 @@
+fn count(&self) -> usize {
+        self.collect().len()
+    }
+fn test_split_obs_lines_starts_combined_shorts() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+    let name = "obs-lines-starts-shorts";
+    RandomFile::new(at, name).add_lines(400);
+
+    scene
+        .ucmd()
+        .args(&["-200xd", name])
+        .succeeds()
+        .no_stderr()
+        .no_stdout();
+    let glob = Glob::new(at, ".", r"x\d\d$");
+    assert_eq!(glob.count(), 2);
+    assert_eq!(glob.collate(), at.read_bytes(name));
+}

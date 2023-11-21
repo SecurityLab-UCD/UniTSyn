@@ -1,0 +1,37 @@
+fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> Result<usize> {
+        self.complete_prior_io()?;
+
+        let len = self
+            .conn
+            .writer()
+            .write_vectored(bufs)?;
+
+        // Try to write the underlying transport here, but don't let
+        // any errors mask the fact we've consumed `len` bytes.
+        // Callers will learn of permanent errors on the next call.
+        let _ = self.conn.complete_io(self.sock);
+
+        Ok(len)
+    }
+fn server_respects_buffer_limit_pre_handshake_with_vectored_write() {
+    let (mut client, mut server) = make_pair(KeyType::Rsa);
+
+    server.set_buffer_limit(Some(32));
+
+    assert_eq!(
+        server
+            .writer()
+            .write_vectored(&[
+                IoSlice::new(b"01234567890123456789"),
+                IoSlice::new(b"01234567890123456789")
+            ])
+            .unwrap(),
+        32
+    );
+
+    do_handshake(&mut client, &mut server);
+    transfer(&mut server, &mut client);
+    client.process_new_packets().unwrap();
+
+    check_read(&mut client.reader(), b"01234567890123456789012345678901");
+}

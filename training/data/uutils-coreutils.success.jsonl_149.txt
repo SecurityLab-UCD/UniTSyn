@@ -1,0 +1,15 @@
+pub fn file_exists<P: AsRef<Path>>(&self, path: P) -> bool {
+        match fs::metadata(self.plus(path)) {
+            Ok(m) => m.is_file(),
+            Err(_) => false,
+        }
+    }
+fn test_link_no_circular() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let link = "test_link_no_circular";
+
+    ucmd.args(&[link, link])
+        .fails()
+        .stderr_is("link: cannot create link 'test_link_no_circular' to 'test_link_no_circular': No such file or directory\n");
+    assert!(!at.file_exists(link));
+}

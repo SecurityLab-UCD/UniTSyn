@@ -1,0 +1,20 @@
+fn count(&self) -> usize {
+        self.collect().len()
+    }
+fn test_combined_file_set_unset() {
+    let out = new_ucmd!()
+        .arg("-u")
+        .arg("BAR")
+        .arg("-f")
+        .arg("vars.conf.txt")
+        .arg("FOO=bar.alt")
+        .succeeds()
+        .stdout_move_str();
+
+    assert_eq!(
+        out.lines()
+            .filter(|&line| line == "FOO=bar.alt" || line.starts_with("BAR="))
+            .count(),
+        1
+    );
+}

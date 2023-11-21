@@ -1,0 +1,20 @@
+fn success() -> Self {
+        Self::Success
+    }
+fn memory_growth_failure() -> Result<()> {
+    let output = get_wasmtime_command()?
+        .args(&[
+            "run",
+            "-Wmemory64",
+            "-Wtrap-on-grow-failure",
+            "tests/all/cli_tests/memory-grow-failure.wat",
+        ])
+        .output()?;
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("forcing a memory growth failure to be a trap"),
+        "bad stderr: {stderr}"
+    );
+    Ok(())
+}

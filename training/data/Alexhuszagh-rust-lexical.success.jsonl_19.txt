@@ -1,0 +1,27 @@
+pub const fn lossy(mut self, lossy: bool) -> Self {
+        self.lossy = lossy;
+        self
+    }
+fn options_test() {
+    let mut opts = Options::new();
+
+    unsafe {
+        opts.set_lossy(true);
+        opts.set_exponent(b'^');
+        opts.set_decimal_point(b',');
+        opts.set_nan_string(Some(b"nan"));
+        opts.set_inf_string(Some(b"Infinity"));
+        opts.set_infinity_string(Some(b"Infiniiiiiity"));
+    }
+
+    assert_eq!(opts.lossy(), true);
+    assert_eq!(opts.exponent(), b'^');
+    assert_eq!(opts.decimal_point(), b',');
+    assert_eq!(opts.nan_string(), Some("nan".as_bytes()));
+    assert_eq!(opts.inf_string(), Some("Infinity".as_bytes()));
+    assert_eq!(opts.infinity_string(), Some("Infiniiiiiity".as_bytes()));
+    assert!(opts.is_valid());
+
+    assert_eq!(Options::builder(), OptionsBuilder::new());
+    assert_eq!(opts.rebuild().build(), Ok(opts));
+}

@@ -1,0 +1,30 @@
+pub(crate) fn read(mut self, operands: &[&str]) -> Result<Self, ParseError> {
+        for operand in operands {
+            self.parse_operand(operand)?;
+        }
+
+        Ok(self)
+    }
+fn test_mv_arg_update_older_dest_not_older() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    let old = "test_mv_arg_update_none_file1";
+    let new = "test_mv_arg_update_none_file2";
+    let old_content = "file1 content\n";
+    let new_content = "file2 content\n";
+
+    at.write(old, old_content);
+
+    sleep(Duration::from_secs(1));
+
+    at.write(new, new_content);
+
+    ucmd.arg(old)
+        .arg(new)
+        .arg("--update=older")
+        .succeeds()
+        .no_stderr()
+        .no_stdout();
+
+    assert_eq!(at.read(new), new_content);
+}

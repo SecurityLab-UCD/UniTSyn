@@ -1,0 +1,15 @@
+fn file_read(at: &AtPath, filename: &str) -> String {
+    let mut s = String::new();
+    at.open(filename).read_to_string(&mut s).unwrap();
+    s
+}
+fn test_split_separator_nul_lines() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    ucmd.args(&["--lines=2", "-t", "\\0", "separator_nul.txt"])
+        .succeeds();
+
+    assert_eq!(file_read(&at, "xaa"), "1\x002\0");
+    assert_eq!(file_read(&at, "xab"), "3\x004\0");
+    assert_eq!(file_read(&at, "xac"), "5\0");
+    assert!(!at.plus("xad").exists());
+}

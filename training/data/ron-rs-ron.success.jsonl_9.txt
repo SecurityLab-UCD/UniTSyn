@@ -1,0 +1,33 @@
+pub fn from_str<'a, T>(&self, s: &'a str) -> SpannedResult<T>
+    where
+        T: de::Deserialize<'a>,
+    {
+        self.from_bytes(s.as_bytes())
+    }
+fn test_oct() {
+    assert_eq!(from_str("0o1461"), Ok(0o1461));
+    assert_eq!(from_str("0o051"), Ok(0o051));
+    assert_eq!(from_str("0o150700"), Ok(0o150700));
+
+    assert_eq!(
+        from_str::<u8>("0o"),
+        Err(SpannedError {
+            code: Error::ExpectedInteger,
+            position: Position { line: 1, col: 3 },
+        })
+    );
+    assert_eq!(
+        from_str::<u8>("0o_1"),
+        Err(SpannedError {
+            code: Error::UnderscoreAtBeginning,
+            position: Position { line: 1, col: 3 },
+        })
+    );
+    assert_eq!(
+        from_str::<u8>("0o77777"),
+        Err(SpannedError {
+            code: Error::IntegerOutOfBounds,
+            position: Position { line: 1, col: 8 },
+        })
+    );
+}

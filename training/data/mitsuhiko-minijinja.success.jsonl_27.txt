@@ -1,0 +1,30 @@
+pub fn apply_filter(&self, filter: &str, args: &[Value]) -> Result<Value, Error> {
+        match self.env.get_filter(filter) {
+            Some(filter) => filter.apply_to(self, args),
+            None => Err(Error::from(ErrorKind::UnknownFilter)),
+        }
+    }
+fn test_values_in_vec() {
+    fn upper(value: &str) -> String {
+        value.to_uppercase()
+    }
+
+    fn sum(value: Vec<i64>) -> i64 {
+        value.into_iter().sum::<i64>()
+    }
+
+    let mut env = Environment::new();
+    env.add_filter("upper", upper);
+    env.add_filter("sum", sum);
+    let state = env.empty_state();
+
+    assert_eq!(
+        state.apply_filter("upper", args!("Hello World!")).unwrap(),
+        Value::from("HELLO WORLD!")
+    );
+
+    assert_eq!(
+        state.apply_filter("sum", args!(vec![1, 2])).unwrap(),
+        Value::from(3)
+    );
+}

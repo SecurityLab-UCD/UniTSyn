@@ -1,0 +1,32 @@
+fn finish(&self) -> u64 {
+        self.inner.finish()
+    }
+fn struct_ignored_fields() {
+    #[derive(CacheKey)]
+    struct NamedFieldsStruct {
+        a: String,
+        #[cache_key(ignore)]
+        #[allow(unused)]
+        b: String,
+    }
+
+    impl Hash for NamedFieldsStruct {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            self.a.hash(state);
+        }
+    }
+
+    let mut key = CacheKeyHasher::new();
+
+    let named_fields = NamedFieldsStruct {
+        a: "Hello".into(),
+        b: "World".into(),
+    };
+
+    named_fields.cache_key(&mut key);
+
+    let mut hash = CacheKeyHasher::new();
+    named_fields.hash(&mut hash);
+
+    assert_eq!(hash.finish(), key.finish());
+}

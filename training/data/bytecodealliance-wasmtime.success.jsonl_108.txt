@@ -1,0 +1,17 @@
+pub fn precompile_component(&self, bytes: &[u8]) -> Result<Vec<u8>> {
+        #[cfg(feature = "wat")]
+        let bytes = wat::parse_bytes(&bytes)?;
+        let (mmap, _) = crate::component::Component::build_artifacts(self, &bytes)?;
+        Ok(mmap.to_vec())
+    }
+fn bare_bones() -> Result<()> {
+    let engine = super::engine();
+    let component = Component::new(&engine, "(component)")?.serialize()?;
+    assert_eq!(component, engine.precompile_component(b"(component)")?);
+
+    let component = unsafe { Component::deserialize(&engine, &component)? };
+    let mut store = Store::new(&engine, ());
+    Linker::new(&engine).instantiate(&mut store, &component)?;
+
+    Ok(())
+}

@@ -1,0 +1,35 @@
+pub fn decimal_length9(v: u32) -> u32 {
+    // Function precondition: v is not a 10-digit number.
+    // (f2s: 9 digits are sufficient for round-tripping.)
+    debug_assert!(v < 1000000000);
+
+    if v >= 100000000 {
+        9
+    } else if v >= 10000000 {
+        8
+    } else if v >= 1000000 {
+        7
+    } else if v >= 100000 {
+        6
+    } else if v >= 10000 {
+        5
+    } else if v >= 1000 {
+        4
+    } else if v >= 100 {
+        3
+    } else if v >= 10 {
+        2
+    } else {
+        1
+    }
+}
+fn test_decimal_length9() {
+    assert_eq!(1, decimal_length9(0));
+    assert_eq!(1, decimal_length9(1));
+    assert_eq!(1, decimal_length9(9));
+    assert_eq!(2, decimal_length9(10));
+    assert_eq!(2, decimal_length9(99));
+    assert_eq!(3, decimal_length9(100));
+    assert_eq!(3, decimal_length9(999));
+    assert_eq!(9, decimal_length9(999999999));
+}

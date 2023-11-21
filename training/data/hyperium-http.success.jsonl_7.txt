@@ -1,0 +1,35 @@
+pub fn as_str(&self) -> &str {
+        let offset = (self.0.get() - 100) as usize;
+        let offset = offset * 3;
+
+        // Invariant: self has checked range [100, 999] and CODE_DIGITS is
+        // ASCII-only, of length 900 * 3 = 2700 bytes
+
+        #[cfg(debug_assertions)]
+        { &CODE_DIGITS[offset..offset+3] }
+
+        #[cfg(not(debug_assertions))]
+        unsafe { CODE_DIGITS.get_unchecked(offset..offset+3) }
+    }
+fn insert_all_std_headers() {
+    let mut m = HeaderMap::new();
+
+    for (i, hdr) in STD.iter().enumerate() {
+        m.insert(hdr.clone(), hdr.as_str().parse().unwrap());
+
+        for j in 0..(i + 1) {
+            assert_eq!(m[&STD[j]], STD[j].as_str());
+        }
+
+        if i != 0 {
+            for j in (i + 1)..STD.len() {
+                assert!(
+                    m.get(&STD[j]).is_none(),
+                    "contained {}; j={}",
+                    STD[j].as_str(),
+                    j
+                );
+            }
+        }
+    }
+}

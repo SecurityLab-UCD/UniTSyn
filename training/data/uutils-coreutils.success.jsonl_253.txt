@@ -1,0 +1,44 @@
+pub fn file_exists<P: AsRef<Path>>(&self, path: P) -> bool {
+        match fs::metadata(self.plus(path)) {
+            Ok(m) => m.is_file(),
+            Err(_) => false,
+        }
+    }
+fn test_rm_force_prompts_order() {
+    // Needed for talking with stdin on platforms where CRLF or LF matters
+    const END_OF_LINE: &str = if cfg!(windows) { "\r\n" } else { "\n" };
+
+    let yes = format!("y{END_OF_LINE}");
+
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+
+    let empty_file = "empty";
+
+    at.touch(empty_file);
+
+    // This should cause rm to prompt to remove regular empty file
+    let mut child = scene
+        .ucmd()
+        .set_stdin(Stdio::piped())
+        .arg("-fi")
+        .arg(empty_file)
+        .run_no_wait();
+    child.try_write_in(yes.as_bytes()).unwrap();
+
+    let result = child.wait().unwrap();
+    result.stderr_only("rm: remove regular empty file 'empty'? ");
+
+    assert!(!at.file_exists(empty_file));
+
+    at.touch(empty_file);
+
+    // This should not cause rm to prompt to remove regular empty file
+    scene
+        .ucmd()
+        .arg("-if")
+        .arg(empty_file)
+        .succeeds()
+        .no_stderr();
+    assert!(!at.file_exists(empty_file));
+}

@@ -1,0 +1,11 @@
+pub fn plaintext_bytes_to_read(&self) -> usize {
+        self.plaintext_bytes_to_read
+    }
+fn new_client_returns_initial_io_state() {
+    let (mut client, _) = make_pair(KeyType::Rsa);
+    let io_state = client.process_new_packets().unwrap();
+    println!("IoState is Debug {:?}", io_state);
+    assert_eq!(io_state.plaintext_bytes_to_read(), 0);
+    assert!(!io_state.peer_has_closed());
+    assert!(io_state.tls_bytes_to_write() > 200);
+}

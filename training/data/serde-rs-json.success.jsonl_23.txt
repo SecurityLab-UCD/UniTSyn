@@ -1,0 +1,17 @@
+pub(crate) fn lower_n_halfway(n: u64) -> u64 {
+    let bits: u64 = mem::size_of::<u64>() as u64 * 8;
+    debug_assert!(n <= bits, "lower_n_halfway() overflow in shl.");
+
+    if n == 0 {
+        0
+    } else {
+        nth_bit(n - 1)
+    }
+}
+fn lower_n_halfway_test() {
+    assert_eq!(lower_n_halfway(0u64), 0b0);
+    assert_eq!(lower_n_halfway(1u64), 0b1);
+    assert_eq!(lower_n_halfway(2u64), 0b10);
+    assert_eq!(lower_n_halfway(10u64), 0b1000000000);
+    assert_eq!(lower_n_halfway(32u64), 0b10000000000000000000000000000000);
+}

@@ -1,0 +1,18 @@
+fn count(&self) -> usize {
+        self.collect().len()
+    }
+fn test_split_str_prefixed_chunks_by_bytes() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let name = "split_str_prefixed_chunks_by_bytes";
+    RandomFile::new(&at, name).add_bytes(10000);
+    // Important that this is less than 1024 since that's our internal buffer
+    // size. Good to test that we don't overshoot.
+    ucmd.args(&["-b", "1000", name, "b"]).succeeds();
+
+    let glob = Glob::new(&at, ".", r"b[[:alpha:]][[:alpha:]]$");
+    assert_eq!(glob.count(), 10);
+    for filename in glob.collect() {
+        assert_eq!(glob.directory.metadata(&filename).len(), 1000);
+    }
+    assert_eq!(glob.collate(), at.read_bytes(name));
+}

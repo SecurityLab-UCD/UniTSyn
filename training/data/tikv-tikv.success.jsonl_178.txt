@@ -1,0 +1,64 @@
+pub fn send_upload_sst(
+    client: &ImportSstClient,
+    meta: &SstMeta,
+    data: &[u8],
+) -> Result<UploadResponse> {
+    let mut r1 = UploadRequest::default();
+    r1.set_meta(meta.clone());
+    let mut r2 = UploadRequest::default();
+    r2.set_data(data.to_vec());
+    let reqs: Vec<_> = vec![r1, r2]
+        .into_iter()
+        .map(|r| Result::Ok((r, WriteFlags::default())))
+        .collect();
+    let (mut tx, rx) = client.upload().unwrap();
+    let mut stream = stream::iter(reqs);
+    block_on(async move {
+        tx.send_all(&mut stream).await?;
+        tx.close().await?;
+        rx.await
+    })
+}
+fn test_cleanup_sst() {
+    let (mut cluster, ctx, _, import) = new_cluster_and_tikv_import_client();
+
+    let temp_dir = Builder::new().prefix("test_cleanup_sst").tempdir().unwrap();
+
+    let sst_path = temp_dir.path().join("test_split.sst");
+    let sst_range = (0, 100);
+    let (mut meta, data) = gen_sst_file(sst_path, sst_range);
+    meta.set_region_id(ctx.get_region_id());
+    meta.set_region_epoch(ctx.get_region_epoch().clone());
+
+    send_upload_sst(&import, &meta, &data).unwrap();
+
+    // Can not upload the same file when it exists.
+    assert_to_string_contains!(
+        send_upload_sst(&import, &meta, &data).unwrap_err(),
+        "FileExists"
+    );
+
+    // The uploaded SST should be deleted if the region split.
+    let region = cluster.get_region(&[]);
+    cluster.must_split(&region, &[100]);
+
+    check_sst_deleted(&import, &meta, &data);
+
+    let left = cluster.get_region(&[]);
+    let right = cluster.get_region(&[100]);
+
+    let sst_path = temp_dir.path().join("test_merge.sst");
+    let sst_range = (0, 100);
+    let (mut meta, data) = gen_sst_file(sst_path, sst_range);
+    meta.set_region_id(left.get_id());
+    meta.set_region_epoch(left.get_region_epoch().clone());
+
+    send_upload_sst(&import, &meta, &data).unwrap();
+
+    // The uploaded SST should be deleted if the region merged.
+    cluster.pd_client.must_merge(left.get_id(), right.get_id());
+    let res = block_on(cluster.pd_client.get_region_by_id(left.get_id()));
+    assert_eq!(res.unwrap(), None);
+
+    check_sst_deleted(&import, &meta, &data);
+}

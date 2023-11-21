@@ -1,0 +1,51 @@
+fn parse(witnesses: &[Witness]) -> Vec<ParsedEnvelope> {
+    ParsedEnvelope::from_transaction(&Transaction {
+      version: 0,
+      lock_time: LockTime::ZERO,
+      input: witnesses
+        .iter()
+        .map(|witness| TxIn {
+          previous_output: OutPoint::null(),
+          script_sig: ScriptBuf::new(),
+          sequence: Sequence::ENABLE_RBF_NO_LOCKTIME,
+          witness: witness.clone(),
+        })
+        .collect(),
+      output: Vec::new(),
+    })
+  }
+fn send_btc_locks_inscriptions() {
+  let rpc_server = test_bitcoincore_rpc::spawn();
+  create_wallet(&rpc_server);
+
+  rpc_server.mine_blocks(1);
+
+  let (_, reveal) = inscribe(&rpc_server);
+
+  let output =
+    CommandBuilder::new("wallet send --fee-rate 1 bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4 1btc")
+      .rpc_server(&rpc_server)
+      .run_and_deserialize_output::<Output>();
+
+  assert_eq!(
+    output.transaction,
+    "0000000000000000000000000000000000000000000000000000000000000000"
+      .parse()
+      .unwrap()
+  );
+
+  assert_eq!(
+    rpc_server.sent(),
+    &[Sent {
+      amount: 1.0,
+      address: "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"
+        .parse::<Address<NetworkUnchecked>>()
+        .unwrap()
+        .assume_checked(),
+      locked: vec![OutPoint {
+        txid: reveal,
+        vout: 0,
+      }]
+    }]
+  )
+}

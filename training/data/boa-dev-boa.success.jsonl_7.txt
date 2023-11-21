@@ -1,0 +1,59 @@
+pub fn has_weak_maps() -> bool {
+    BOA_GC.with(|current| {
+        let gc = current.borrow();
+
+        gc.weak_map_start.get().is_some()
+    })
+}
+fn weak_map_basic() {
+    run_test(|| {
+        let key1 = Gc::new(String::from("key1"));
+        let key2 = Gc::new(String::from("key2"));
+        let key3 = Gc::new(String::from("key3"));
+
+        assert!(!has_weak_maps());
+
+        let mut map = WeakMap::new();
+
+        assert!(has_weak_maps());
+
+        map.insert(&key1, ());
+        map.insert(&key2, ());
+        map.insert(&key3, ());
+
+        force_collect();
+        assert!(has_weak_maps());
+
+        assert!(map.contains_key(&key1));
+        assert!(map.contains_key(&key2));
+        assert!(map.contains_key(&key3));
+
+        drop(key1);
+
+        force_collect();
+        assert!(has_weak_maps());
+
+        assert!(map.contains_key(&key2));
+        assert!(map.contains_key(&key3));
+
+        drop(key2);
+
+        force_collect();
+        assert!(has_weak_maps());
+
+        assert!(map.contains_key(&key3));
+        assert!(has_weak_maps());
+
+        drop(key3);
+
+        assert!(has_weak_maps());
+
+        force_collect();
+        assert!(has_weak_maps());
+
+        drop(map);
+
+        force_collect();
+        assert!(!has_weak_maps());
+    });
+}

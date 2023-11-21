@@ -1,0 +1,19 @@
+pub fn stored_bytes(&self) -> u64 {
+        self.stored_leaf_bytes
+    }
+fn stored_size() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(STR_TABLE).unwrap();
+        table.insert("hello", "world").unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let write_txn = db.begin_write().unwrap();
+    assert_eq!(write_txn.stats().unwrap().stored_bytes(), 10);
+    assert!(write_txn.stats().unwrap().fragmented_bytes() > 0);
+    assert!(write_txn.stats().unwrap().metadata_bytes() > 0);
+    write_txn.abort().unwrap();
+}

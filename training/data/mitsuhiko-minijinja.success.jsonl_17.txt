@@ -1,0 +1,24 @@
+pub fn undefined_behavior(&self) -> UndefinedBehavior {
+        self.env.undefined_behavior()
+    }
+fn test_chainable_undefined() {
+    let mut env = Environment::new();
+    env.set_undefined_behavior(UndefinedBehavior::Chainable);
+    env.add_filter("test", |state: &State, value: String| -> String {
+        assert_eq!(state.undefined_behavior(), UndefinedBehavior::Chainable);
+        assert_eq!(value, "");
+        value
+    });
+
+    assert_eq!(render!(in env, "<{{ true.missing_attribute }}>"), "<>");
+    assert_eq!(render!(in env, "<{{ undefined.missing_attribute }}>"), "<>");
+    assert_eq!(
+        render!(in env, "<{% for x in undefined %}...{% endfor %}>"),
+        "<>"
+    );
+    assert_eq!(render!(in env, "<{{ undefined }}>"), "<>");
+    assert_eq!(render!(in env, "{{ undefined is undefined }}"), "true");
+    assert_eq!(render!(in env, "{{ undefined|list }}"), "[]");
+    assert_eq!(render!(in env, "<{{ undefined|test }}>"), "<>");
+    assert_eq!(render!(in env, "{{ 42 in undefined }}"), "false");
+}

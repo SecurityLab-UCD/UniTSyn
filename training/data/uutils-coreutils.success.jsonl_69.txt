@@ -1,0 +1,33 @@
+fn get_header(s: &str) -> String {
+        s.lines()
+            .next()
+            .unwrap()
+            .to_string()
+            .split_whitespace()
+            .nth(1)
+            .unwrap()
+            .trim()
+            .to_string()
+    }
+fn test_block_size_1024() {
+    fn get_header(block_size: u64) -> String {
+        let output = new_ucmd!()
+            .args(&["-B", &format!("{block_size}"), "--output=size"])
+            .succeeds()
+            .stdout_move_str();
+        output.lines().next().unwrap().trim().to_string()
+    }
+
+    assert_eq!(get_header(1024), "1K-blocks");
+    assert_eq!(get_header(2048), "2K-blocks");
+    assert_eq!(get_header(4096), "4K-blocks");
+    assert_eq!(get_header(1024 * 1024), "1M-blocks");
+    assert_eq!(get_header(2 * 1024 * 1024), "2M-blocks");
+    assert_eq!(get_header(1024 * 1024 * 1024), "1G-blocks");
+    assert_eq!(get_header(34 * 1024 * 1024 * 1024), "34G-blocks");
+
+    // multiples of both 1024 and 1000
+    assert_eq!(get_header(128_000), "128kB-blocks");
+    assert_eq!(get_header(1000 * 1024), "1.1MB-blocks");
+    assert_eq!(get_header(1_000_000_000_000), "1TB-blocks");
+}

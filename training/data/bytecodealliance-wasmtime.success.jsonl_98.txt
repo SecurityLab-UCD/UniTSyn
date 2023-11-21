@@ -1,0 +1,46 @@
+pub fn contains<C: Comparator<K>>(&self, key: K, forest: &SetForest<K>, comp: &C) -> bool {
+        self.root
+            .expand()
+            .and_then(|root| Path::default().find(key, root, &forest.nodes, comp))
+            .is_some()
+    }
+fn parse_dwarf_info() -> Result<()> {
+    let wasm = rustc(
+        "
+            fn main() {
+                panic!();
+            }
+        ",
+    );
+    let mut config = Config::new();
+    config.wasm_backtrace_details(WasmBacktraceDetails::Enable);
+    let engine = Engine::new(&config)?;
+    let module = Module::new(&engine, &wasm)?;
+    let mut linker = Linker::new(&engine);
+    wasmtime_wasi::add_to_linker(&mut linker, |s| s)?;
+    let mut store = Store::new(
+        &engine,
+        wasmtime_wasi::sync::WasiCtxBuilder::new()
+            .inherit_stdio()
+            .build(),
+    );
+    linker.module(&mut store, "", &module)?;
+    let run = linker.get_default(&mut store, "")?;
+    let trap = run.call(&mut store, &[], &mut []).unwrap_err();
+
+    let mut found = false;
+    let frames = trap.downcast_ref::<WasmBacktrace>().unwrap().frames();
+    for frame in frames {
+        for symbol in frame.symbols() {
+            if let Some(file) = symbol.file() {
+                if file.ends_with("input.rs") {
+                    found = true;
+                    assert!(symbol.name().unwrap().contains("main"));
+                    assert_eq!(symbol.line(), Some(3));
+                }
+            }
+        }
+    }
+    assert!(found);
+    Ok(())
+}

@@ -1,0 +1,25 @@
+pub fn i32_exit_status(&self) -> Option<i32> {
+        if let Self::I32Exit(status) = self {
+            return Some(*status);
+        }
+        None
+    }
+fn resumable_call_smoldot_tail_01() {
+    let (mut store, wasm_fn) = resumable_call_smoldot_common(
+        r#"
+        (module
+            (import "env" "host_fn" (func $host_fn (result i32)))
+            (func (export "test") (result i32)
+                (return_call $host_fn)
+            )
+        )
+        "#,
+    );
+    assert_eq!(
+        wasm_fn
+            .call_resumable(&mut store, ())
+            .unwrap_err()
+            .i32_exit_status(),
+        Some(100),
+    );
+}

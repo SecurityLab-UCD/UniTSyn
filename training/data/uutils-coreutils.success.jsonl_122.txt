@@ -1,0 +1,29 @@
+pub fn file_exists<P: AsRef<Path>>(&self, path: P) -> bool {
+        match fs::metadata(self.plus(path)) {
+            Ok(m) => m.is_file(),
+            Err(_) => false,
+        }
+    }
+fn test_install_backup_short_no_args_file_to_dir() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+
+    let file = "test_install_simple_backup_file_a";
+    let dest_dir = "test_install_dest/";
+    let expect = format!("{dest_dir}{file}");
+
+    at.touch(file);
+    at.mkdir(dest_dir);
+    at.touch(&expect);
+    scene
+        .ucmd()
+        .arg("-b")
+        .arg(file)
+        .arg(dest_dir)
+        .succeeds()
+        .no_stderr();
+
+    assert!(at.file_exists(file));
+    assert!(at.file_exists(&expect));
+    assert!(at.file_exists(format!("{expect}~")));
+}

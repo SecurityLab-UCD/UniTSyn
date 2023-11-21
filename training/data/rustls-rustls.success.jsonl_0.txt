@@ -1,0 +1,20 @@
+fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.tls_conn.writer().write(bytes)
+    }
+fn buffered_client_data_sent() {
+    let server_config = Arc::new(make_server_config(KeyType::Rsa));
+
+    for version in rustls::ALL_VERSIONS {
+        let client_config = make_client_config_with_versions(KeyType::Rsa, &[version]);
+        let (mut client, mut server) =
+            make_pair_for_arc_configs(&Arc::new(client_config), &server_config);
+
+        assert_eq!(5, client.writer().write(b"hello").unwrap());
+
+        do_handshake(&mut client, &mut server);
+        transfer(&mut client, &mut server);
+        server.process_new_packets().unwrap();
+
+        check_read(&mut server.reader(), b"hello");
+    }
+}

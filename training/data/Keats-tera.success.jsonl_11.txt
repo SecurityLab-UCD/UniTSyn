@@ -1,0 +1,23 @@
+fn render_template(content: &str, context: &Context) -> Result<String> {
+    let mut tera = Tera::default();
+    tera.add_raw_template("hello.html", content).unwrap();
+    tera.register_function("get_number", |_: &HashMap<String, Value>| Ok(Value::Number(10.into())));
+    tera.register_function("get_true", |_: &HashMap<String, Value>| Ok(Value::Bool(true)));
+    tera.register_function("get_string", |_: &HashMap<String, Value>| {
+        Ok(Value::String("Hello".to_string()))
+    });
+
+    tera.render("hello.html", context)
+}
+fn comments_are_ignored() {
+    let inputs = vec![
+        ("Hello {# comment #}world", "Hello world"),
+        ("Hello {# comment {# nested #}world", "Hello world"),
+        ("My name {# was {{ name }} #}is No One.", "My name is No One."),
+    ];
+
+    for (input, expected) in inputs {
+        println!("{:?} -> {:?}", input, expected);
+        assert_eq!(render_template(input, &Context::new()).unwrap(), expected);
+    }
+}

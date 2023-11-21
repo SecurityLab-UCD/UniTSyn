@@ -1,0 +1,31 @@
+pub fn plus<P: AsRef<Path>>(&self, name: P) -> PathBuf {
+        let mut pathbuf = self.subdir.clone();
+        pathbuf.push(name);
+        pathbuf
+    }
+fn valid_context_directory() {
+    let (dir, mut cmd) = at_and_ucmd!();
+    dir.mkdir("a");
+    dir.symlink_dir("a", "la");
+
+    let b_path = Path::new("a").join("b.txt");
+    dir.touch(b_path.to_str().unwrap());
+
+    let la_context = get_file_context(dir.plus("la")).unwrap();
+    let b_context = get_file_context(dir.plus(b_path.to_str().unwrap())).unwrap();
+
+    let new_la_context = "guest_u:object_r:etc_t:s0:c42";
+
+    cmd.args(&["--verbose", new_la_context])
+        .arg(dir.plus("la"))
+        .succeeds();
+    assert_eq!(get_file_context(dir.plus("la")).unwrap(), la_context);
+    assert_eq!(
+        get_file_context(dir.plus("a")).unwrap().as_deref(),
+        Some(new_la_context)
+    );
+    assert_eq!(
+        get_file_context(dir.plus(b_path.to_str().unwrap())).unwrap(),
+        b_context
+    );
+}
