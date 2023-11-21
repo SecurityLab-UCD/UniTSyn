@@ -1,6 +1,7 @@
 from tqdm import tqdm
 from unitsyncer.sync import Synchronizer, LSPSynchronizer
 from unitsyncer.rust_syncer import RustSynchronizer
+from unitsyncer.sansio_lsp_syncer import SansioLSPSynchronizer
 from pylspclient.lsp_structs import LANGUAGE_IDENTIFIER, Location, Position, Range
 from returns.maybe import Maybe, Nothing, Some
 from returns.result import Result, Success, Failure
@@ -136,6 +137,8 @@ def process_one_focal_file(
         match language:
             case LANGUAGE_IDENTIFIER.RUST:
                 syncer = RustSynchronizer(full_workdir, language)
+            case LANGUAGE_IDENTIFIER.GO:
+                syncer = SansioLSPSynchronizer(full_workdir, language)
             case _:
                 syncer = LSPSynchronizer(full_workdir, language)
 
@@ -172,7 +175,9 @@ def main(
     focal_path="data/focal",
     language="python",
     jobs=CORES,
+    debug=False,
 ):
+    logging.basicConfig(level=logging.DEBUG if debug else logging.INFO)
     all_focal_files = []
     if os.path.isdir(focal_path):
         focal_dir = focal_path
@@ -209,5 +214,4 @@ def main(
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
     fire.Fire(main)

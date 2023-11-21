@@ -239,7 +239,7 @@ class SansioLSPSynchronizer(Synchronizer):
 
     def initialize(self, timeout: int = 20):
         self.start_lsp_server(timeout)
-        self.lsp_server.wait_for_message_of_type(lsp.Initialized)
+        self.lsp_server.wait_for_message_of_type(lsp.Initialized, timeout=timeout)
 
     def open_file(self, file_path: str) -> str:
         """send a file to LSP server
