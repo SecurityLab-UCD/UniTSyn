@@ -8,7 +8,7 @@ torch.cuda.empty_cache()
 # os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 #define the gpu backend to launch training
-dist.init_process_group(backend="nccl")
+# dist.init_process_group(backend="nccl")
 
 #train the models
 
@@ -38,9 +38,9 @@ model = AutoModelForCausalLM.from_pretrained("Salesforce/codegen-2B-multi")
 
 
 
-train_dataset = load_dataset('text', data_files='./training/data/train_dataset.txt')['train']
-valid_dataset = load_dataset('text', data_files='./training/data/valid_dataset.txt')['train']
-test_dataset = load_dataset('text', data_files='./training/data/test_dataset.txt')['train']
+# train_dataset = load_dataset('text', data_files='./training/data/train_dataset.txt')['train']
+# valid_dataset = load_dataset('text', data_files='./training/data/valid_dataset.txt')['train']
+# test_dataset = load_dataset('text', data_files='./training/data/test_dataset.txt')['train']
 
 
 #apply tokenizer
@@ -51,13 +51,13 @@ def encode(examples):
     return encoded
 
 
-train_dataset = train_dataset.map(encode, batched=True)
-valid_dataset = valid_dataset.map(encode, batched=True)
-test_dataset = test_dataset.map(encode, batched=True)
+# train_dataset = train_dataset.map(encode, batched=True)
+# valid_dataset = valid_dataset.map(encode, batched=True)
+# test_dataset = test_dataset.map(encode, batched=True)
 
-train_dataset.set_format('torch', columns=['input_ids', 'attention_mask', 'labels'])
-valid_dataset.set_format('torch', columns=['input_ids', 'attention_mask', 'labels'])
-test_dataset.set_format('torch', columns=['input_ids', 'attention_mask', 'labels'])
+# train_dataset.set_format('torch', columns=['input_ids', 'attention_mask', 'labels'])
+# valid_dataset.set_format('torch', columns=['input_ids', 'attention_mask', 'labels'])
+# test_dataset.set_format('torch', columns=['input_ids', 'attention_mask', 'labels'])
 
 training_args = TrainingArguments(
     output_dir='./training/results',            
@@ -72,14 +72,43 @@ training_args = TrainingArguments(
     local_rank=-1
 )
 
-trainer = Trainer(
-    model=model,
-    args=training_args,
-    train_dataset=train_dataset,
-    eval_dataset=valid_dataset
-)
 
-trainer.train()
+data_files = {
+    'train': [f'./training/batch_data/train_dataset{i}.txt' for i in range(1, 30)],
+    'valid': [f'./training/batch_data/valid_dataset{i}.txt' for i in range(1, 30)],
+    'test': [f'./training/batch_data/test_dataset{i}.txt' for i in range(1, 30)]
+}
 
-trainer.save_model("./training/saved_model")
+for train_file, valid_file in zip(data_files['train'], data_files['valid']):
+    
+    train_dataset = load_dataset('text', data_files=train_file)['train']
+    valid_dataset = load_dataset('text', data_files=valid_file)['train']
+    
+    train_dataset = train_dataset.map(encode, batched=True)
+    valid_dataset = valid_dataset.map(encode, batched=True)
+
+    train_dataset.set_format('torch', columns=['input_ids', 'attention_mask', 'labels'])
+    valid_dataset.set_format('torch', columns=['input_ids', 'attention_mask', 'labels'])
+
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=train_dataset,
+        eval_dataset=valid_dataset
+    )
+
+    trainer.train()
+
+trainer.save_model("./training/final_saved_model")
+
+# trainer = Trainer(
+#     model=model,
+#     args=training_args,
+#     train_dataset=train_dataset,
+#     eval_dataset=valid_dataset
+# )
+
+# trainer.train()
+
+# trainer.save_model("./training/saved_model")
 results = trainer.evaluate(test_dataset)
