@@ -1,4 +1,5 @@
-"""command to run the py file:
+"""
+command to run the py file:
     torchrun --nproc_per_node=7  ./training/codegen_rust.py
 """
 
@@ -7,7 +8,7 @@ from datasets import load_dataset
 import os
 import torch
 import torch.distributed as dist
-
+import fire
 
 #clean CUDA cache and define using cuda
 torch.cuda.empty_cache()
@@ -46,30 +47,38 @@ def load_data_in_batches(folder, batch_size):
     if batch_data:
         yield batch_data
 
-# Use yield to load data batch by batch
-for batch in load_data_in_batches(processed_data_folder, batch_size=16):
-    training_args = TrainingArguments(
-        output_dir='./training/results',            
-        num_train_epochs=3,                         
-        per_device_train_batch_size=1,              
-        per_device_eval_batch_size=1,               
-        no_cuda=False,  
-        warmup_steps=500,                           
-        weight_decay=0.01,                          
-        logging_dir='./logs',                       
-        logging_steps=10,
-        local_rank=-1,
-        max_steps=10000
-    )
+def main():
+    # Use yield to load data batch by batch
+    for batch in load_data_in_batches(processed_data_folder, batch_size=16):
+        training_args = TrainingArguments(
+            output_dir='./training/results',            
+            num_train_epochs=3,                         
+            per_device_train_batch_size=1,              
+            per_device_eval_batch_size=1,               
+            no_cuda=False,  
+            warmup_steps=500,                           
+            weight_decay=0.01,                          
+            logging_dir='./logs',                       
+            logging_steps=10,
+            local_rank=-1,
+            max_steps=10000
+        )
 
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=batch,
-        # eval_dataset=valid_dataset
-    )
+        trainer = Trainer(
+            model=model,
+            args=training_args,
+            train_dataset=batch,
+            # eval_dataset=valid_dataset
+        )
 
-    trainer.train()
+        trainer.train()
 
-    trainer.save_model("./training/saved_model")
+        trainer.save_model("./training/saved_model")
     # results = trainer.evaluate(test_dataset)
+
+if __name__ == "__main__":
+    fire.Fire(main)
+
+#define in function style and change it to main ✅
+#using lora to solve bugs?
+#writing train method in conflunence
