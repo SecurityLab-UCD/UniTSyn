@@ -1,9 +1,8 @@
 from tree_sitter import Language, Parser, Tree
 from unitsyncer.common import UNITSYNCER_HOME
 
-
-JAVA_LANGUAGE = Language(f"{UNITSYNCER_HOME}/frontend/parser/languages.so", "java")
-JAVASCRIPT_LANGUAGE = Language(
-    f"{UNITSYNCER_HOME}/frontend/parser/languages.so", "javascript"
-)
-RUST_LANGUAGE = Language(f"{UNITSYNCER_HOME}/frontend/parser/languages.so", "rust")
+SHARED_LIB = f"{UNITSYNCER_HOME}/frontend/parser/languages.so"
+JAVA_LANGUAGE = Language(SHARED_LIB, "java")
+JAVASCRIPT_LANGUAGE = Language(SHARED_LIB, "javascript")
+RUST_LANGUAGE = Language(SHARED_LIB, "rust")
+GO_LANGUAGE = Language(SHARED_LIB, "go")

@@ -1,11 +1,20 @@
 import ast
-from pylspclient.lsp_structs import Location, LANGUAGE_IDENTIFIER
+from typing import Optional
+from pylspclient.lsp_structs import LANGUAGE_IDENTIFIER, Location as PyLSPLoc
+from sansio_lsp_client import Location as SansioLoc
 from unitsyncer.util import replace_tabs, uri2path
 from returns.maybe import Maybe, Nothing, Some
 from frontend.parser.ast_util import ASTUtil
-from frontend.parser import JAVA_LANGUAGE, JAVASCRIPT_LANGUAGE, RUST_LANGUAGE
+from frontend.parser import (
+    GO_LANGUAGE,
+    JAVA_LANGUAGE,
+    JAVASCRIPT_LANGUAGE,
+    RUST_LANGUAGE,
+)
 from tree_sitter.binding import Node
 from frontend.parser.ast_util import remove_leading_spaces
+
+Location = PyLSPLoc | SansioLoc
 
 
 def get_function_code(
@@ -14,7 +23,7 @@ def get_function_code(
     """Extract the source code of a function from a Location LSP response
 
     Args:
-        func_location (Location): location of function responsed by LS
+        func_location (Location): location of function responded by LS
         lang (str): language of the file as in LANGUAGE_IDENTIFIER
 
     Returns:
@@ -60,6 +69,18 @@ def get_function_code(
                 tree = ast_util.tree(RUST_LANGUAGE)
 
                 return rust_get_def(tree.root_node, lineno, ast_util).map(
+                    lambda node: (
+                        ast_util.get_source_from_node(node),
+                        None,
+                        # js focal may not be a function, so directly unwrap may fail
+                        f"{file_path}::{ast_util.get_name(node).value_or(None)}",
+                    )
+                )
+            case LANGUAGE_IDENTIFIER.GO:
+                ast_util = ASTUtil(replace_tabs(code))
+                tree = ast_util.tree(GO_LANGUAGE)
+
+                return go_get_def(tree.root_node, lineno, ast_util).map(
                     lambda node: (
                         ast_util.get_source_from_node(node),
                         None,
@@ -121,3 +142,20 @@ def rust_get_def(node: Node, lineno: int, ast_util: ASTUtil) -> Maybe[Node]:
         if defn_lineno == lineno:
             return Some(defn)
     return Nothing
+
+
+def go_get_def(node: Node, lineno: int, ast_util: ASTUtil) -> Maybe[Node]:
+    def find_in(node_type: str):
+        for defn in ast_util.get_all_nodes_of_type(node, node_type):
+            # tree-sitter AST is 0-indexed
+            defn_lineno = defn.start_point[0]
+            if defn_lineno == lineno:
+                return defn
+        return None
+
+    # NOTE: in python
+    # None or some_value === some_value
+    # None or None === None
+    return Maybe.from_optional(
+        find_in("method_declaration") or find_in("function_declaration")
+    )
