@@ -1,0 +1,304 @@
+fn test_char() {
+    let ch = '.';
+    let yaml = indoc! {"
+        '.'
+    "};
+    assert_eq!(yaml, serde_yaml::to_string(&ch).unwrap());
+
+    let ch = '#';
+    let yaml = indoc! {"
+        '#'
+    "};
+    assert_eq!(yaml, serde_yaml::to_string(&ch).unwrap());
+
+    let ch = '-';
+    let yaml = indoc! {"
+        '-'
+    "};
+    assert_eq!(yaml, serde_yaml::to_string(&ch).unwrap());
+}
+fn traits_command_prints_sat_traits() {
+  assert_eq!(
+    CommandBuilder::new("traits 0").run_and_deserialize_output::<Output>(),
+    Output {
+      number: 0,
+      decimal: "0.0".into(),
+      degree: "0°0′0″0‴".into(),
+      name: "nvtdijuwxlp".into(),
+      height: 0,
+      cycle: 0,
+      epoch: 0,
+      period: 0,
+      offset: 0,
+      rarity: Rarity::Mythic,
+    }
+  );
+}
+#[test
+fn test_dateformat() {
+    let mut env = minijinja::Environment::new();
+    env.add_global("TIMEZONE", "Europe/Vienna");
+    env.add_global("DATE_FORMAT", "[year]-[month]");
+    minijinja_contrib::add_to_environment(&mut env);
+
+    let expr = env
+        .compile_expression("1687624642.5|dateformat(format=format)")
+        .unwrap();
+
+    assert_eq!(
+        expr.eval(context!(format => "short")).unwrap().to_string(),
+        "2023-06-24"
+    );
+    assert_eq!(
+        expr.eval(context!(format => "medium")).unwrap().to_string(),
+        "Jun 24 2023"
+    );
+    assert_eq!(
+        expr.eval(context!(format => "long")).unwrap().to_string(),
+        "June 24 2023"
+    );
+    assert_eq!(
+        expr.eval(context!(format => "full")).unwrap().to_string(),
+        "Saturday, June 24 2023"
+    );
+
+    let expr = env
+        .compile_expression("1687624642|dateformat(tz='Europe/Moscow')")
+        .unwrap();
+    assert_eq!(expr.eval(()).unwrap().to_string(), "2023-06");
+}
+fn correctly_handle_zip_with_garbage_after_comment() {
+    let mut v = Vec::new();
+    v.extend_from_slice(include_bytes!("../tests/data/comment_garbage.zip"));
+    let archive = ZipArchive::new(io::Cursor::new(v)).expect("couldn't open test zip file");
+
+    assert_eq!(archive.comment(), "short.".as_bytes());
+}
+fn wallet_creates_correct_mainnet_taproot_descriptor() {
+  let rpc_server = test_bitcoincore_rpc::spawn();
+
+  CommandBuilder::new("wallet create")
+    .rpc_server(&rpc_server)
+    .run_and_deserialize_output::<Output>();
+
+  assert_eq!(rpc_server.descriptors().len(), 2);
+  assert_regex_match!(
+    &rpc_server.descriptors()[0],
+    r"tr\(\[[[:xdigit:]]{8}/86'/0'/0'\]xprv[[:alnum:]]*/0/\*\)#[[:alnum:]]{8}"
+  );
+  assert_regex_match!(
+    &rpc_server.descriptors()[1],
+    r"tr\(\[[[:xdigit:]]{8}/86'/0'/0'\]xprv[[:alnum:]]*/1/\*\)#[[:alnum:]]{8}"
+  );
+}
+fn second_block() {
+  assert_eq!(
+    CommandBuilder::new("subsidy 1").run_and_deserialize_output::<Output>(),
+    Output {
+      first: 5000000000,
+      subsidy: 5000000000,
+      name: "nvtcsezkbth".into(),
+    }
+  );
+}
+fn seed_phrases_are_twelve_words_long() {
+  let Output { mnemonic, .. } = CommandBuilder::new("wallet create")
+    .rpc_server(&test_bitcoincore_rpc::spawn())
+    .run_and_deserialize_output();
+
+  assert_eq!(mnemonic.word_count(), 12);
+}
+fn test_obj_downcast() {
+    #[derive(Debug)]
+    struct Thing {
+        id: usize,
+    }
+
+    impl fmt::Display for Thing {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            fmt::Debug::fmt(self, f)
+        }
+    }
+
+    impl Object for Thing {}
+
+    let x_value = Value::from_object(Thing { id: 42 });
+    let value_as_obj = x_value.as_object().unwrap();
+    assert!(value_as_obj.is::<Thing>());
+    let thing = value_as_obj.downcast_ref::<Thing>().unwrap();
+    assert_eq!(thing.id, 42);
+}
+fn aes256_encrypted_uncompressed_file() {
+    let mut v = Vec::new();
+    v.extend_from_slice(include_bytes!("data/aes_archive.zip"));
+    let mut archive = ZipArchive::new(io::Cursor::new(v)).expect("couldn't open test zip file");
+
+    let mut file = archive
+        .by_name_decrypt("secret_data_256_uncompressed", PASSWORD)
+        .expect("couldn't find file in archive")
+        .expect("invalid password");
+    assert_eq!("secret_data_256_uncompressed", file.name());
+
+    let mut content = String::new();
+    file.read_to_string(&mut content)
+        .expect("couldn't read encrypted file");
+    assert_eq!(SECRET_CONTENT, content);
+}
+fn congestion() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let (client_ch, _) = pair.connect();
+
+    const TARGET: u64 = 2048;
+    assert!(pair.client_conn_mut(client_ch).congestion_window() > TARGET);
+    let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    // Send data without receiving ACKs until the congestion state falls below target
+    while pair.client_conn_mut(client_ch).congestion_window() > TARGET {
+        let n = pair.client_send(client_ch, s).write(&[42; 1024]).unwrap();
+        assert_eq!(n, 1024);
+        pair.drive_client();
+    }
+    // Ensure that the congestion state recovers after receiving the ACKs
+    pair.drive();
+    assert!(pair.client_conn_mut(client_ch).congestion_window() >= TARGET);
+    pair.client_send(client_ch, s).write(&[42; 1024]).unwrap();
+}
+fn test_dateformat_chrono_rs() {
+    let mut env = minijinja::Environment::new();
+    env.add_global("TIMEZONE", "Europe/Vienna");
+    env.add_global("DATE_FORMAT", "[year]-[month]");
+    minijinja_contrib::add_to_environment(&mut env);
+
+    let expr = env
+        .compile_expression("d|dateformat(format=format)")
+        .unwrap();
+
+    let d = chrono::NaiveDate::from_num_days_from_ce_opt(739073);
+    assert_eq!(
+        expr.eval(context!(d, format => "short"))
+            .unwrap()
+            .to_string(),
+        "2024-07-06"
+    );
+
+    assert_eq!(
+        expr.eval(context!(d => "2024-07-06", format => "short"))
+            .unwrap()
+            .to_string(),
+        "2024-07-06"
+    );
+}
+fn aes128_encrypted_file() {
+    let mut v = Vec::new();
+    v.extend_from_slice(include_bytes!("data/aes_archive.zip"));
+    let mut archive = ZipArchive::new(io::Cursor::new(v)).expect("couldn't open test zip file");
+
+    let mut file = archive
+        .by_name_decrypt("secret_data_128", PASSWORD)
+        .expect("couldn't find file in archive")
+        .expect("invalid password");
+    assert_eq!("secret_data_128", file.name());
+
+    let mut content = String::new();
+    file.read_to_string(&mut content)
+        .expect("couldn't read encrypted file");
+    assert_eq!(SECRET_CONTENT, content);
+}
+fn test_datetimeformat_iso_negative() {
+    let mut env = minijinja::Environment::new();
+    env.add_global("TIMEZONE", "America/Chicago");
+    minijinja_contrib::add_to_environment(&mut env);
+
+    let expr = env
+        .compile_expression("1687624642.5|datetimeformat(format='iso')")
+        .unwrap();
+    assert_eq!(
+        expr.eval(()).unwrap().to_string(),
+        "2023-06-24T11:37:22-05:00"
+    )
+}
+fn receive() {
+  let rpc_server = test_bitcoincore_rpc::spawn();
+  create_wallet(&rpc_server);
+
+  let output = CommandBuilder::new("wallet receive")
+    .rpc_server(&rpc_server)
+    .run_and_deserialize_output::<Output>();
+
+  assert!(output.address.is_valid_for_network(Network::Bitcoin));
+}
+fn batch_in_separate_outputs_with_parent_and_non_default_postage() {
+  let rpc_server = test_bitcoincore_rpc::spawn();
+  rpc_server.mine_blocks(1);
+
+  assert_eq!(rpc_server.descriptors().len(), 0);
+
+  create_wallet(&rpc_server);
+
+  let parent_output = CommandBuilder::new("wallet inscribe --fee-rate 5.0 --file parent.png")
+    .write("parent.png", [1; 520])
+    .rpc_server(&rpc_server)
+    .run_and_deserialize_output::<Inscribe>();
+
+  rpc_server.mine_blocks(1);
+
+  assert_eq!(rpc_server.descriptors().len(), 3);
+
+  let parent_id = parent_output.inscriptions[0].id;
+
+  let output = CommandBuilder::new("wallet inscribe --fee-rate 1 --batch batch.yaml --postage 777sat")
+    .write("inscription.txt", "Hello World")
+    .write("tulip.png", [0; 555])
+    .write("meow.wav", [0; 2048])
+    .write(
+      "batch.yaml",
+      format!("parent: {parent_id}\nmode: separate-outputs\ninscriptions:\n- file: inscription.txt\n- file: tulip.png\n- file: meow.wav\n")
+    )
+    .rpc_server(&rpc_server)
+    .run_and_deserialize_output::<Inscribe>();
+
+  for inscription in &output.inscriptions {
+    assert_eq!(inscription.location.offset, 0);
+  }
+
+  let mut outpoints = output
+    .inscriptions
+    .iter()
+    .map(|inscription| inscription.location.outpoint)
+    .collect::<Vec<OutPoint>>();
+  outpoints.sort();
+  outpoints.dedup();
+  assert_eq!(outpoints.len(), output.inscriptions.len());
+
+  rpc_server.mine_blocks(1);
+
+  let ord_server = TestServer::spawn_with_args(&rpc_server, &[]);
+
+  let output_1 = output.inscriptions[0].location.outpoint;
+  let output_2 = output.inscriptions[1].location.outpoint;
+  let output_3 = output.inscriptions[2].location.outpoint;
+
+  ord_server.assert_response_regex(
+    format!("/inscription/{}", output.inscriptions[0].id),
+    format!(
+      r".*<dt>parent</dt>\s*<dd>.*{parent_id}.*</dd>.*<dt>output value</dt>.*<dd>777</dd>.*.*<dt>location</dt>.*<dd class=monospace>{}:0</dd>.*",
+      output_1
+    ),
+  );
+
+  ord_server.assert_response_regex(
+    format!("/inscription/{}", output.inscriptions[1].id),
+    format!(
+      r".*<dt>parent</dt>\s*<dd>.*{parent_id}.*</dd>.*<dt>output value</dt>.*<dd>777</dd>.*.*<dt>location</dt>.*<dd class=monospace>{}:0</dd>.*",
+      output_2
+    ),
+  );
+
+  ord_server.assert_response_regex(
+    format!("/inscription/{}", output.inscriptions[2].id),
+    format!(
+      r".*<dt>parent</dt>\s*<dd>.*{parent_id}.*</dd>.*<dt>output value</dt>.*<dd>777</dd>.*.*<dt>location</dt>.*<dd class=monospace>{}:0</dd>.*",
+      output_3
+    ),
+  );
+}

@@ -1,0 +1,666 @@
+fn memory_growth_failure() -> Result<()> {
+    let output = get_wasmtime_command()?
+        .args(&[
+            "run",
+            "-Wmemory64",
+            "-Wtrap-on-grow-failure",
+            "tests/all/cli_tests/memory-grow-failure.wat",
+        ])
+        .output()?;
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("forcing a memory growth failure to be a trap"),
+        "bad stderr: {stderr}"
+    );
+    Ok(())
+}
+fn stdin_success() {
+    assert_cmd_snapshot!(Command::new(get_cargo_bin(BIN_NAME))
+        .args(STDIN_BASE_OPTIONS)
+        .pass_stdin(""), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+
+    ----- stderr -----
+    "###);
+}
+fn fix_does_not_apply_display_only_fixes_with_unsafe_fixes_enabled() {
+    assert_cmd_snapshot!(
+        Command::new(get_cargo_bin(BIN_NAME))
+            .args([
+                "-",
+                "--output-format",
+                "text",
+                "--isolated",
+                "--no-cache",
+                "--select",
+                "B006",
+                "--fix",
+                "--unsafe-fixes",
+            ])
+            .pass_stdin("def add_to_list(item, some_list=[]): ..."),
+            @r###"
+    success: false
+    exit_code: 1
+    ----- stdout -----
+    def add_to_list(item, some_list=[]): ...
+    ----- stderr -----
+    -:1:33: B006 Do not use mutable data structures for argument defaults
+    Found 1 error.
+    "###);
+}
+fn trapping() -> Result<(), Error> {
+    const TRAP_IN_F: i32 = 0;
+    const TRAP_NEXT_CALL_HOST: i32 = 1;
+    const TRAP_NEXT_RETURN_HOST: i32 = 2;
+    const TRAP_NEXT_CALL_WASM: i32 = 3;
+    const TRAP_NEXT_RETURN_WASM: i32 = 4;
+
+    let engine = Engine::default();
+
+    let mut linker = Linker::new(&engine);
+
+    linker.func_wrap(
+        "host",
+        "f",
+        |mut caller: Caller<State>, action: i32, recur: i32| -> Result<()> {
+            assert_eq!(caller.data().context.last(), Some(&Context::Host));
+            assert_eq!(caller.data().calls_into_host, caller.data().calls_into_wasm);
+
+            match action {
+                TRAP_IN_F => bail!("trapping in f"),
+                TRAP_NEXT_CALL_HOST => caller.data_mut().trap_next_call_host = true,
+                TRAP_NEXT_RETURN_HOST => caller.data_mut().trap_next_return_host = true,
+                TRAP_NEXT_CALL_WASM => caller.data_mut().trap_next_call_wasm = true,
+                TRAP_NEXT_RETURN_WASM => caller.data_mut().trap_next_return_wasm = true,
+                _ => {} // Do nothing
+            }
+
+            // recur so that we can trigger a next call.
+            // propogate its trap, if it traps!
+            if recur > 0 {
+                let _ = caller
+                    .get_export("export")
+                    .expect("caller exports \"export\"")
+                    .into_func()
+                    .expect("export is a func")
+                    .typed::<(i32, i32), ()>(&caller)
+                    .expect("export typing")
+                    .call(&mut caller, (action, 0))?;
+            }
+
+            Ok(())
+        },
+    )?;
+
+    let wat = r#"
+        (module
+            (import "host" "f"
+                (func $f (param i32) (param i32)))
+            (func (export "export") (param i32) (param i32)
+                (call $f (local.get 0) (local.get 1)))
+        )
+    "#;
+    let module = Module::new(&engine, wat)?;
+
+    let run = |action: i32, recur: bool| -> (State, Option<Error>) {
+        let mut store = Store::new(&engine, State::default());
+        store.call_hook(State::call_hook);
+        let inst = linker
+            .instantiate(&mut store, &module)
+            .expect("instantiate");
+        let export = inst
+            .get_export(&mut store, "export")
+            .expect("get export")
+            .into_func()
+            .expect("export is func");
+
+        let r = export.call(
+            &mut store,
+            &[Val::I32(action), Val::I32(if recur { 1 } else { 0 })],
+            &mut [],
+        );
+        (store.into_data(), r.err())
+    };
+
+    let (s, e) = run(TRAP_IN_F, false);
+    assert!(format!("{:?}", e.unwrap()).contains("trapping in f"));
+    assert_eq!(s.calls_into_host, 1);
+    assert_eq!(s.returns_from_host, 1);
+    assert_eq!(s.calls_into_wasm, 1);
+    assert_eq!(s.returns_from_wasm, 1);
+
+    // trap in next call to host. No calls after the bit is set, so this trap shouldn't happen
+    let (s, e) = run(TRAP_NEXT_CALL_HOST, false);
+    assert!(e.is_none());
+    assert_eq!(s.calls_into_host, 1);
+    assert_eq!(s.returns_from_host, 1);
+    assert_eq!(s.calls_into_wasm, 1);
+    assert_eq!(s.returns_from_wasm, 1);
+
+    // trap in next call to host. recur, so the second call into host traps:
+    let (s, e) = run(TRAP_NEXT_CALL_HOST, true);
+    assert!(format!("{:?}", e.unwrap()).contains("call_hook: trapping on CallingHost"));
+    assert_eq!(s.calls_into_host, 2);
+    assert_eq!(s.returns_from_host, 1);
+    assert_eq!(s.calls_into_wasm, 2);
+    assert_eq!(s.returns_from_wasm, 2);
+
+    // trap in the return from host. should trap right away, without recursion
+    let (s, e) = run(TRAP_NEXT_RETURN_HOST, false);
+    assert!(format!("{:?}", e.unwrap()).contains("call_hook: trapping on ReturningFromHost"));
+    assert_eq!(s.calls_into_host, 1);
+    assert_eq!(s.returns_from_host, 1);
+    assert_eq!(s.calls_into_wasm, 1);
+    assert_eq!(s.returns_from_wasm, 1);
+
+    // trap in next call to wasm. No calls after the bit is set, so this trap shouldnt happen:
+    let (s, e) = run(TRAP_NEXT_CALL_WASM, false);
+    assert!(e.is_none());
+    assert_eq!(s.calls_into_host, 1);
+    assert_eq!(s.returns_from_host, 1);
+    assert_eq!(s.calls_into_wasm, 1);
+    assert_eq!(s.returns_from_wasm, 1);
+
+    // trap in next call to wasm. recur, so the second call into wasm traps:
+    let (s, e) = run(TRAP_NEXT_CALL_WASM, true);
+    assert!(format!("{:?}", e.unwrap()).contains("call_hook: trapping on CallingWasm"));
+    assert_eq!(s.calls_into_host, 1);
+    assert_eq!(s.returns_from_host, 1);
+    assert_eq!(s.calls_into_wasm, 2);
+    assert_eq!(s.returns_from_wasm, 1);
+
+    // trap in the return from wasm. should trap right away, without recursion
+    let (s, e) = run(TRAP_NEXT_RETURN_WASM, false);
+    assert!(format!("{:?}", e.unwrap()).contains("call_hook: trapping on ReturningFromWasm"));
+    assert_eq!(s.calls_into_host, 1);
+    assert_eq!(s.returns_from_host, 1);
+    assert_eq!(s.calls_into_wasm, 1);
+    assert_eq!(s.returns_from_wasm, 1);
+
+    Ok(())
+}
+fn stdin_fix_jupyter() {
+    let args = ["--fix", "--stdin-filename", "Jupyter.ipynb"];
+    assert_cmd_snapshot!(Command::new(get_cargo_bin(BIN_NAME))
+        .args(STDIN_BASE_OPTIONS)
+        .args(args)
+        .pass_stdin(r#"{
+ "cells": [
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "id": "dccc687c-96e2-4604-b957-a8a89b5bec06",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import os"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "19e1b029-f516-4662-a9b9-623b93edac1a",
+   "metadata": {},
+   "source": [
+    "Foo"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 2,
+   "id": "cdce7b92-b0fb-4c02-86f6-e233b26fa84f",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import sys"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 3,
+   "id": "e40b33d2-7fe4-46c5-bdf0-8802f3052565",
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "1\n"
+     ]
+    }
+   ],
+   "source": [
+    "print(1)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "a1899bc8-d46f-4ec0-b1d1-e1ca0f04bf60",
+   "metadata": {},
+   "outputs": [],
+   "source": []
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3 (ipykernel)",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.11.2"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}"#), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    {
+     "cells": [
+      {
+       "cell_type": "code",
+       "execution_count": 1,
+       "id": "dccc687c-96e2-4604-b957-a8a89b5bec06",
+       "metadata": {},
+       "outputs": [],
+       "source": []
+      },
+      {
+       "cell_type": "markdown",
+       "id": "19e1b029-f516-4662-a9b9-623b93edac1a",
+       "metadata": {},
+       "source": [
+        "Foo"
+       ]
+      },
+      {
+       "cell_type": "code",
+       "execution_count": 2,
+       "id": "cdce7b92-b0fb-4c02-86f6-e233b26fa84f",
+       "metadata": {},
+       "outputs": [],
+       "source": []
+      },
+      {
+       "cell_type": "code",
+       "execution_count": 3,
+       "id": "e40b33d2-7fe4-46c5-bdf0-8802f3052565",
+       "metadata": {},
+       "outputs": [
+        {
+         "name": "stdout",
+         "output_type": "stream",
+         "text": [
+          "1\n"
+         ]
+        }
+       ],
+       "source": [
+        "print(1)"
+       ]
+      },
+      {
+       "cell_type": "code",
+       "execution_count": null,
+       "id": "a1899bc8-d46f-4ec0-b1d1-e1ca0f04bf60",
+       "metadata": {},
+       "outputs": [],
+       "source": []
+      }
+     ],
+     "metadata": {
+      "kernelspec": {
+       "display_name": "Python 3 (ipykernel)",
+       "language": "python",
+       "name": "python3"
+      },
+      "language_info": {
+       "codemirror_mode": {
+        "name": "ipython",
+        "version": 3
+       },
+       "file_extension": ".py",
+       "mimetype": "text/x-python",
+       "name": "python",
+       "nbconvert_exporter": "python",
+       "pygments_lexer": "ipython3",
+       "version": "3.11.2"
+      }
+     },
+     "nbformat": 4,
+     "nbformat_minor": 5
+    }
+    ----- stderr -----
+    Found 2 errors (2 fixed, 0 remaining).
+    "###);
+}
+fn valid_linter_options() -> Result<()> {
+    let tempdir = TempDir::new()?;
+    let ruff_toml = tempdir.path().join("ruff.toml");
+    fs::write(
+        &ruff_toml,
+        r#"
+[lint]
+select = ["ALL"]
+ignore = ["D203", "D212", "COM812", "ISC001"]
+
+[lint.isort]
+lines-after-imports = 2
+lines-between-types = 1
+force-wrap-aliases = true
+combine-as-imports = true
+split-on-trailing-comma = true
+
+[lint.flake8-quotes]
+inline-quotes = "single"
+docstring-quotes = "double"
+multiline-quotes = "double"
+
+[format]
+skip-magic-trailing-comma = false
+quote-style = "single"
+"#,
+    )?;
+
+    let test_path = tempdir.path().join("test.py");
+    fs::write(
+        &test_path,
+        r#"
+def say_hy(name: str):
+        print(f"Hy {name}")"#,
+    )?;
+
+    assert_cmd_snapshot!(Command::new(get_cargo_bin(BIN_NAME))
+        .args(["format", "--no-cache", "--config"])
+        .arg(&ruff_toml)
+        .arg(test_path), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    1 file reformatted
+
+    ----- stderr -----
+    "###);
+    Ok(())
+}
+fn stdin_fix_py() {
+    let args = ["--fix"];
+    assert_cmd_snapshot!(Command::new(get_cargo_bin(BIN_NAME))
+        .args(STDIN_BASE_OPTIONS)
+        .args(args)
+        .pass_stdin("import os\nimport sys\n\nprint(sys.version)\n"), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    import sys
+
+    print(sys.version)
+
+    ----- stderr -----
+    Found 1 error (1 fixed, 0 remaining).
+    "###);
+}
+fn test_match_directive() {
+    assert_eq!(match_directive("; foo: bar  ", "foo:"), Some("bar"));
+    assert_eq!(match_directive(" foo:bar", "foo:"), Some("bar"));
+    assert_eq!(match_directive("foo:bar", "foo:"), Some("bar"));
+    assert_eq!(match_directive(";x foo: bar", "foo:"), None);
+    assert_eq!(match_directive(";;; foo: bar", "foo:"), Some("bar"));
+}
+async fn call_linked_func_async() -> Result<(), Error> {
+    let mut config = Config::new();
+    config.async_support(true);
+    let engine = Engine::new(&config)?;
+    let mut store = Store::new(&engine, State::default());
+    store.call_hook(State::call_hook);
+
+    let f = Func::wrap4_async(
+        &mut store,
+        |caller: Caller<State>, a: i32, b: i64, c: f32, d: f64| {
+            Box::new(async move {
+                // Calling this func will switch context into wasm, then back to host:
+                assert_eq!(caller.data().context, vec![Context::Wasm, Context::Host]);
+
+                assert_eq!(
+                    caller.data().calls_into_host,
+                    caller.data().returns_from_host + 1
+                );
+                assert_eq!(
+                    caller.data().calls_into_wasm,
+                    caller.data().returns_from_wasm + 1
+                );
+                assert_eq!(a, 1);
+                assert_eq!(b, 2);
+                assert_eq!(c, 3.0);
+                assert_eq!(d, 4.0);
+            })
+        },
+    );
+
+    let mut linker = Linker::new(&engine);
+
+    linker.define(&mut store, "host", "f", f)?;
+
+    let wat = r#"
+        (module
+            (import "host" "f"
+                (func $f (param i32) (param i64) (param f32) (param f64)))
+            (func (export "export")
+                (call $f (i32.const 1) (i64.const 2) (f32.const 3.0) (f64.const 4.0)))
+        )
+    "#;
+    let module = Module::new(&engine, wat)?;
+
+    let inst = linker.instantiate_async(&mut store, &module).await?;
+    let export = inst
+        .get_export(&mut store, "export")
+        .expect("get export")
+        .into_func()
+        .expect("export is func");
+
+    export.call_async(&mut store, &[], &mut []).await?;
+
+    // One switch from vm to host to call f, another in return from f.
+    assert_eq!(store.data().calls_into_host, 1);
+    assert_eq!(store.data().returns_from_host, 1);
+    assert_eq!(store.data().calls_into_wasm, 1);
+    assert_eq!(store.data().returns_from_wasm, 1);
+
+    export
+        .typed::<(), ()>(&store)?
+        .call_async(&mut store, ())
+        .await?;
+
+    assert_eq!(store.data().calls_into_host, 2);
+    assert_eq!(store.data().returns_from_host, 2);
+    assert_eq!(store.data().calls_into_wasm, 2);
+    assert_eq!(store.data().returns_from_wasm, 2);
+
+    Ok(())
+}
+fn timeout_in_invoke() -> Result<()> {
+    let wasm = build_wasm("tests/all/cli_tests/iloop-invoke.wat")?;
+    let output = run_wasmtime_for_output(
+        &[
+            "run",
+            "-Wtimeout=1ms",
+            "-Ccache=n",
+            wasm.path().to_str().unwrap(),
+        ],
+        None,
+    )?;
+    assert!(!output.status.success());
+    assert_eq!(output.stdout, b"");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("wasm trap: interrupt"),
+        "bad stderr: {}",
+        stderr
+    );
+    Ok(())
+}
+fn fix_only_flag_applies_safe_fixes_by_default() {
+    assert_cmd_snapshot!(
+        Command::new(get_cargo_bin(BIN_NAME))
+            .args([
+                "-",
+                "--output-format",
+                "text",
+                "--isolated",
+                "--no-cache",
+                "--select",
+                "F601,UP034",
+                "--fix-only",
+            ])
+            .pass_stdin("x = {'a': 1, 'a': 1}\nprint(('foo'))\n"),
+            @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    x = {'a': 1, 'a': 1}
+    print('foo')
+
+    ----- stderr -----
+    Fixed 1 error (1 additional fix available with `--unsafe-fixes`).
+    "###);
+}
+fn recursion() -> Result<(), Error> {
+    // Make sure call hook behaves reasonably when called recursively
+
+    let engine = Engine::default();
+    let mut store = Store::new(&engine, State::default());
+    store.call_hook(State::call_hook);
+    let mut linker = Linker::new(&engine);
+
+    linker.func_wrap("host", "f", |mut caller: Caller<State>, n: i32| {
+        assert_eq!(caller.data().context.last(), Some(&Context::Host));
+
+        assert_eq!(caller.data().calls_into_host, caller.data().calls_into_wasm);
+
+        // Recurse
+        if n > 0 {
+            caller
+                .get_export("export")
+                .expect("caller exports \"export\"")
+                .into_func()
+                .expect("export is a func")
+                .typed::<i32, ()>(&caller)
+                .expect("export typing")
+                .call(&mut caller, n - 1)
+                .unwrap()
+        }
+    })?;
+
+    let wat = r#"
+        (module
+            (import "host" "f"
+                (func $f (param i32)))
+            (func (export "export") (param i32)
+                (call $f (local.get 0)))
+        )
+    "#;
+    let module = Module::new(&engine, wat)?;
+
+    let inst = linker.instantiate(&mut store, &module)?;
+    let export = inst
+        .get_export(&mut store, "export")
+        .expect("get export")
+        .into_func()
+        .expect("export is func");
+
+    // Recursion depth:
+    let n: usize = 10;
+
+    export.call(&mut store, &[Val::I32(n as i32)], &mut [])?;
+
+    // Recurse down to 0: n+1 calls
+    assert_eq!(store.data().calls_into_host, n + 1);
+    assert_eq!(store.data().returns_from_host, n + 1);
+    assert_eq!(store.data().calls_into_wasm, n + 1);
+    assert_eq!(store.data().returns_from_wasm, n + 1);
+
+    export
+        .typed::<i32, ()>(&store)?
+        .call(&mut store, n as i32)?;
+
+    assert_eq!(store.data().calls_into_host, 2 * (n + 1));
+    assert_eq!(store.data().returns_from_host, 2 * (n + 1));
+    assert_eq!(store.data().calls_into_wasm, 2 * (n + 1));
+    assert_eq!(store.data().returns_from_wasm, 2 * (n + 1));
+
+    Ok(())
+}
+fn fix_applies_safe_fixes_by_default() {
+    assert_cmd_snapshot!(
+        Command::new(get_cargo_bin(BIN_NAME))
+            .args([
+                "-",
+                "--output-format",
+                "text",
+                "--isolated",
+                "--no-cache",
+                "--select",
+                "F601,UP034",
+                "--fix",
+            ])
+            .pass_stdin("x = {'a': 1, 'a': 1}\nprint(('foo'))\n"),
+            @r###"
+    success: false
+    exit_code: 1
+    ----- stdout -----
+    x = {'a': 1, 'a': 1}
+    print('foo')
+
+    ----- stderr -----
+    -:1:14: F601 Dictionary key literal `'a'` repeated
+    Found 2 errors (1 fixed, 1 remaining).
+    No fixes available (1 hidden fix can be enabled with the `--unsafe-fixes` option).
+    "###);
+}
+fn preview_enabled_group_ignore() {
+    // `--select E --ignore PREVIEW` should detect E741 and E225, which is in preview but "E" is more specific.
+    let args = ["--select", "E", "--ignore", "PREVIEW", "--preview"];
+    assert_cmd_snapshot!(Command::new(get_cargo_bin(BIN_NAME))
+        .args(STDIN_BASE_OPTIONS)
+        .args(args)
+        .pass_stdin("I=42\n"), @r###"
+    success: false
+    exit_code: 2
+    ----- stdout -----
+
+    ----- stderr -----
+    error: invalid value 'PREVIEW' for '--ignore <RULE_CODE>'
+
+    For more information, try '--help'.
+    "###);
+}
+fn preview_disabled_does_not_warn_for_empty_ignore_selections() {
+    // Does not warn that the selection is empty since the user is not trying to enable the rule
+    let args = ["--ignore", "CPY"];
+    assert_cmd_snapshot!(Command::new(get_cargo_bin(BIN_NAME))
+        .args(STDIN_BASE_OPTIONS)
+        .args(args)
+        .pass_stdin("I=42\n"), @r###"
+    success: false
+    exit_code: 1
+    ----- stdout -----
+    -:1:1: E741 Ambiguous variable name: `I`
+    Found 1 error.
+
+    ----- stderr -----
+    "###);
+}

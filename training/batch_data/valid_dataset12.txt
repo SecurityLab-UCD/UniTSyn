@@ -1,0 +1,446 @@
+fn drain_filter() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(U64_TABLE).unwrap();
+        for i in 0..10 {
+            table.insert(&i, &i).unwrap();
+        }
+        // Test draining uncommitted data
+        drop(table.drain_filter(0..10, |k, _| k < 5).unwrap());
+        for i in 0..5 {
+            table.insert(&i, &i).unwrap();
+        }
+        assert_eq!(table.len().unwrap(), 10);
+
+        // Test matching on the value
+        drop(table.drain_filter(0..10, |_, v| v < 5).unwrap());
+        for i in 0..5 {
+            table.insert(&i, &i).unwrap();
+        }
+        assert_eq!(table.len().unwrap(), 10);
+    }
+    write_txn.commit().unwrap();
+
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(U64_TABLE).unwrap();
+        assert_eq!(table.len().unwrap(), 10);
+        for (i, item) in table.drain_filter(0.., |x, _| x < 5).unwrap().enumerate() {
+            let (k, v) = item.unwrap();
+            assert_eq!(i as u64, k.value());
+            assert_eq!(i as u64, v.value());
+        }
+        assert_eq!(table.len().unwrap(), 5);
+        let mut i = 5u64;
+        for item in table.range(0..10).unwrap() {
+            let (k, v) = item.unwrap();
+            assert_eq!(i, k.value());
+            assert_eq!(i, v.value());
+            i += 1;
+        }
+    }
+    write_txn.abort().unwrap();
+
+    // Check that dropping the iter early works too
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(U64_TABLE).unwrap();
+        assert_eq!(table.len().unwrap(), 10);
+        drop(table.drain_filter(0.., |x, _| x < 5).unwrap());
+        assert_eq!(table.len().unwrap(), 5);
+    }
+    write_txn.abort().unwrap();
+}
+fn ref_get_signatures() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(SLICE_TABLE).unwrap();
+        for i in 0..10u8 {
+            table.insert([i].as_slice(), [i + 1].as_slice()).unwrap();
+        }
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(SLICE_TABLE).unwrap();
+
+    let zero = vec![0u8];
+    assert_eq!(&[1], table.get([0].as_slice()).unwrap().unwrap().value());
+    assert_eq!(&[1], table.get(b"\0".as_slice()).unwrap().unwrap().value());
+    assert_eq!(&[1], table.get(zero.as_slice()).unwrap().unwrap().value());
+
+    let start = vec![0u8];
+    let end = vec![10u8];
+    let mut iter = table.range::<&[u8]>(..).unwrap();
+    for i in 0..10 {
+        assert_eq!(iter.next().unwrap().unwrap().1.value(), &[i + 1]);
+    }
+    assert!(iter.next().is_none());
+
+    let mut iter = table.range(start.as_slice()..&end).unwrap();
+    for i in 0..10 {
+        assert_eq!(iter.next().unwrap().unwrap().1.value(), &[i + 1]);
+    }
+    assert!(iter.next().is_none());
+    drop(iter);
+
+    let mut iter = table.range(start.as_slice()..end.as_slice()).unwrap();
+    for i in 0..10 {
+        assert_eq!(iter.next().unwrap().unwrap().1.value(), &[i + 1]);
+    }
+    assert!(iter.next().is_none());
+
+    let mut iter = table.range([0u8].as_slice()..[10u8].as_slice()).unwrap();
+    for i in 0..10u8 {
+        assert_eq!(iter.next().unwrap().unwrap().1.value(), [i + 1].as_slice());
+    }
+    assert!(iter.next().is_none());
+}
+fn len() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_multimap_table(STR_TABLE).unwrap();
+        table.insert("hello", "world").unwrap();
+        table.insert("hello", "world2").unwrap();
+        table.insert("hi", "world").unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_multimap_table(STR_TABLE).unwrap();
+    assert_eq!(table.len().unwrap(), 3);
+}
+async fn request_with_connection_headers() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    // can't assert full handshake, since client never sends a request, and
+    // thus never bothers to ack the settings...
+    let srv = async move {
+        srv.read_preface().await.unwrap();
+        srv.recv_frame(frames::settings()).await;
+        // goaway is required to make sure the connection closes because
+        // of no active streams
+        srv.recv_frame(frames::go_away(0)).await;
+    };
+
+    let headers = vec![
+        ("connection", "foo"),
+        ("keep-alive", "5"),
+        ("proxy-connection", "bar"),
+        ("transfer-encoding", "chunked"),
+        ("upgrade", "HTTP/2"),
+        ("te", "boom"),
+    ];
+
+    let client = async move {
+        let (mut client, conn) = client::handshake(io).await.expect("handshake");
+
+        for (name, val) in headers {
+            let req = Request::builder()
+                .uri("https://http2.akamai.com/")
+                .header(name, val)
+                .body(())
+                .unwrap();
+            let err = client.send_request(req, true).expect_err(name);
+            assert_eq!(err.to_string(), "user error: malformed headers");
+        }
+        drop(client);
+        conn.await.unwrap();
+    };
+
+    join(srv, client).await;
+}
+fn array_type() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+
+    let definition: TableDefinition<&[u8; 5], &[u8; 9]> = TableDefinition::new("x");
+
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(definition).unwrap();
+        table.insert(b"hello", b"world_123").unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(definition).unwrap();
+    let hello = b"hello";
+    assert_eq!(b"world_123", table.get(hello).unwrap().unwrap().value());
+
+    let mut iter: Range<&[u8; 5], &[u8; 9]> = table.range::<&[u8; 5]>(..).unwrap();
+    assert_eq!(iter.next().unwrap().unwrap().1.value(), b"world_123");
+    assert!(iter.next().is_none());
+}
+fn test_snap_with_invalid_parameter() {
+    let cluster = Cluster::default();
+    let router = &cluster.routers[0];
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let region_id = 2;
+    let mut req = router.new_request_for(region_id);
+    let mut request_inner = Request::default();
+    request_inner.set_cmd_type(CmdType::Snap);
+    req.mut_requests().push(request_inner);
+
+    // store_id is incorrect;
+    let mut invalid_req = req.clone();
+    invalid_req.mut_header().set_peer(new_peer(2, 3));
+    let res = router.query(region_id, invalid_req).unwrap();
+    let error_resp = res.response().unwrap();
+    assert!(error_resp.get_header().has_error());
+
+    // run again, with incorrect peer_id
+    let mut invalid_req = req.clone();
+    invalid_req.mut_header().set_peer(new_peer(1, 4));
+    let res = router.query(region_id, invalid_req).unwrap();
+    let error_resp = res.response().unwrap();
+    assert!(error_resp.get_header().has_error());
+
+    // run with stale term
+    let mut invalid_req = req.clone();
+    invalid_req.mut_header().set_term(1);
+    let res = router.query(region_id, invalid_req).unwrap();
+    let error_resp = res.response().unwrap();
+    assert!(error_resp.get_header().has_error());
+
+    // run with stale read
+    let mut invalid_req = req.clone();
+    invalid_req
+        .mut_header()
+        .set_flags(WriteBatchFlags::STALE_READ.bits());
+    let res = router.query(region_id, invalid_req).unwrap();
+    let error_resp = res.response().unwrap();
+    assert!(error_resp.get_header().has_error());
+
+    // run again with invalid region_epoch
+    let mut invalid_req = req.clone();
+    let invalid_ver = req.get_header().get_region_epoch().get_version() + 1;
+    invalid_req
+        .mut_header()
+        .mut_region_epoch()
+        .set_version(invalid_ver);
+    let res = router.query(region_id, invalid_req).unwrap();
+    let error_resp = res.response().unwrap();
+    assert!(error_resp.get_header().has_error());
+}
+fn i128_type() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+    let write_txn = db.begin_write().unwrap();
+
+    let definition: TableDefinition<i128, i128> = TableDefinition::new("x");
+
+    {
+        let mut table = write_txn.open_table(definition).unwrap();
+        for i in -10..=10 {
+            table.insert(&i, &(i - 1)).unwrap();
+        }
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(definition).unwrap();
+    assert_eq!(-2, table.get(&-1).unwrap().unwrap().value());
+    let mut iter: Range<i128, i128> = table.range::<i128>(..).unwrap();
+    for i in -11..10 {
+        assert_eq!(iter.next().unwrap().unwrap().1.value(), i);
+    }
+    assert!(iter.next().is_none());
+}
+fn test_something() {
+    let data = [];
+    let engine = utils::random_engine(data);
+    let encoded = engine.encode(data);
+    let decoded = engine.decode(&encoded).unwrap();
+    assert_eq!(data, decoded.as_slice());
+}
+fn insert() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_multimap_table(STR_TABLE).unwrap();
+        assert!(!table.insert("hello", "world").unwrap());
+        assert!(!table.insert("hello", "world2").unwrap());
+        assert!(table.insert("hello", "world2").unwrap());
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_multimap_table(STR_TABLE).unwrap();
+    assert_eq!(
+        vec!["world".to_string(), "world2".to_string()],
+        get_vec(&table, "hello")
+    );
+    assert_eq!(table.len().unwrap(), 2);
+}
+fn drain_next_back() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(U64_TABLE).unwrap();
+        for i in 0..10 {
+            table.insert(&i, &i).unwrap();
+        }
+    }
+    write_txn.commit().unwrap();
+
+    let write_txn = db.begin_write().unwrap();
+    let mut table = write_txn.open_table(U64_TABLE).unwrap();
+    let mut iter = table.drain(0..10).unwrap();
+    for i in (0..10).rev() {
+        let (k, v) = iter.next_back().unwrap().unwrap();
+        assert_eq!(i, k.value());
+        assert_eq!(i, v.value());
+    }
+}
+fn test_refresh_bucket() {
+    let mut cluster = Cluster::default();
+    let store_id = cluster.node(0).id();
+    let raft_engine = cluster.node(0).running_state().unwrap().raft_engine.clone();
+    let router = &mut cluster.routers[0];
+
+    let region_2 = 2;
+    let region = router.region_detail(region_2);
+    let peer = region.get_peers()[0].clone();
+    router.wait_applied_to_current_term(region_2, Duration::from_secs(3));
+
+    // Region 2 ["", ""]
+    //   -> Region 2    ["", "k22"]
+    //      Region 1000 ["k22", ""] peer(1, 10)
+    let region_state = raft_engine
+        .get_region_state(region_2, u64::MAX)
+        .unwrap()
+        .unwrap();
+    assert_eq!(region_state.get_tablet_index(), RAFT_INIT_LOG_INDEX);
+
+    // to simulate the delay of set_apply_scheduler
+    fail::cfg("delay_set_apply_scheduler", "sleep(1000)").unwrap();
+    split_region_and_refresh_bucket(
+        router,
+        region,
+        peer,
+        1000,
+        new_peer(store_id, 10),
+        b"k22",
+        false,
+    );
+
+    for _i in 1..100 {
+        std::thread::sleep(Duration::from_millis(50));
+        let meta = router
+            .must_query_debug_info(1000, Duration::from_secs(1))
+            .unwrap();
+        if !meta.bucket_keys.is_empty() {
+            assert_eq!(meta.bucket_keys.len(), 4); // include region start/end keys
+            assert_eq!(meta.bucket_keys[1], b"1".to_vec());
+            assert_eq!(meta.bucket_keys[2], b"2".to_vec());
+            return;
+        }
+    }
+    panic!("timeout for updating buckets"); // timeout
+}
+async fn read_preface_in_multiple_frames() {
+    h2_support::trace_init!();
+
+    let mock = mock_io::Builder::new()
+        .read(b"PRI * HTTP/2.0")
+        .read(b"\r\n\r\nSM\r\n\r\n")
+        .write(SETTINGS)
+        .read(SETTINGS)
+        .write(SETTINGS_ACK)
+        .read(SETTINGS_ACK)
+        .build();
+
+    let mut h2 = server::handshake(mock).await.unwrap();
+
+    assert!(h2.next().await.is_none());
+}
+fn test_transfer_leader() {
+    let mut cluster = Cluster::with_node_count(3, None);
+    let region_id = 2;
+    let router0 = &cluster.routers[0];
+
+    let mut req = router0.new_request_for(region_id);
+    let admin_req = req.mut_admin_request();
+    admin_req.set_cmd_type(AdminCmdType::ChangePeer);
+    admin_req
+        .mut_change_peer()
+        .set_change_type(ConfChangeType::AddNode);
+    let store_id = cluster.node(1).id();
+    let peer1 = new_peer(store_id, 10);
+    admin_req.mut_change_peer().set_peer(peer1.clone());
+    let req_clone = req.clone();
+    let resp = router0.admin_command(region_id, req_clone).unwrap();
+    assert!(!resp.get_header().has_error(), "{:?}", resp);
+    let epoch = req.get_header().get_region_epoch();
+    let new_conf_ver = epoch.get_conf_ver() + 1;
+    let leader_peer = req.get_header().get_peer().clone();
+    let meta = router0
+        .must_query_debug_info(region_id, Duration::from_secs(3))
+        .unwrap();
+    assert_eq!(meta.region_state.epoch.version, epoch.get_version());
+    assert_eq!(meta.region_state.epoch.conf_ver, new_conf_ver);
+    assert_eq!(meta.region_state.peers, vec![leader_peer, peer1.clone()]);
+    let peer0_id = meta.raft_status.id;
+
+    // So heartbeat will create a learner.
+    cluster.dispatch(region_id, vec![]);
+    let router1 = &cluster.routers[1];
+    let meta = router1
+        .must_query_debug_info(region_id, Duration::from_secs(3))
+        .unwrap();
+    assert_eq!(peer0_id, meta.raft_status.soft_state.leader_id);
+    assert_eq!(meta.raft_status.id, peer1.id, "{:?}", meta);
+    assert_eq!(meta.region_state.epoch.version, epoch.get_version());
+    assert_eq!(meta.region_state.epoch.conf_ver, new_conf_ver);
+    cluster.dispatch(region_id, vec![]);
+
+    // Ensure follower has latest entries before transfer leader.
+    put_data(region_id, &mut cluster, 0, 1, b"key1");
+
+    // Perform transfer leader
+    must_transfer_leader(&cluster, region_id, 0, 1, peer1);
+
+    // Before transfer back to peer0, put some data again.
+    put_data(region_id, &mut cluster, 1, 0, b"key2");
+
+    // Perform transfer leader
+    let store_id = cluster.node(0).id();
+    must_transfer_leader(&cluster, region_id, 1, 0, new_peer(store_id, peer0_id));
+}
+fn tuple2_type() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+
+    let table_def: TableDefinition<(&str, u8), (u16, u32)> = TableDefinition::new("table");
+
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(table_def).unwrap();
+        table.insert(&("hello", 5), &(0, 123)).unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(table_def).unwrap();
+    assert_eq!(table.get(&("hello", 5)).unwrap().unwrap().value(), (0, 123));
+}
+fn absolute_path() {
+    let f = super::fixture();
+    let resolver = Resolver::new(ResolveOptions {
+        alias: vec![(f.join("foo").to_str().unwrap().to_string(), vec![AliasValue::Ignore])],
+        modules: vec![f.clone().to_str().unwrap().to_string()],
+        ..ResolveOptions::default()
+    });
+    let resolution = resolver.resolve(&f, "foo/index");
+    assert_eq!(resolution, Err(ResolveError::Ignored(f.join("foo"))));
+}

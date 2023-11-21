@@ -1,0 +1,1480 @@
+fn lit() {
+    let stream = "/// doc".parse::<TokenStream>().unwrap();
+    let lit = lit_of_outer_doc_comment(&stream);
+    assert_eq!(lit.to_string(), "\" doc\"");
+
+    let stream = "//! doc".parse::<TokenStream>().unwrap();
+    let lit = lit_of_inner_doc_comment(&stream);
+    assert_eq!(lit.to_string(), "\" doc\"");
+
+    let stream = "/** doc */".parse::<TokenStream>().unwrap();
+    let lit = lit_of_outer_doc_comment(&stream);
+    assert_eq!(lit.to_string(), "\" doc \"");
+
+    let stream = "/*! doc */".parse::<TokenStream>().unwrap();
+    let lit = lit_of_inner_doc_comment(&stream);
+    assert_eq!(lit.to_string(), "\" doc \"");
+}
+fn test_total_label_in_correct_column() {
+    let output = new_ucmd!()
+        .args(&["--output=source", "--total", "."])
+        .succeeds()
+        .stdout_move_str();
+    let last_line = output.lines().last().unwrap();
+    assert_eq!(last_line.trim(), "total");
+
+    let output = new_ucmd!()
+        .args(&["--output=target", "--total", "."])
+        .succeeds()
+        .stdout_move_str();
+    let last_line = output.lines().last().unwrap();
+    assert_eq!(last_line.trim(), "total");
+
+    let output = new_ucmd!()
+        .args(&["--output=source,target", "--total", "."])
+        .succeeds()
+        .stdout_move_str();
+    let last_line = output.lines().last().unwrap();
+    assert_eq!(
+        last_line.split_whitespace().collect::<Vec<&str>>(),
+        vec!["total", "-"]
+    );
+
+    let output = new_ucmd!()
+        .args(&["--output=target,source", "--total", "."])
+        .succeeds()
+        .stdout_move_str();
+    let last_line = output.lines().last().unwrap();
+    assert_eq!(
+        last_line.split_whitespace().collect::<Vec<&str>>(),
+        vec!["-", "total"]
+    );
+}
+fn compute_float_f32_rounding() {
+    // These test near-halfway cases for single-precision floats.
+    assert_eq!(compute_float32(0, 16777216), (151, 0));
+    assert_eq!(compute_float32(0, 16777217), (151, 0));
+    assert_eq!(compute_float32(0, 16777218), (151, 1));
+    assert_eq!(compute_float32(0, 16777219), (151, 2));
+    assert_eq!(compute_float32(0, 16777220), (151, 2));
+
+    // These are examples of the above tests, with
+    // digits from the exponent shifted to the mantissa.
+    assert_eq!(compute_float32(-10, 167772160000000000), (151, 0));
+    assert_eq!(compute_float32(-10, 167772170000000000), (151, 0));
+    assert_eq!(compute_float32(-10, 167772180000000000), (151, 1));
+    // Let's check the lines to see if anything is different in table...
+    assert_eq!(compute_float32(-10, 167772190000000000), (151, 2));
+    assert_eq!(compute_float32(-10, 167772200000000000), (151, 2));
+}
+fn valid_context_directory_recursive() {
+    let (dir, mut cmd) = at_and_ucmd!();
+    dir.mkdir("a");
+    dir.symlink_dir("a", "la");
+
+    let b_path = Path::new("a").join("b.txt");
+    dir.touch(b_path.to_str().unwrap());
+
+    let a_context = get_file_context(dir.plus("a")).unwrap();
+    let b_context = get_file_context(dir.plus(b_path.to_str().unwrap())).unwrap();
+
+    let new_la_context = "guest_u:object_r:etc_t:s0:c42";
+
+    // -P (default): do not traverse any symbolic links.
+    cmd.args(&["--verbose", "--recursive", new_la_context])
+        .arg(dir.plus("la"))
+        .succeeds();
+    assert_eq!(
+        get_file_context(dir.plus("la")).unwrap().as_deref(),
+        Some(new_la_context)
+    );
+    assert_eq!(get_file_context(dir.plus("a")).unwrap(), a_context);
+    assert_eq!(
+        get_file_context(dir.plus(b_path.to_str().unwrap())).unwrap(),
+        b_context
+    );
+}
+fn invalid_nan_test() {
+    let mut builder = OptionsBuilder::default();
+    builder = builder.nan_string(Some(b"naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaan"));
+    assert!(!builder.is_valid());
+    builder = builder.nan_string(Some(b"inf"));
+    assert!(!builder.is_valid());
+    builder = builder.nan_string(Some(b"na00n"));
+    assert!(!builder.is_valid());
+    assert!(builder.build().is_err());
+    builder = builder.nan_string(Some(b"nan"));
+    assert!(builder.is_valid());
+    assert!(builder.build().is_ok());
+    builder = builder.nan_string(None);
+    assert!(builder.is_valid());
+}
+fn test_escaped() {
+  assert_eq!(esc("abcd"), Err(Err::Error(("abcd", ErrorKind::Escaped))));
+}
+fn test_2files() {
+    let temp = env::temp_dir();
+    let tmpdir = Path::new(&temp);
+    let file1 = tmpdir.join("test1");
+    let file2 = tmpdir.join("test2");
+
+    for (n, a) in [(1, "a"), (2, "b")] {
+        println!("number: {n} letter:{a}");
+    }
+
+    // spell-checker:disable-next-line
+    for (path, data) in [(&file1, "abcdefghijklmnop"), (&file2, "qrstuvwxyz\n")] {
+        let mut f = File::create(path).unwrap();
+        assert!(
+            f.write_all(data.as_bytes()).is_ok(),
+            "Test setup failed - could not write file"
+        );
+    }
+
+    new_ucmd!()
+        .arg("--endian=little")
+        .arg(file1.as_os_str())
+        .arg(file2.as_os_str())
+        .succeeds()
+        .no_stderr()
+        .stdout_is(unindent(ALPHA_OUT));
+    // TODO: Handle errors?
+    let _ = remove_file(file1);
+    let _ = remove_file(file2);
+}
+fn test_file() {
+    // TODO: Can this be replaced by AtPath?
+    use std::env;
+    let temp = env::temp_dir();
+    let tmpdir = Path::new(&temp);
+    let file = tmpdir.join("test");
+
+    {
+        let mut f = File::create(&file).unwrap();
+        // spell-checker:disable-next-line
+        assert!(
+            f.write_all(b"abcdefghijklmnopqrstuvwxyz\n").is_ok(),
+            "Test setup failed - could not write file"
+        );
+    }
+
+    new_ucmd!()
+        .arg("--endian=little")
+        .arg(file.as_os_str())
+        .succeeds()
+        .no_stderr()
+        .stdout_is(unindent(ALPHA_OUT));
+
+    // Ensure that default format matches `-t o2`, and that `-t` does not absorb file argument
+    new_ucmd!()
+        .arg("--endian=little")
+        .arg("-t")
+        .arg("o2")
+        .arg(file.as_os_str())
+        .succeeds()
+        .no_stderr()
+        .stdout_is(unindent(ALPHA_OUT));
+
+    let _ = remove_file(file);
+}
+fn valid_reference() {
+    let (dir, mut cmd) = at_and_ucmd!();
+
+    dir.touch("a.tmp");
+    let new_a_context = "guest_u:object_r:etc_t:s0:c42";
+    set_file_context(dir.plus("a.tmp"), new_a_context).unwrap();
+
+    dir.touch("b.tmp");
+    let b_context = get_file_context(dir.plus("b.tmp")).unwrap();
+    assert_ne!(b_context.as_deref(), Some(new_a_context));
+
+    cmd.arg("--verbose")
+        .arg(format!("--reference={}", dir.plus_as_string("a.tmp")))
+        .arg(dir.plus("b.tmp"))
+        .succeeds();
+    assert_eq!(
+        get_file_context(dir.plus("b.tmp")).unwrap().as_deref(),
+        Some(new_a_context)
+    );
+}
+fn literal_byte_string() {
+    assert_eq!(Literal::byte_string(b"").to_string(), "b\"\"");
+    assert_eq!(
+        Literal::byte_string(b"\0\t\n\r\"\\2\x10").to_string(),
+        "b\"\\0\\t\\n\\r\\\"\\\\2\\x10\"",
+    );
+    assert_eq!(
+        Literal::byte_string(b"a\00b\07c\08d\0e\0").to_string(),
+        "b\"a\\x000b\\x007c\\08d\\0e\\0\"",
+    );
+
+    "b\"\\\r\n    x\"".parse::<TokenStream>().unwrap();
+    "b\"\\\r\n  \rx\"".parse::<TokenStream>().unwrap_err();
+    "b\"\\\r\n  \u{a0}x\"".parse::<TokenStream>().unwrap_err();
+    "br\"\u{a0}\"".parse::<TokenStream>().unwrap_err();
+}
+fn test_dircolors_for_dir_as_file() {
+    let result = new_ucmd!().args(&["-c", "/"]).fails();
+    result.no_stdout();
+    assert_eq!(
+        result.stderr_str().trim(),
+        "dircolors: expected file, got directory '/'",
+    );
+}
+fn range_change() {
+    let (dir, mut cmd) = at_and_ucmd!();
+
+    dir.touch("a.tmp");
+    let a_context = get_file_context(dir.plus("a.tmp")).unwrap();
+    let new_a_context = if let Some(a_context) = a_context {
+        a_context
+            .split(':')
+            .take(3)
+            .chain(iter::once("s0:c42"))
+            .collect::<Vec<_>>()
+            .join(":")
+    } else {
+        set_file_context(dir.plus("a.tmp"), "unconfined_u:object_r:user_tmp_t:s0").unwrap();
+        String::from("unconfined_u:object_r:user_tmp_t:s0:c42")
+    };
+
+    cmd.args(&["--verbose", "--range=s0:c42"])
+        .arg(dir.plus("a.tmp"))
+        .succeeds();
+    assert_eq!(
+        get_file_context(dir.plus("a.tmp")).unwrap(),
+        Some(new_a_context)
+    );
+}
+fn issue_655() {
+  use nom::character::streaming::{line_ending, not_line_ending};
+  fn twolines(i: &str) -> IResult<&str, (&str, &str)> {
+    let (i, l1) = not_line_ending(i)?;
+    let (i, _) = line_ending(i)?;
+    let (i, l2) = not_line_ending(i)?;
+    let (i, _) = line_ending(i)?;
+
+    Ok((i, (l1, l2)))
+  }
+
+  assert_eq!(twolines("foo\nbar\n"), Ok(("", ("foo", "bar"))));
+  assert_eq!(twolines("féo\nbar\n"), Ok(("", ("féo", "bar"))));
+  assert_eq!(twolines("foé\nbar\n"), Ok(("", ("foé", "bar"))));
+  assert_eq!(twolines("foé\r\nbar\n"), Ok(("", ("foé", "bar"))));
+}
+
+#[cf
+fn invalid_infinity_test() {
+    let mut builder = OptionsBuilder::default();
+    builder =
+        builder.infinity_string(Some(b"innnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnf"));
+    assert!(!builder.is_valid());
+    builder = builder.infinity_string(Some(b"nan"));
+    assert!(!builder.is_valid());
+    builder = builder.infinity_string(Some(b"i"));
+    assert!(!builder.is_valid());
+    builder = builder.inf_string(Some(b"infi000nity"));
+    assert!(!builder.is_valid());
+    assert!(builder.build().is_err());
+    builder = builder.inf_string(Some(b"i"));
+    assert!(builder.is_valid());
+    builder = builder.infinity_string(Some(b"infinity"));
+    assert!(builder.is_valid());
+    assert!(builder.build().is_ok());
+    builder = builder.infinity_string(None);
+    assert!(!builder.is_valid());
+    builder = builder.inf_string(None);
+    assert!(builder.is_valid());
+}
+fn valid_context_with_prior_xattributes() {
+    let (dir, mut cmd) = at_and_ucmd!();
+    dir.touch("a.tmp");
+
+    let a_context = get_file_context(dir.plus("a.tmp")).unwrap();
+    if a_context.is_none() {
+        set_file_context(dir.plus("a.tmp"), "unconfined_u:object_r:user_tmp_t:s0").unwrap();
+    }
+    let new_la_context = "guest_u:object_r:etc_t:s0:c42";
+
+    cmd.args(&["--verbose", new_la_context])
+        .arg(dir.plus("a.tmp"))
+        .succeeds();
+    assert_eq!(
+        get_file_context(dir.plus("a.tmp")).unwrap().as_deref(),
+        Some(new_la_context)
+    );
+}
+fn test_proc_macro2_fallback_span_size_without_locations() {
+    assert_eq!(mem::size_of::<proc_macro2::Span>(), 0);
+    assert_eq!(mem::size_of::<Option<proc_macro2::Span>>(), 1);
+}
+fn compute_error32_test() {
+    // These test near-halfway cases for single-precision floats.
+    assert_eq!(compute_error32(0, 16777216), (111 + INVALID_FP, 9223372036854775808));
+    assert_eq!(compute_error32(0, 16777217), (111 + INVALID_FP, 9223372586610589696));
+    assert_eq!(compute_error32(0, 16777218), (111 + INVALID_FP, 9223373136366403584));
+    assert_eq!(compute_error32(0, 16777219), (111 + INVALID_FP, 9223373686122217472));
+    assert_eq!(compute_error32(0, 16777220), (111 + INVALID_FP, 9223374235878031360));
+
+    // These are examples of the above tests, with
+    // digits from the exponent shifted to the mantissa.
+    assert_eq!(compute_error32(-10, 167772160000000000), (111 + INVALID_FP, 9223372036854775808));
+    assert_eq!(compute_error32(-10, 167772170000000000), (111 + INVALID_FP, 9223372586610589696));
+    assert_eq!(compute_error32(-10, 167772180000000000), (111 + INVALID_FP, 9223373136366403584));
+    // Let's check the lines to see if anything is different in table...
+    assert_eq!(compute_error32(-10, 167772190000000000), (111 + INVALID_FP, 9223373686122217472));
+    assert_eq!(compute_error32(-10, 167772200000000000), (111 + INVALID_FP, 9223374235878031360));
+}
+fn valid_context_on_valid_symlink() {
+    let (dir, mut cmd) = at_and_ucmd!();
+    dir.touch("a.tmp");
+    dir.symlink_file("a.tmp", "la.tmp");
+
+    let a_context = get_file_context(dir.plus("a.tmp")).unwrap();
+    let new_la_context = "guest_u:object_r:etc_t:s0:c42";
+
+    cmd.args(&["--verbose", "--no-dereference", new_la_context])
+        .arg(dir.plus("la.tmp"))
+        .succeeds();
+    assert_eq!(
+        get_file_context(dir.plus("la.tmp")).unwrap().as_deref(),
+        Some(new_la_context)
+    );
+    assert_eq!(get_file_context(dir.plus("a.tmp")).unwrap(), a_context);
+}
+fn test_default_issue_4821_t_tmpdir() {
+    let scene = TestScenario::new(util_name!());
+    let pathname = scene.fixtures.as_string();
+    let result = scene
+        .ucmd()
+        .env(TMPDIR, &pathname)
+        .arg("-t")
+        .arg("foo.XXXX")
+        .succeeds();
+    let stdout = result.stdout_str();
+    println!("stdout = {stdout}");
+    assert!(stdout.contains(&pathname));
+}
+fn idents() {
+    assert_eq!(
+        Ident::new("String", Span::call_site()).to_string(),
+        "String"
+    );
+    assert_eq!(Ident::new("fn", Span::call_site()).to_string(), "fn");
+    assert_eq!(Ident::new("_", Span::call_site()).to_string(), "_");
+}
+fn valid_context() {
+    let (dir, mut cmd) = at_and_ucmd!();
+    dir.touch("a.tmp");
+    dir.symlink_file("a.tmp", "la.tmp");
+
+    let la_context = get_file_context(dir.plus("a.tmp")).unwrap();
+    let new_la_context = "guest_u:object_r:etc_t:s0:c42";
+
+    cmd.args(&["--verbose", new_la_context])
+        .arg(dir.plus("la.tmp"))
+        .succeeds();
+    assert_eq!(get_file_context(dir.plus("la.tmp")).unwrap(), la_context);
+    assert_eq!(
+        get_file_context(dir.plus("a.tmp")).unwrap().as_deref(),
+        Some(new_la_context)
+    );
+}
+fn parens_test() {
+  assert_eq!(
+    expr(" ( 1 + 2 ) *  3 ").map(|(i, x)| (i, format!("{:?}", x))),
+    Ok(("", String::from("([(1 + 2)] * 3)")))
+  );
+}
+fn test_fmt_group() {
+    let ident = Ident::new("x", Span::call_site());
+    let inner = TokenStream::from_iter(iter::once(TokenTree::Ident(ident)));
+    let parens_empty = Group::new(Delimiter::Parenthesis, TokenStream::new());
+    let parens_nonempty = Group::new(Delimiter::Parenthesis, inner.clone());
+    let brackets_empty = Group::new(Delimiter::Bracket, TokenStream::new());
+    let brackets_nonempty = Group::new(Delimiter::Bracket, inner.clone());
+    let braces_empty = Group::new(Delimiter::Brace, TokenStream::new());
+    let braces_nonempty = Group::new(Delimiter::Brace, inner.clone());
+    let none_empty = Group::new(Delimiter::None, TokenStream::new());
+    let none_nonempty = Group::new(Delimiter::None, inner);
+
+    // Matches libproc_macro.
+    assert_eq!("()", parens_empty.to_string());
+    assert_eq!("(x)", parens_nonempty.to_string());
+    assert_eq!("[]", brackets_empty.to_string());
+    assert_eq!("[x]", brackets_nonempty.to_string());
+    assert_eq!("{ }", braces_empty.to_string());
+    assert_eq!("{ x }", braces_nonempty.to_string());
+    assert_eq!("", none_empty.to_string());
+    assert_eq!("x", none_nonempty.to_string());
+}
+fn test_invalid_user_spec() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    at.mkdir("a");
+
+    let result = ucmd.arg("a").arg("--userspec=ARABA:").fails();
+    result.code_is(125);
+    assert!(result.stderr_str().starts_with("chroot: invalid userspec"));
+}
+fn json_string() {
+  assert_eq!(string("\"\""), Ok(("", "".to_string())));
+  assert_eq!(string("\"abc\""), Ok(("", "abc".to_string())));
+  assert_eq!(
+    string("\"abc\\\"\\\\\\/\\b\\f\\n\\r\\t\\u0001\\u2014\u{2014}def\""),
+    Ok(("", "abc\"\\/\x08\x0C\n\r\t\x01——def".to_string())),
+  );
+  assert_eq!(string("\"\\uD83D\\uDE10\""), Ok(("", "😐".to_string())));
+
+  assert!(string("\"").is_err());
+  assert!(string("\"abc").is_err());
+  assert!(string("\"\\\"").is_err());
+  assert!(string("\"\\u123\"").is_err());
+  assert!(string("\"\\uD800\"").is_err());
+  assert!(string("\"\\uD800\\uD800\"").is_err());
+  assert!(string("\"\\uDC00\"").is_err());
+}
+
+#[tes
+fn special_bytes_test() {
+    const FORMAT: u128 = STANDARD;
+
+    // Test serializing and deserializing special strings.
+    assert!(f32::from_lexical(b"NaN").unwrap().is_nan());
+    assert!(f32::from_lexical(b"nan").unwrap().is_nan());
+    assert!(f32::from_lexical(b"NAN").unwrap().is_nan());
+    assert!(f32::from_lexical(b"inf").unwrap().is_infinite());
+    assert!(f32::from_lexical(b"INF").unwrap().is_infinite());
+    assert!(f32::from_lexical(b"Infinity").unwrap().is_infinite());
+
+    let options =
+        Options::builder().nan_string(Some(b"nan")).inf_string(Some(b"Infinity")).build().unwrap();
+
+    // The error message depends on whether the radix feature is enabled.
+    assert!(f32::from_lexical_with_options::<FORMAT>(b"inf", &options).is_err());
+    assert!(f32::from_lexical_with_options::<FORMAT>(b"Infinity", &options).unwrap().is_infinite());
+}
+fn take_till_issue() {
+  use nom::bytes::streaming::take_till;
+
+  fn nothing(i: &[u8]) -> IResult<&[u8], &[u8]> {
+    take_till(|_| true)(i)
+  }
+
+  assert_eq!(nothing(b""), Err(Err::Incomplete(Needed::new(1))));
+  assert_eq!(nothing(b"abc"), Ok((&b"abc"[..], &b""[..])));
+}
+fn test_t_ensure_tmpdir_has_higher_priority_than_p() {
+    let scene = TestScenario::new(util_name!());
+    let pathname = scene.fixtures.as_string();
+    let result = scene
+        .ucmd()
+        .env(TMPDIR, &pathname)
+        .arg("-t")
+        .arg("-p")
+        .arg("should_not_attempt_to_write_in_this_nonexisting_dir")
+        .arg("foo.XXXX")
+        .succeeds();
+    let stdout = result.stdout_str();
+    println!("stdout = {stdout}");
+    assert!(stdout.contains(&pathname));
+}
+fn test_gnu_special_filenames() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+    let perms_before = Permissions::from_mode(0o100_640);
+    let perms_after = Permissions::from_mode(0o100_440);
+
+    make_file(&at.plus_as_string("--"), perms_before.mode());
+    scene.ucmd().arg("-w").arg("--").arg("--").succeeds();
+    assert_eq!(at.metadata("--").permissions(), perms_after);
+    set_permissions(at.plus("--"), perms_before.clone()).unwrap();
+    scene.ucmd().arg("--").arg("-w").arg("--").succeeds();
+    assert_eq!(at.metadata("--").permissions(), perms_after);
+    at.remove("--");
+
+    make_file(&at.plus_as_string("-w"), perms_before.mode());
+    scene.ucmd().arg("-w").arg("--").arg("-w").succeeds();
+    assert_eq!(at.metadata("-w").permissions(), perms_after);
+    set_permissions(at.plus("-w"), perms_before).unwrap();
+    scene.ucmd().arg("--").arg("-w").arg("-w").succeeds();
+    assert_eq!(at.metadata("-w").permissions(), perms_after);
+}
+fn fabsd_spec_test() {
+    assert!(libm::fabsd(f64::NAN).is_nan());
+    for f in [0.0, -0.0].iter().copied() {
+        assert_eq!(libm::fabsd(f), 0.0);
+    }
+    for f in [f64::INFINITY, f64::NEG_INFINITY].iter().copied() {
+        assert_eq!(libm::fabsd(f), f64::INFINITY);
+    }
+}
+fn test_fail_change_directory() {
+    let scene = TestScenario::new(util_name!());
+    let some_non_existing_path = "some_nonexistent_path";
+    assert!(!Path::new(some_non_existing_path).is_dir());
+
+    let out = scene
+        .ucmd()
+        .arg("--chdir")
+        .arg(some_non_existing_path)
+        .arg("pwd")
+        .fails()
+        .stderr_move_str();
+    assert!(out.contains("env: cannot change directory to "));
+}
+fn bh_test() {
+    assert_eq!(bh(1e-45_f32), (3, -150));
+    assert_eq!(bh(5e-324_f64), (3, -1075));
+    assert_eq!(bh(1_f32), (16777217, -24));
+    assert_eq!(bh(1_f64), (9007199254740993, -53));
+    assert_eq!(bh(1e38_f32), (19721523, 102));
+    assert_eq!(bh(1e308_f64), (10020841800044865, 970));
+}
+fn test_unset_variable() {
+    let out = TestScenario::new(util_name!())
+        .ucmd()
+        .env("HOME", "FOO")
+        .arg("-u")
+        .arg("HOME")
+        .succeeds()
+        .stdout_move_str();
+
+    assert!(!out.lines().any(|line| line.starts_with("HOME=")));
+}
+fn test_date_for_dir_as_file() {
+    let result = new_ucmd!().arg("--file").arg("/").fails();
+    result.no_stdout();
+    assert_eq!(
+        result.stderr_str().trim(),
+        "date: expected file, got directory '/'",
+    );
+}
+fn test_du_dereference_args() {
+    let ts = TestScenario::new(util_name!());
+    let at = &ts.fixtures;
+
+    at.mkdir_all("subdir");
+    let mut file1 = at.make_file("subdir/file-ignore1");
+    file1.write_all(b"azeaze").unwrap();
+    let mut file2 = at.make_file("subdir/file-ignore1");
+    file2.write_all(b"amaz?ng").unwrap();
+    at.symlink_dir("subdir", "sublink");
+
+    let result = ts.ucmd().arg("-D").arg("-s").arg("sublink").succeeds();
+    let stdout = result.stdout_str();
+
+    assert!(!stdout.starts_with('0'));
+    assert!(stdout.contains("sublink"));
+
+    // Without the option
+    let result = ts.ucmd().arg("-s").arg("sublink").succeeds();
+    result.stdout_contains("0\tsublink\n");
+}
+fn test_from_mixed() {
+    let temp = env::temp_dir();
+    let tmpdir = Path::new(&temp);
+    let file1 = tmpdir.join("test-1");
+    let file3 = tmpdir.join("test-3");
+
+    // spell-checker:disable-next-line
+    let (data1, data2, data3) = ("abcdefg", "hijklmnop", "qrstuvwxyz\n");
+    for (path, data) in [(&file1, data1), (&file3, data3)] {
+        let mut f = File::create(path).unwrap();
+        assert!(
+            f.write_all(data.as_bytes()).is_ok(),
+            "Test setup failed - could not write file"
+        );
+    }
+
+    new_ucmd!()
+        .arg("--endian=little")
+        .arg(file1.as_os_str())
+        .arg("-")
+        .arg(file3.as_os_str())
+        .run_piped_stdin(data2.as_bytes())
+        .success()
+        .no_stderr()
+        .stdout_is(unindent(ALPHA_OUT));
+}
+fn test_precedence_of_human_readable_header_over_output_header() {
+    let output = new_ucmd!()
+        .args(&["-H", "--output=size"])
+        .succeeds()
+        .stdout_move_str();
+    let header = output.lines().next().unwrap().to_string();
+    assert_eq!(header.trim(), "Size");
+}
+fn test_uname_processor() {
+    let result = new_ucmd!().arg("-p").succeeds();
+    assert_eq!(result.stdout_str().trim_end(), "unknown");
+}
+fn test_nonexistent_dir_prefix() {
+    #[cfg(not(windows))]
+    new_ucmd!().arg("d/XXX").fails().stderr_only(
+        "mktemp: failed to create file via template 'd/XXX': No such file or directory\n",
+    );
+    #[cfg(windows)]
+    {
+        let result = new_ucmd!().arg(r"d\XXX").fails();
+        result.no_stdout();
+        let stderr = result.stderr_str();
+        assert!(
+            stderr.starts_with("mktemp: failed to create file via template"),
+            "{}",
+            stderr
+        );
+        assert!(
+            stderr.ends_with("d\\XXX': No such file or directory\n"),
+            "{}",
+            stderr
+        );
+    }
+
+    #[cfg(not(windows))]
+    new_ucmd!().arg("-d").arg("d/XXX").fails().stderr_only(
+        "mktemp: failed to create directory via template 'd/XXX': No such file or directory\n",
+    );
+    #[cfg(windows)]
+    {
+        let result = new_ucmd!().arg("-d").arg(r"d\XXX").fails();
+        result.no_stdout();
+        let stderr = result.stderr_str();
+        assert!(
+            stderr.starts_with("mktemp: failed to create directory via template"),
+            "{}",
+            stderr
+        );
+        assert!(
+            stderr.ends_with("d\\XXX': No such file or directory\n"),
+            "{}",
+            stderr
+        );
+    }
+}
+fn options_test() {
+    let mut opts = Options::new();
+
+    unsafe {
+        opts.set_lossy(true);
+        opts.set_exponent(b'^');
+        opts.set_decimal_point(b',');
+        opts.set_nan_string(Some(b"nan"));
+        opts.set_inf_string(Some(b"Infinity"));
+        opts.set_infinity_string(Some(b"Infiniiiiiity"));
+    }
+
+    assert_eq!(opts.lossy(), true);
+    assert_eq!(opts.exponent(), b'^');
+    assert_eq!(opts.decimal_point(), b',');
+    assert_eq!(opts.nan_string(), Some("nan".as_bytes()));
+    assert_eq!(opts.inf_string(), Some("Infinity".as_bytes()));
+    assert_eq!(opts.infinity_string(), Some("Infiniiiiiity".as_bytes()));
+    assert!(opts.is_valid());
+
+    assert_eq!(Options::builder(), OptionsBuilder::new());
+    assert_eq!(opts.rebuild().build(), Ok(opts));
+}
+fn compute_float_f32_test() {
+    // These test near-halfway cases for single-precision floats.
+    assert_eq!(compute_float32(0, 16777216), (151, 0));
+    assert_eq!(compute_float32(0, 16777217), (111 + INVALID_FP, 9223372586610589696));
+    assert_eq!(compute_float32(0, 16777218), (151, 1));
+    assert_eq!(compute_float32(0, 16777219), (111 + INVALID_FP, 9223373686122217472));
+    assert_eq!(compute_float32(0, 16777220), (151, 2));
+
+    // These are examples of the above tests, with
+    // digits from the exponent shifted to the mantissa.
+    assert_eq!(compute_float32(-10, 167772160000000000), (151, 0));
+    assert_eq!(compute_float32(-10, 167772170000000000), (111 + INVALID_FP, 9223372586610589696));
+    assert_eq!(compute_float32(-10, 167772180000000000), (151, 1));
+    // Let's check the lines to see if anything is different in table...
+    assert_eq!(compute_float32(-10, 167772190000000000), (111 + INVALID_FP, 9223373686122217472));
+    assert_eq!(compute_float32(-10, 167772200000000000), (151, 2));
+}
+fn test_cp_no_deref() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    #[cfg(not(windows))]
+    let _r = fs::symlink(
+        TEST_HELLO_WORLD_SOURCE,
+        at.subdir.join(TEST_HELLO_WORLD_SOURCE_SYMLINK),
+    );
+    #[cfg(windows)]
+    let _r = symlink_file(
+        TEST_HELLO_WORLD_SOURCE,
+        at.subdir.join(TEST_HELLO_WORLD_SOURCE_SYMLINK),
+    );
+    //using -P option
+    ucmd.arg("-P")
+        .arg(TEST_HELLO_WORLD_SOURCE)
+        .arg(TEST_HELLO_WORLD_SOURCE_SYMLINK)
+        .arg(TEST_COPY_TO_FOLDER)
+        .succeeds();
+
+    let path_to_new_symlink = at
+        .subdir
+        .join(TEST_COPY_TO_FOLDER)
+        .join(TEST_HELLO_WORLD_SOURCE_SYMLINK);
+    assert!(at.is_symlink(
+        &path_to_new_symlink
+            .clone()
+            .into_os_string()
+            .into_string()
+            .unwrap()
+    ));
+    // Check the content of the destination file that was copied.
+    assert_eq!(at.read(TEST_COPY_TO_FOLDER_FILE), "Hello, World!\n");
+    let path_to_check = path_to_new_symlink.to_str().unwrap();
+    assert_eq!(at.read(path_to_check), "Hello, World!\n");
+}
+fn test_mktemp_tmpdir_one_arg() {
+    let scene = TestScenario::new(util_name!());
+
+    let result = scene
+        .ucmd()
+        .arg("--tmpdir")
+        .arg("apt-key-gpghome.XXXXXXXXXX")
+        .succeeds();
+    result.no_stderr().stdout_contains("apt-key-gpghome.");
+    assert!(PathBuf::from(result.stdout_str().trim()).is_file());
+}
+fn test_output_multiple_occurrences() {
+    let output = new_ucmd!()
+        .args(&["--output=source", "--output=target"])
+        .succeeds()
+        .stdout_move_str();
+    assert_eq!(
+        output
+            .lines()
+            .next()
+            .unwrap()
+            .split_whitespace()
+            .collect::<Vec<_>>(),
+        vec!["Filesystem", "Mounted", "on"]
+    );
+}
+fn b_test() {
+    assert_eq!(b(1e-45_f32), (1, -149));
+    assert_eq!(b(5e-324_f64), (1, -1074));
+    assert_eq!(b(1e-323_f64), (2, -1074));
+    assert_eq!(b(2e-323_f64), (4, -1074));
+    assert_eq!(b(3e-323_f64), (6, -1074));
+    assert_eq!(b(4e-323_f64), (8, -1074));
+    assert_eq!(b(5e-323_f64), (10, -1074));
+    assert_eq!(b(6e-323_f64), (12, -1074));
+    assert_eq!(b(7e-323_f64), (14, -1074));
+    assert_eq!(b(8e-323_f64), (16, -1074));
+    assert_eq!(b(9e-323_f64), (18, -1074));
+    assert_eq!(b(1_f32), (8388608, -23));
+    assert_eq!(b(1_f64), (4503599627370496, -52));
+    assert_eq!(b(1e38_f32), (9860761, 103));
+    assert_eq!(b(1e308_f64), (5010420900022432, 971));
+}
+fn test_relative_src_already_symlink() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    at.touch("file1");
+    at.symlink_file("file1", "file2");
+    ucmd.arg("-sr").arg("file2").arg("file3").succeeds();
+    assert!(at.resolve_link("file3").ends_with("file1"));
+}
+fn test_create_exe_with_pirita_works_1() {
+    let tempdir = TempDir::new().unwrap();
+    let path = tempdir.path();
+    let wasm_out = path.join("out.obj");
+    let cmd = Command::new(get_wasmer_path())
+        .arg("create-obj")
+        .arg(fixtures::wabt())
+        .arg("-o")
+        .arg(&wasm_out)
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&cmd.stderr);
+
+    assert_eq!(stderr.lines().map(|s| s.trim().to_string()).collect::<Vec<_>>(), vec![
+        format!("error: cannot compile more than one atom at a time"),
+        format!("│   1: note: use --atom <ATOM> to specify which atom to compile"),
+        format!("╰─▶ 2: where <ATOM> is one of: wabt, wasm-interp, wasm-strip, wasm-validate, wasm2wat, wast2json, wat2wasm"),
+    ]);
+
+    assert!(!cmd.status.success());
+
+    let cmd = Command::new(get_wasmer_path())
+        .arg("create-obj")
+        .arg(fixtures::wabt())
+        .arg("--atom")
+        .arg("wasm2wat")
+        .arg("-o")
+        .arg(&wasm_out)
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&cmd.stderr);
+
+    let real_out = wasm_out.canonicalize().unwrap().display().to_string();
+    let real_out = real_out
+        .strip_prefix(r"\\?\")
+        .unwrap_or(&real_out)
+        .to_string();
+    assert_eq!(
+        stderr
+            .lines()
+            .map(|s| s.trim().to_string())
+            .collect::<Vec<_>>(),
+        vec![format!("✔ Object compiled successfully to `{real_out}`"),]
+    );
+
+    assert!(cmd.status.success());
+}
+
+#[test]
+
+fn role_change() {
+    let (dir, mut cmd) = at_and_ucmd!();
+
+    dir.touch("a.tmp");
+    let a_context = get_file_context(dir.plus("a.tmp")).unwrap();
+    let new_a_context = if let Some(a_context) = a_context {
+        let mut components: Vec<_> = a_context.split(':').collect();
+        components[1] = "system_r";
+        components.join(":")
+    } else {
+        set_file_context(dir.plus("a.tmp"), "unconfined_u:object_r:user_tmp_t:s0").unwrap();
+        String::from("unconfined_u:system_r:user_tmp_t:s0")
+    };
+
+    cmd.args(&["--verbose", "--role=system_r"])
+        .arg(dir.plus("a.tmp"))
+        .succeeds();
+    assert_eq!(
+        get_file_context(dir.plus("a.tmp")).unwrap(),
+        Some(new_a_context)
+    );
+}
+fn invalid_inf_test() {
+    let mut builder = OptionsBuilder::default();
+    builder = builder.inf_string(Some(b"innnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnf"));
+    assert!(!builder.is_valid());
+    builder = builder.inf_string(Some(b"nan"));
+    assert!(!builder.is_valid());
+    builder = builder.inf_string(Some(b"in00f"));
+    assert!(!builder.is_valid());
+    assert!(builder.build().is_err());
+    builder = builder.inf_string(Some(b"i"));
+    assert!(builder.is_valid());
+    builder = builder.inf_string(Some(b"inf"));
+    assert!(builder.is_valid());
+    assert!(builder.build().is_ok());
+    builder = builder.inf_string(None);
+    assert!(builder.is_valid());
+    builder = builder.infinity_string(None);
+    assert!(builder.is_valid());
+}
+fn test_mktemp_directory_tmpdir() {
+    let scene = TestScenario::new(util_name!());
+
+    let result = scene
+        .ucmd()
+        .arg("--directory")
+        .arg("--tmpdir")
+        .arg("apt-key-gpghome.XXXXXXXXXX")
+        .succeeds();
+    result.no_stderr().stdout_contains("apt-key-gpghome.");
+    assert!(PathBuf::from(result.stdout_str().trim()).is_dir());
+}
+fn test_default_issue_4821_t_tmpdir_p() {
+    let scene = TestScenario::new(util_name!());
+    let pathname = scene.fixtures.as_string();
+    let result = scene
+        .ucmd()
+        .arg("-t")
+        .arg("-p")
+        .arg(&pathname)
+        .arg("foo.XXXX")
+        .succeeds();
+    let stdout = result.stdout_str();
+    println!("stdout = {stdout}");
+    assert!(stdout.contains(&pathname));
+}
+fn compute_error_scaled64_test() {
+    // These are the same examples above, just using pre-computed scaled values.
+
+    // These test near-halfway cases for double-precision floats.
+    assert_eq!(
+        compute_error_scaled64(0, 4611686018427387904, 10),
+        (1065 + INVALID_FP, 9223372036854775808)
+    );
+    assert_eq!(
+        compute_error_scaled64(0, 4611686018427388416, 10),
+        (1065 + INVALID_FP, 9223372036854776832)
+    );
+    assert_eq!(
+        compute_error_scaled64(0, 4611686018427388928, 10),
+        (1065 + INVALID_FP, 9223372036854777856)
+    );
+    assert_eq!(
+        compute_error_scaled64(0, 4611686018427389440, 10),
+        (1065 + INVALID_FP, 9223372036854778880)
+    );
+    assert_eq!(
+        compute_error_scaled64(0, 4611686018427389952, 10),
+        (1065 + INVALID_FP, 9223372036854779904)
+    );
+    assert_eq!(
+        compute_error_scaled64(0, 4611686018427387904, 9),
+        (1066 + INVALID_FP, 9223372036854775808)
+    );
+    assert_eq!(
+        compute_error_scaled64(0, 4611686018427388416, 9),
+        (1066 + INVALID_FP, 9223372036854776832)
+    );
+    assert_eq!(
+        compute_error_scaled64(0, 4611686018427388928, 9),
+        (1066 + INVALID_FP, 9223372036854777856)
+    );
+    assert_eq!(
+        compute_error_scaled64(0, 4611686018427389440, 9),
+        (1066 + INVALID_FP, 9223372036854778880)
+    );
+    assert_eq!(
+        compute_error_scaled64(0, 4611686018427389952, 9),
+        (1066 + INVALID_FP, 9223372036854779904)
+    );
+
+    // Test a much closer set of examples.
+    assert_eq!(
+        compute_error_scaled64(0, 9223372036854774784, 11),
+        (1064 + INVALID_FP, 18446744073709549568)
+    );
+    assert_eq!(
+        compute_error_scaled64(0, 4611686018427388415, 0),
+        (1075 + INVALID_FP, 9223372036854776830)
+    );
+    assert_eq!(
+        compute_error_scaled64(0, 4611686018427388416, 0),
+        (1075 + INVALID_FP, 9223372036854776832)
+    );
+    assert_eq!(
+        compute_error_scaled64(0, 4611686018427388416, 0),
+        (1075 + INVALID_FP, 9223372036854776832)
+    );
+    assert_eq!(
+        compute_error_scaled64(-42, 6510716281765748947, 10),
+        (925 + INVALID_FP, 13021432563531497894)
+    );
+    assert_eq!(
+        compute_error_scaled64(-43, 6510716281765749303, 7),
+        (925 + INVALID_FP, 13021432563531498606)
+    );
+    assert_eq!(
+        compute_error_scaled64(-42, 6510716281765749660, 10),
+        (925 + INVALID_FP, 13021432563531499320)
+    );
+
+    // These are examples of the above tests, with
+    // digits from the exponent shifted to the mantissa.
+    assert_eq!(
+        compute_error_scaled64(-3, 9223372036854775808, 1),
+        (1065 + INVALID_FP, 9223372036854775808)
+    );
+    assert_eq!(
+        compute_error_scaled64(-3, 9223372036854776832, 1),
+        (1065 + INVALID_FP, 9223372036854776832)
+    );
+    assert_eq!(
+        compute_error_scaled64(-3, 9223372036854777856, 1),
+        (1065 + INVALID_FP, 9223372036854777856)
+    );
+    assert_eq!(
+        compute_error_scaled64(-3, 9223372036854778880, 1),
+        (1065 + INVALID_FP, 9223372036854778880)
+    );
+    assert_eq!(
+        compute_error_scaled64(-3, 9223372036854779904, 1),
+        (1065 + INVALID_FP, 9223372036854779904)
+    );
+
+    // Test from errors in atof.
+    assert_eq!(
+        compute_error_scaled64(-18, 9223373686122217470, 4),
+        (1012 + INVALID_FP, 9223373686122217470)
+    );
+
+    // Check edge-cases from previous errors.
+    assert_eq!(
+        compute_error_scaled64(-342, 9223372036854775804, 2),
+        (-64 + INVALID_FP, 18446744073709551608)
+    );
+}
+fn test_missing_operand() {
+    let result = new_ucmd!().fails();
+
+    result.code_is(125);
+
+    assert!(result
+        .stderr_str()
+        .starts_with("error: the following required arguments were not provided"));
+
+    assert!(result.stderr_str().contains("<newroot>"));
+}
+fn valid_context_directory_recursive_follow_args_dir_symlinks() {
+    let (dir, mut cmd) = at_and_ucmd!();
+    dir.mkdir("a");
+    dir.symlink_dir("a", "la");
+
+    let b_path = Path::new("a").join("b.txt");
+    dir.touch(b_path.to_str().unwrap());
+
+    let la_context = get_file_context(dir.plus("la")).unwrap();
+    let new_la_context = "guest_u:object_r:etc_t:s0:c42";
+
+    /*
+    let lc_path = Path::new("a").join("lc");
+    dir.symlink_dir("c", lc_path.to_str().unwrap());
+    assert_eq!(
+        get_file_context(dir.plus(lc_path.to_str().unwrap())).unwrap(),
+        None
+    );
+    */
+
+    // -H: if a command line argument is a symbolic link to a directory, traverse it.
+    cmd.args(&["--verbose", "--recursive", "-H", new_la_context])
+        .arg(dir.plus("la"))
+        .succeeds();
+    assert_eq!(
+        get_file_context(dir.plus("a")).unwrap().as_deref(),
+        Some(new_la_context)
+    );
+    assert_eq!(
+        get_file_context(dir.plus(b_path.to_str().unwrap()))
+            .unwrap()
+            .as_deref(),
+        Some(new_la_context)
+    );
+    assert_eq!(get_file_context(dir.plus("la")).unwrap(), la_context);
+    /*
+    assert_eq!(
+        get_file_context(dir.plus(lc_path.to_str().unwrap()))
+            .unwrap()
+            .as_deref(),
+        Some(new_la_context)
+    );
+    */
+}
+fn term_test() {
+  assert_eq!(
+    term(" 3 *  5   ").map(|(i, x)| (i, format!("{:?}", x))),
+    Ok(("", String::from("(3 * 5)")))
+  );
+}
+fn test_echo() {
+    let result = new_ucmd!().arg("echo").arg("FOO-bar").succeeds();
+
+    assert_eq!(result.stdout_str().trim(), "FOO-bar");
+}
+fn test_proc_macro2_wrapper_span_size_without_locations() {
+    assert_eq!(mem::size_of::<proc_macro2::Span>(), 4);
+    assert_eq!(mem::size_of::<Option<proc_macro2::Span>>(), 8);
+}
+fn expr_test() {
+  assert_eq!(
+    expr(" 1 + 2 *  3 ").map(|(i, x)| (i, format!("{:?}", x))),
+    Ok(("", String::from("(1 + (2 * 3))")))
+  );
+  assert_eq!(
+    expr(" 1 + 2 *  3 / 4 - 5 ").map(|(i, x)| (i, format!("{:?}", x))),
+    Ok(("", String::from("((1 + ((2 * 3) / 4)) - 5)")))
+  );
+  assert_eq!(
+    expr(" 72 / 2 / 3 ").map(|(i, x)| (i, format!("{:?}", x))),
+    Ok(("", String::from("((72 / 2) / 3)")))
+  );
+}
+fn test_version() {
+    for version_flg in ["-V", "--version"] {
+        assert!(new_ucmd!()
+            .arg(version_flg)
+            .succeeds()
+            .no_stderr()
+            .stdout_str()
+            .starts_with("basename"));
+    }
+}
+fn fabsf_spec_test() {
+    assert!(libm::fabsf(f32::NAN).is_nan());
+    for f in [0.0, -0.0].iter().copied() {
+        assert_eq!(libm::fabsf(f), 0.0);
+    }
+    for f in [f32::INFINITY, f32::NEG_INFINITY].iter().copied() {
+        assert_eq!(libm::fabsf(f), f32::INFINITY);
+    }
+}
+fn invalid_exponent_test() {
+    let mut builder = OptionsBuilder::default();
+    builder = builder.exponent(b'\x00');
+    assert!(!builder.is_valid());
+    builder = builder.exponent(b'\x7f');
+    assert!(!builder.is_valid());
+    assert!(builder.build().is_err());
+    builder = builder.exponent(b'^');
+    assert!(builder.is_valid());
+    assert!(builder.build().is_ok());
+}
+fn get_and_set_config_fields() -> anyhow::Result<()> {
+    let temp = setup_wasmer_dir();
+
+    // ---- config get
+
+    let output = wasmer_cmd(&temp)
+        .arg("config")
+        .arg("get")
+        .arg("registry.token")
+        .output()?;
+
+    let original_token = String::from_utf8_lossy(&output.stdout);
+
+    let output = wasmer_cmd(&temp)
+        .arg("config")
+        .arg("set")
+        .arg("registry.token")
+        .arg("abc123")
+        .output()?;
+
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "".to_string());
+
+    let output = wasmer_cmd(&temp)
+        .arg("config")
+        .arg("get")
+        .arg("registry.token")
+        .output()?;
+
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "abc123\n".to_string()
+    );
+
+    let output = wasmer_cmd(&temp)
+        .arg("config")
+        .arg("set")
+        .arg("registry.token")
+        .arg(original_token.to_string().trim())
+        .output()?;
+
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "".to_string());
+
+    let output = wasmer_cmd(&temp)
+        .arg("config")
+        .arg("get")
+        .arg("registry.token")
+        .output()?;
+
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        format!("{}\n", original_token.to_string().trim())
+    );
+
+    let output = wasmer_cmd(&temp)
+        .arg("config")
+        .arg("get")
+        .arg("registry.url")
+        .output()?;
+
+    let original_url = String::from_utf8_lossy(&output.stdout);
+
+    let output = wasmer_cmd(&temp)
+        .arg("config")
+        .arg("set")
+        .arg("registry.url")
+        .arg("wasmer.wtf")
+        .output()?;
+
+    let output_str = String::from_utf8_lossy(&output.stdout);
+
+    assert_eq!(output_str, "".to_string());
+
+    let output = wasmer_cmd(&temp)
+        .arg("config")
+        .arg("get")
+        .arg("registry.url")
+        .output()?;
+
+    let output_str = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        output_str,
+        "https://registry.wasmer.wtf/graphql\n".to_string()
+    );
+
+    let output = wasmer_cmd(&temp)
+        .arg("config")
+        .arg("set")
+        .arg("registry.url")
+        .arg(original_url.to_string().trim())
+        .output()?;
+
+    let output_str = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output_str, "".to_string());
+
+    let output = wasmer_cmd(&temp)
+        .arg("config")
+        .arg("get")
+        .arg("registry.url")
+        .output()?;
+
+    let output_str = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output_str, original_url.to_string());
+
+    let output = wasmer_cmd(&temp)
+        .arg("config")
+        .arg("get")
+        .arg("telemetry.enabled")
+        .output()?;
+
+    let original_output = String::from_utf8_lossy(&output.stdout);
+
+    let output = wasmer_cmd(&temp)
+        .arg("config")
+        .arg("set")
+        .arg("telemetry.enabled")
+        .arg("true")
+        .output()?;
+
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "".to_string());
+
+    let output = wasmer_cmd(&temp)
+        .arg("config")
+        .arg("get")
+        .arg("telemetry.enabled")
+        .output()?;
+
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "true\n".to_string()
+    );
+
+    let output = wasmer_cmd(&temp)
+        .arg("config")
+        .arg("set")
+        .arg("telemetry.enabled")
+        .arg(original_output.to_string().trim())
+        .output()?;
+
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "".to_string());
+
+    let output = wasmer_cmd(&temp)
+        .arg("config")
+        .arg("get")
+        .arg("telemetry.enabled")
+        .output()?;
+
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        original_output.to_string()
+    );
+
+    let output = wasmer_cmd(&temp)
+        .arg("config")
+        .arg("get")
+        .arg("update-notifications.enabled")
+        .output()?;
+
+    let original_output = String::from_utf8_lossy(&output.stdout);
+
+    let output = wasmer_cmd(&temp)
+        .arg("config")
+        .arg("set")
+        .arg("update-notifications.enabled")
+        .arg("true")
+        .output()?;
+
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "".to_string());
+
+    let output = wasmer_cmd(&temp)
+        .arg("config")
+        .arg("get")
+        .arg("update-notifications.enabled")
+        .output()?;
+
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "true\n".to_string()
+    );
+
+    let output = wasmer_cmd(&temp)
+        .arg("config")
+        .arg("set")
+        .arg("update-notifications.enabled")
+        .arg(original_output.to_string().trim())
+        .output()?;
+
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "".to_string());
+
+    let output = wasmer_cmd(&temp)
+        .arg("config")
+        .arg("get")
+        .arg("update-notifications.enabled")
+        .output()?;
+
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        original_output.to_string()
+    );
+
+    Ok(())
+}
+fn compute_float_f64_rounding() {
+    // Also need to check halfway cases **inside** that exponent range.
+
+    // These test near-halfway cases for double-precision floats.
+    assert_eq!(compute_float64(0, 9007199254740992), (1076, 0));
+    assert_eq!(compute_float64(0, 9007199254740993), (1076, 0));
+    assert_eq!(compute_float64(0, 9007199254740994), (1076, 1));
+    assert_eq!(compute_float64(0, 9007199254740995), (1076, 2));
+    assert_eq!(compute_float64(0, 9007199254740996), (1076, 2));
+    assert_eq!(compute_float64(0, 18014398509481984), (1077, 0));
+    assert_eq!(compute_float64(0, 18014398509481986), (1077, 0));
+    assert_eq!(compute_float64(0, 18014398509481988), (1077, 1));
+    assert_eq!(compute_float64(0, 18014398509481990), (1077, 2));
+    assert_eq!(compute_float64(0, 18014398509481992), (1077, 2));
+
+    // Test a much closer set of examples.
+    assert_eq!(compute_float64(0, 9007199254740991), (1075, 4503599627370495));
+    assert_eq!(compute_float64(0, 9223372036854776831), (1086, 0));
+    assert_eq!(compute_float64(0, 9223372036854776832), (1086, 0));
+    assert_eq!(compute_float64(0, 9223372036854776833), (1086, 1));
+    assert_eq!(compute_float64(-42, 9123456727292927), (936, 1854521741541368));
+    assert_eq!(compute_float64(-43, 91234567272929275), (936, 1854521741541369));
+    assert_eq!(compute_float64(-42, 9123456727292928), (936, 1854521741541369));
+
+    // These are examples of the above tests, with
+    // digits from the exponent shifted to the mantissa.
+    assert_eq!(compute_float64(-3, 9007199254740992000), (1076, 0));
+    assert_eq!(compute_float64(-3, 9007199254740993000), (1076, 0));
+    assert_eq!(compute_float64(-3, 9007199254740994000), (1076, 1));
+    assert_eq!(compute_float64(-3, 9007199254740995000), (1076, 2));
+    assert_eq!(compute_float64(-3, 9007199254740996000), (1076, 2));
+}
+fn compute_error64_test() {
+    // These test near-halfway cases for double-precision floats.
+    assert_eq!(compute_error64(0, 9007199254740992), (1065 + INVALID_FP, 9223372036854775808));
+    assert_eq!(compute_error64(0, 9007199254740993), (1065 + INVALID_FP, 9223372036854776832));
+    assert_eq!(compute_error64(0, 9007199254740994), (1065 + INVALID_FP, 9223372036854777856));
+    assert_eq!(compute_error64(0, 9007199254740995), (1065 + INVALID_FP, 9223372036854778880));
+    assert_eq!(compute_error64(0, 9007199254740996), (1065 + INVALID_FP, 9223372036854779904));
+    assert_eq!(compute_error64(0, 18014398509481984), (1066 + INVALID_FP, 9223372036854775808));
+    assert_eq!(compute_error64(0, 18014398509481986), (1066 + INVALID_FP, 9223372036854776832));
+    assert_eq!(compute_error64(0, 18014398509481988), (1066 + INVALID_FP, 9223372036854777856));
+    assert_eq!(compute_error64(0, 18014398509481990), (1066 + INVALID_FP, 9223372036854778880));
+    assert_eq!(compute_error64(0, 18014398509481992), (1066 + INVALID_FP, 9223372036854779904));
+
+    // Test a much closer set of examples.
+    assert_eq!(compute_error64(0, 9007199254740991), (1064 + INVALID_FP, 18446744073709549568));
+    assert_eq!(compute_error64(0, 9223372036854776831), (1075 + INVALID_FP, 9223372036854776830));
+    assert_eq!(compute_error64(0, 9223372036854776832), (1075 + INVALID_FP, 9223372036854776832));
+    assert_eq!(compute_error64(0, 9223372036854776833), (1075 + INVALID_FP, 9223372036854776832));
+    assert_eq!(compute_error64(-42, 9123456727292927), (925 + INVALID_FP, 13021432563531497894));
+    assert_eq!(compute_error64(-43, 91234567272929275), (925 + INVALID_FP, 13021432563531498606));
+    assert_eq!(compute_error64(-42, 9123456727292928), (925 + INVALID_FP, 13021432563531499320));
+
+    // These are examples of the above tests, with
+    // digits from the exponent shifted to the mantissa.
+    assert_eq!(compute_error64(-3, 9007199254740992000), (1065 + INVALID_FP, 9223372036854775808));
+    assert_eq!(compute_error64(-3, 9007199254740993000), (1065 + INVALID_FP, 9223372036854776832));
+    assert_eq!(compute_error64(-3, 9007199254740994000), (1065 + INVALID_FP, 9223372036854777856));
+    assert_eq!(compute_error64(-3, 9007199254740995000), (1065 + INVALID_FP, 9223372036854778880));
+    assert_eq!(compute_error64(-3, 9007199254740996000), (1065 + INVALID_FP, 9223372036854779904));
+
+    // Test from errors in atof.
+    assert_eq!(compute_error64(-18, 1000000178813934326), (1012 + INVALID_FP, 9223373686122217470));
+
+    // Check edge-cases from previous errors.
+    assert_eq!(
+        compute_error64(-342, 2470328229206232720),
+        (-64 + INVALID_FP, 18446744073709551608)
+    );
+}
+fn test_proc_macro2_fallback_span_size_with_locations() {
+    assert_eq!(mem::size_of::<proc_macro2::Span>(), 8);
+    assert_eq!(mem::size_of::<Option<proc_macro2::Span>>(), 12);
+}
+fn test_nonexistent_tmpdir_env_var() {
+    #[cfg(not(windows))]
+    new_ucmd!().env(TMPDIR, "no/such/dir").fails().stderr_only("mktemp: failed to create file via template 'no/such/dir/tmp.XXXXXXXXXX': No such file or directory\n");
+    #[cfg(windows)]
+    {
+        let result = new_ucmd!().env(TMPDIR, r"no\such\dir").fails();
+        result.no_stdout();
+        let stderr = result.stderr_str();
+        assert!(
+            stderr.starts_with("mktemp: failed to create file via template"),
+            "{}",
+            stderr
+        );
+        assert!(
+            stderr.ends_with("no\\such\\dir\\tmp.XXXXXXXXXX': No such file or directory\n"),
+            "{}",
+            stderr
+        );
+    }
+
+    #[cfg(not(windows))]
+    new_ucmd!().env(TMPDIR, "no/such/dir").arg("-d").fails().stderr_only("mktemp: failed to create directory via template 'no/such/dir/tmp.XXXXXXXXXX': No such file or directory\n");
+    #[cfg(windows)]
+    {
+        let result = new_ucmd!().env(TMPDIR, r"no\such\dir").arg("-d").fails();
+        result.no_stdout();
+        let stderr = result.stderr_str();
+        assert!(
+            stderr.starts_with("mktemp: failed to create directory via template"),
+            "{}",
+            stderr
+        );
+        assert!(
+            stderr.ends_with("no\\such\\dir\\tmp.XXXXXXXXXX': No such file or directory\n"),
+            "{}",
+            stderr
+        );
+    }
+}
+fn test_uname_output_for_invisible_chars() {
+    // let re = regex::Regex::new("[^[[:print:]]]").unwrap(); // matches invisible (and emojis)
+    let re = regex::Regex::new("[^[[:print:]]\\p{Other_Symbol}]").unwrap(); // matches invisible (not emojis)
+    let result = new_ucmd!().arg("--all").succeeds();
+    assert_eq!(re.find(result.stdout_str().trim_end()), None);
+}
+fn raw_idents() {
+    assert_eq!(
+        Ident::new_raw("String", Span::call_site()).to_string(),
+        "r#String"
+    );
+    assert_eq!(Ident::new_raw("fn", Span::call_site()).to_string(), "r#fn");
+}
+fn invalid_decimal_point_test() {
+    let mut builder = OptionsBuilder::default();
+    builder = builder.decimal_point(b'\x00');
+    assert!(!builder.is_valid());
+    builder = builder.decimal_point(b'\x7f');
+    assert!(!builder.is_valid());
+    assert!(builder.build().is_err());
+    builder = builder.decimal_point(b',');
+    assert!(builder.is_valid());
+    assert!(builder.build().is_ok());
+}
+fn test_du_exclude_several_components() {
+    let ts = TestScenario::new(util_name!());
+    let at = &ts.fixtures;
+
+    at.mkdir_all("a/b/c");
+    at.mkdir_all("a/x/y");
+    at.mkdir_all("a/u/y");
+
+    // Exact match
+    let result = ts
+        .ucmd()
+        .arg("--exclude=a/u")
+        .arg("--exclude=a/b")
+        .arg("a")
+        .succeeds();
+    assert!(!result.stdout_str().contains("a/u"));
+    assert!(!result.stdout_str().contains("a/b"));
+}

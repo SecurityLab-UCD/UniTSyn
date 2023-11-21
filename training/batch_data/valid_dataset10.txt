@@ -1,0 +1,823 @@
+fn test_pending_snapshot() {
+    let mut cluster = new_node_cluster(0, 3);
+    configure_for_snapshot(&mut cluster.cfg);
+    let election_timeout = configure_for_lease_read(&mut cluster.cfg, None, Some(15));
+    let gc_limit = cluster.cfg.raft_store.raft_log_gc_count_limit();
+    cluster.cfg.raft_store.pd_heartbeat_tick_interval = ReadableDuration::millis(100);
+
+    let handle_snapshot_fp = "apply_on_handle_snapshot_1_1";
+    let handle_snapshot_finish_fp = "apply_on_handle_snapshot_finish_1_1";
+    fail::cfg("apply_on_handle_snapshot_sync", "return").unwrap();
+
+    let pd_client = Arc::clone(&cluster.pd_client);
+    // Disable default max peer count check.
+    pd_client.disable_default_operator();
+
+    let region_id = cluster.run_conf_change();
+    pd_client.must_add_peer(region_id, new_peer(2, 2));
+    cluster.must_transfer_leader(region_id, new_peer(1, 1));
+    cluster.must_put(b"k1", b"v1");
+
+    fail::cfg(handle_snapshot_fp, "pause").unwrap();
+    pd_client.must_add_peer(region_id, new_peer(3, 3));
+    // Give some time for peer 3 to request snapshot.
+    sleep_ms(100);
+
+    // Isolate peer 1 from rest of the cluster.
+    cluster.add_send_filter(IsolationFilterFactory::new(1));
+
+    sleep_ms((election_timeout.as_millis() * 2) as _);
+    cluster.reset_leader_of_region(region_id);
+    // Compact logs to force requesting snapshot after clearing send filters.
+    let state2 = cluster.truncated_state(1, 2);
+    for i in 1..gc_limit * 10 {
+        let k = i.to_string().into_bytes();
+        cluster.must_put(&k, &k.clone());
+    }
+    cluster.wait_log_truncated(1, 2, state2.get_index() + 5 * gc_limit);
+
+    // Make sure peer 1 has applied snapshot.
+    cluster.clear_send_filters();
+    let start = Instant::now();
+    loop {
+        if cluster.pd_client.get_pending_peers().get(&1).is_none()
+            || start.saturating_elapsed() > election_timeout * 10
+        {
+            break;
+        }
+        sleep_ms(50);
+    }
+    let state1 = cluster.truncated_state(1, 1);
+
+    // Peer 2 continues to handle snapshot.
+    fail::cfg(handle_snapshot_finish_fp, "pause").unwrap();
+    fail::remove(handle_snapshot_fp);
+    sleep_ms(200);
+    let state2 = cluster.truncated_state(1, 1);
+    fail::remove(handle_snapshot_finish_fp);
+    assert!(
+        state1.get_term() <= state2.get_term(),
+        "{:?} {:?}",
+        state1,
+        state2
+    );
+    assert!(
+        state1.get_index() <= state2.get_index(),
+        "{:?} {:?}",
+        state1,
+        state2
+    );
+}
+fn test_transfer_leader_slow_apply() {
+    // 3 nodes cluster.
+    let mut cluster = new_node_cluster(0, 3);
+
+    let pd_client = cluster.pd_client.clone();
+    pd_client.disable_default_operator();
+
+    let r1 = cluster.run_conf_change();
+    pd_client.must_add_peer(r1, new_peer(2, 1002));
+    pd_client.must_add_peer(r1, new_peer(3, 1003));
+
+    cluster.must_put(b"k1", b"v1");
+    must_get_equal(&cluster.get_engine(2), b"k1", b"v1");
+    must_get_equal(&cluster.get_engine(3), b"k1", b"v1");
+
+    let fp = "on_handle_apply_1003";
+    fail::cfg(fp, "pause").unwrap();
+    for i in 0..=cluster.cfg.raft_store.leader_transfer_max_log_lag {
+        let bytes = format!("k{:03}", i).into_bytes();
+        cluster.must_put(&bytes, &bytes);
+    }
+    cluster.transfer_leader(r1, new_peer(3, 1003));
+    cluster.must_put(b"k2", b"v2");
+    must_get_equal(&cluster.get_engine(1), b"k2", b"v2");
+    assert_ne!(cluster.leader_of_region(r1).unwrap(), new_peer(3, 1003));
+    fail::remove(fp);
+    cluster.must_transfer_leader(r1, new_peer(3, 1003));
+    cluster.must_put(b"k3", b"v3");
+    must_get_equal(&cluster.get_engine(3), b"k3", b"v3");
+}
+fn test_request_snapshot_after_reboot() {
+    let mut cluster = new_server_cluster(0, 3);
+    cluster.cfg.raft_store.pd_heartbeat_tick_interval = ReadableDuration::millis(20);
+    cluster.cfg.raft_store.check_request_snapshot_interval = ReadableDuration::millis(20);
+    cluster.run();
+    let nodes = Vec::from_iter(cluster.get_node_ids());
+    assert_eq!(nodes.len(), 3);
+
+    let pd_client = Arc::clone(&cluster.pd_client);
+    pd_client.disable_default_operator();
+
+    let region = block_on(pd_client.get_region_by_id(1)).unwrap().unwrap();
+    let peer_on_store1 = find_peer(&region, nodes[0]).unwrap();
+    cluster.must_transfer_leader(region.get_id(), peer_on_store1.clone());
+    // nonwitness -> witness
+    let peer_on_store3 = find_peer(&region, nodes[2]).unwrap().clone();
+    cluster.pd_client.must_switch_witnesses(
+        region.get_id(),
+        vec![peer_on_store3.get_id()],
+        vec![true],
+    );
+
+    cluster.must_put(b"k1", b"v1");
+
+    std::thread::sleep(Duration::from_millis(100));
+    must_get_none(&cluster.get_engine(3), b"k1");
+
+    // witness -> nonwitness
+    let fp = "ignore request snapshot";
+    fail::cfg(fp, "return").unwrap();
+    cluster
+        .pd_client
+        .switch_witnesses(region.get_id(), vec![peer_on_store3.get_id()], vec![false]);
+    std::thread::sleep(Duration::from_millis(500));
+    // as we ignore request snapshot, so snapshot should still not applied yet
+    assert_eq!(cluster.pd_client.get_pending_peers().len(), 1);
+    must_get_none(&cluster.get_engine(3), b"k1");
+
+    cluster.stop_node(nodes[2]);
+    fail::remove(fp);
+    std::thread::sleep(Duration::from_millis(100));
+    // the PeerState is Unavailable, so it will request snapshot immediately after
+    // start.
+    cluster.run_node(nodes[2]).unwrap();
+    must_get_none(&cluster.get_engine(3), b"k1");
+    std::thread::sleep(Duration::from_millis(500));
+    must_get_equal(&cluster.get_engine(3), b"k1", b"v1");
+    assert_eq!(cluster.pd_client.get_pending_peers().len(), 0);
+}
+fn test_node_merge_crash_before_snapshot_then_catch_up_logs() {
+    let mut cluster = new_node_cluster(0, 3);
+    cluster.cfg.raft_store.merge_max_log_gap = 10;
+    cluster.cfg.raft_store.raft_log_gc_count_limit = Some(11);
+    cluster.cfg.raft_store.raft_log_gc_tick_interval = ReadableDuration::millis(50);
+    // Make merge check resume quickly.
+    cluster.cfg.raft_store.raft_base_tick_interval = ReadableDuration::millis(10);
+    cluster.cfg.raft_store.raft_election_timeout_ticks = 10;
+    // election timeout must be greater than lease
+    cluster.cfg.raft_store.raft_store_max_leader_lease = ReadableDuration::millis(90);
+    cluster.cfg.raft_store.merge_check_tick_interval = ReadableDuration::millis(100);
+    cluster.cfg.raft_store.peer_stale_state_check_interval = ReadableDuration::millis(500);
+
+    let pd_client = Arc::clone(&cluster.pd_client);
+    pd_client.disable_default_operator();
+
+    let on_raft_gc_log_tick_fp = "on_raft_gc_log_tick";
+    fail::cfg(on_raft_gc_log_tick_fp, "return()").unwrap();
+
+    cluster.run();
+
+    let mut region = pd_client.get_region(b"k1").unwrap();
+    cluster.must_split(&region, b"k2");
+
+    let left = pd_client.get_region(b"k1").unwrap();
+    let right = pd_client.get_region(b"k2").unwrap();
+
+    let left_on_store1 = find_peer(&left, 1).unwrap().to_owned();
+    cluster.must_transfer_leader(left.get_id(), left_on_store1);
+    let right_on_store1 = find_peer(&right, 1).unwrap().to_owned();
+    cluster.must_transfer_leader(right.get_id(), right_on_store1);
+
+    cluster.must_put(b"k1", b"v1");
+
+    cluster.add_send_filter(IsolationFilterFactory::new(3));
+
+    pd_client.must_merge(left.get_id(), right.get_id());
+
+    region = pd_client.get_region(b"k1").unwrap();
+    // Write some logs and the logs' number is greater than
+    // `raft_log_gc_count_limit` for latter log compaction
+    for i in 2..15 {
+        cluster.must_put(format!("k{}", i).as_bytes(), b"v");
+    }
+
+    // Aim at making peer 2 only know the compact log but do not know it is
+    // committed
+    let condition = Arc::new(AtomicBool::new(false));
+    let recv_filter = Box::new(
+        RegionPacketFilter::new(region.get_id(), 2)
+            .direction(Direction::Recv)
+            .when(condition.clone())
+            .set_msg_callback(Arc::new(move |msg: &RaftMessage| {
+                if !condition.load(Ordering::Acquire)
+                    && msg.get_message().get_msg_type() == MessageType::MsgAppend
+                    && !msg.get_message().get_entries().is_empty()
+                {
+                    condition.store(true, Ordering::Release);
+                }
+            })),
+    );
+    cluster.sim.wl().add_recv_filter(2, recv_filter);
+
+    let state1 = cluster.truncated_state(region.get_id(), 1);
+    // Remove log compaction failpoint
+    fail::remove(on_raft_gc_log_tick_fp);
+    // Wait to trigger compact raft log
+    cluster.wait_log_truncated(region.get_id(), 1, state1.get_index() + 1);
+
+    let peer_on_store3 = find_peer(&region, 3).unwrap().to_owned();
+    assert_eq!(peer_on_store3.get_id(), 3);
+    // Make peer 3 do not handle snapshot ready
+    // In previous implementation, destroying its source peer and applying snapshot
+    // is not atomic. So making its source peer be destroyed and do not apply
+    // snapshot to reproduce the problem
+    let before_handle_snapshot_ready_3_fp = "before_handle_snapshot_ready_3";
+    fail::cfg(before_handle_snapshot_ready_3_fp, "return()").unwrap();
+
+    cluster.clear_send_filters();
+    // Peer 1 will send snapshot to peer 3
+    // Source peer sends msg to others to get target region info until the election
+    // timeout. The max election timeout is 2 * 10 * 10 = 200ms
+    let election_timeout = 2
+        * cluster.cfg.raft_store.raft_base_tick_interval.as_millis()
+        * cluster.cfg.raft_store.raft_election_timeout_ticks as u64;
+    sleep_ms(election_timeout + 100);
+
+    cluster.stop_node(1);
+    cluster.stop_node(3);
+
+    cluster.sim.wl().clear_recv_filters(2);
+    fail::remove(before_handle_snapshot_ready_3_fp);
+    cluster.run_node(3).unwrap();
+    // Peer 2 will become leader and it don't know the compact log is committed.
+    // So it will send logs not snapshot to peer 3
+    for i in 20..30 {
+        cluster.must_put(format!("k{}", i).as_bytes(), b"v");
+    }
+    must_get_equal(&cluster.get_engine(3), b"k29", b"v");
+}
+fn test_mvcc_concurrent_commit_and_rollback_at_shutdown() {
+    let (mut cluster, mut client, mut ctx) = must_new_cluster_and_kv_client_mul(3);
+    let k = b"key".to_vec();
+    // Use big value to force it in default cf.
+    let v = vec![0; 10240];
+
+    let mut ts = 0;
+
+    // Prewrite
+    ts += 1;
+    let prewrite_start_version = ts;
+    let mut mutation = kvrpcpb::Mutation::default();
+    mutation.set_op(Op::Put);
+    mutation.set_key(k.clone());
+    mutation.set_value(v.clone());
+    must_kv_prewrite(
+        &client,
+        ctx.clone(),
+        vec![mutation],
+        k.clone(),
+        prewrite_start_version,
+    );
+
+    // So all following operation will not be committed by this leader.
+    let leader_fp = "before_leader_handle_committed_entries";
+    fail::cfg(leader_fp, "pause").unwrap();
+
+    // Commit
+    ts += 1;
+    let commit_version = ts;
+    let mut commit_req = CommitRequest::default();
+    commit_req.set_context(ctx.clone());
+    commit_req.start_version = prewrite_start_version;
+    commit_req.mut_keys().push(k.clone());
+    commit_req.commit_version = commit_version;
+    let _commit_resp = client.kv_commit_async(&commit_req).unwrap();
+
+    // Rollback
+    let rollback_start_version = prewrite_start_version;
+    let mut rollback_req = BatchRollbackRequest::default();
+    rollback_req.set_context(ctx.clone());
+    rollback_req.start_version = rollback_start_version;
+    rollback_req.mut_keys().push(k.clone());
+    let _rollback_resp = client.kv_batch_rollback_async(&rollback_req).unwrap();
+
+    // Sleep some time to make sure both commit and rollback are queued in latch.
+    thread::sleep(Duration::from_millis(100));
+    let shutdown_fp = "after_shutdown_apply";
+    fail::cfg_callback(shutdown_fp, move || {
+        fail::remove(leader_fp);
+        // Sleep some time to ensure all logs can be replicated.
+        thread::sleep(Duration::from_millis(300));
+    })
+    .unwrap();
+    let mut leader = cluster.leader_of_region(1).unwrap();
+    cluster.stop_node(leader.get_store_id());
+
+    // So a new leader should be elected.
+    cluster.must_put(b"k2", b"v2");
+    leader = cluster.leader_of_region(1).unwrap();
+    ctx.set_peer(leader.clone());
+    let env = Arc::new(Environment::new(1));
+    let channel =
+        ChannelBuilder::new(env).connect(&cluster.sim.rl().get_addr(leader.get_store_id()));
+    client = TikvClient::new(channel);
+
+    // The first request is commit, the second is rollback, the first one should
+    // succeed.
+    ts += 1;
+    let get_version = ts;
+    let mut get_req = GetRequest::default();
+    get_req.set_context(ctx);
+    get_req.key = k;
+    get_req.version = get_version;
+    let get_resp = client.kv_get(&get_req).unwrap();
+    assert!(
+        !get_resp.has_region_error() && !get_resp.has_error(),
+        "{:?}",
+        get_resp
+    );
+    assert_eq!(get_resp.value, v);
+}
+fn test_analyze_index_with_lock() {
+    let data = vec![
+        (1, Some("name:0"), 2),
+        (2, Some("name:4"), 3),
+        (4, Some("name:3"), 1),
+        (5, Some("name:1"), 4),
+    ];
+
+    let product = ProductTable::new();
+    for &iso_level in &[IsolationLevel::Si, IsolationLevel::Rc] {
+        let (_, endpoint, _) = init_data_with_commit(&product, &data, false);
+
+        let mut req = new_analyze_index_req(&product, 3, product["name"].index, 4, 32, 0, 1);
+        let mut ctx = Context::default();
+        ctx.set_isolation_level(iso_level);
+        req.set_context(ctx);
+
+        let resp = handle_request(&endpoint, req);
+        match iso_level {
+            IsolationLevel::Si => {
+                assert!(resp.get_data().is_empty(), "{:?}", resp);
+                assert!(resp.has_locked(), "{:?}", resp);
+            }
+            IsolationLevel::Rc => {
+                let mut analyze_resp = AnalyzeIndexResp::default();
+                analyze_resp.merge_from_bytes(resp.get_data()).unwrap();
+                let hist = analyze_resp.get_hist();
+                assert!(hist.get_buckets().is_empty());
+                assert_eq!(hist.get_ndv(), 0);
+            }
+            IsolationLevel::RcCheckTs => unimplemented!(),
+        }
+    }
+}
+fn test_raftkv_early_error_report() {
+    let raftkv_fp = "raftkv_early_error_report";
+    let mut cluster = new_server_cluster(0, 1);
+    cluster.run();
+    cluster.must_split(&cluster.get_region(b"k0"), b"k1");
+
+    let env = Arc::new(Environment::new(1));
+    let mut clients: HashMap<&[u8], (Context, TikvClient)> = HashMap::default();
+    for &k in &[b"k0", b"k1"] {
+        let region = cluster.get_region(k);
+        let leader = region.get_peers()[0].clone();
+        let mut ctx = Context::default();
+        let channel = ChannelBuilder::new(env.clone())
+            .connect(&cluster.sim.rl().get_addr(leader.get_store_id()));
+        let client = TikvClient::new(channel);
+        ctx.set_region_id(region.get_id());
+        ctx.set_region_epoch(region.get_region_epoch().clone());
+        ctx.set_peer(leader);
+        clients.insert(k, (ctx, client));
+    }
+
+    // Inject error to all regions.
+    fail::cfg(raftkv_fp, "return").unwrap();
+    for (k, (ctx, client)) in &clients {
+        let mut put_req = RawPutRequest::default();
+        put_req.set_context(ctx.clone());
+        put_req.key = k.to_vec();
+        put_req.value = b"v".to_vec();
+        let put_resp = client.raw_put(&put_req).unwrap();
+        assert!(put_resp.has_region_error(), "{:?}", put_resp);
+        assert!(
+            put_resp.get_region_error().has_region_not_found(),
+            "{:?}",
+            put_resp
+        );
+        must_get_none(&cluster.get_engine(1), k);
+    }
+    fail::remove(raftkv_fp);
+
+    // Inject only one region
+    let injected_region_id = clients[b"k0".as_ref()].0.get_region_id();
+    fail::cfg(raftkv_fp, &format!("return({})", injected_region_id)).unwrap();
+    for (k, (ctx, client)) in &clients {
+        let mut put_req = RawPutRequest::default();
+        put_req.set_context(ctx.clone());
+        put_req.key = k.to_vec();
+        put_req.value = b"v".to_vec();
+        let put_resp = client.raw_put(&put_req).unwrap();
+        if ctx.get_region_id() == injected_region_id {
+            assert!(put_resp.has_region_error(), "{:?}", put_resp);
+            assert!(
+                put_resp.get_region_error().has_region_not_found(),
+                "{:?}",
+                put_resp
+            );
+            must_get_none(&cluster.get_engine(1), k);
+        } else {
+            assert!(!put_resp.has_region_error(), "{:?}", put_resp);
+            must_get_equal(&cluster.get_engine(1), k, b"v");
+        }
+    }
+    fail::remove(raftkv_fp);
+}
+fn test_node_merge_transfer_leader() {
+    let mut cluster = new_node_cluster(0, 3);
+    configure_for_merge(&mut cluster.cfg);
+    cluster.cfg.raft_store.store_batch_system.max_batch_size = Some(1);
+    cluster.cfg.raft_store.store_batch_system.pool_size = 2;
+    let pd_client = Arc::clone(&cluster.pd_client);
+    pd_client.disable_default_operator();
+
+    cluster.run();
+
+    // To ensure the region has applied to its current term so that later `split`
+    // can success without any retries. Then, `left_peer_3` will must be `1003`.
+    let region = pd_client.get_region(b"k1").unwrap();
+    let peer_1 = find_peer(&region, 1).unwrap().to_owned();
+    cluster.must_transfer_leader(region.get_id(), peer_1);
+    let k = b"k1_for_apply_to_current_term";
+    cluster.must_put(k, b"value");
+    must_get_equal(&cluster.get_engine(1), k, b"value");
+
+    cluster.must_split(&region, b"k2");
+
+    cluster.must_put(b"k1", b"v1");
+    cluster.must_put(b"k3", b"v3");
+
+    let left = pd_client.get_region(b"k1").unwrap();
+    let right = pd_client.get_region(b"k2").unwrap();
+
+    let left_peer_1 = find_peer(&left, 1).unwrap().to_owned();
+    cluster.must_transfer_leader(left.get_id(), left_peer_1.clone());
+
+    let left_peer_3 = find_peer(&left, 3).unwrap().to_owned();
+    assert_eq!(left_peer_3.get_id(), 1003);
+
+    let schedule_merge_fp = "on_schedule_merge";
+    fail::cfg(schedule_merge_fp, "return()").unwrap();
+
+    cluster.must_try_merge(left.get_id(), right.get_id());
+
+    // Prevent peer 1003 to handle ready when it's leader
+    let before_handle_raft_ready_1003 = "before_handle_raft_ready_1003";
+    fail::cfg(before_handle_raft_ready_1003, "pause").unwrap();
+
+    let epoch = cluster.get_region_epoch(left.get_id());
+    let mut transfer_leader_req =
+        new_admin_request(left.get_id(), &epoch, new_transfer_leader_cmd(left_peer_3));
+    transfer_leader_req.mut_header().set_peer(left_peer_1);
+    cluster
+        .sim
+        .rl()
+        .async_command_on_node(1, transfer_leader_req, Callback::None)
+        .unwrap();
+    fail::remove(schedule_merge_fp);
+
+    pd_client.check_merged_timeout(left.get_id(), Duration::from_secs(5));
+
+    fail::remove(before_handle_raft_ready_1003);
+    sleep_ms(100);
+    cluster.must_put(b"k4", b"v4");
+    must_get_equal(&cluster.get_engine(3), b"k4", b"v4");
+}
+fn test_non_witness_replica_read() {
+    let mut cluster = new_server_cluster(0, 3);
+    cluster.cfg.raft_store.check_request_snapshot_interval = ReadableDuration::millis(20);
+    cluster.run();
+    let nodes = Vec::from_iter(cluster.get_node_ids());
+    assert_eq!(nodes.len(), 3);
+
+    let pd_client = Arc::clone(&cluster.pd_client);
+    pd_client.disable_default_operator();
+
+    cluster.must_put(b"k0", b"v0");
+
+    let region = block_on(pd_client.get_region_by_id(1)).unwrap().unwrap();
+    let peer_on_store1 = find_peer(&region, nodes[0]).unwrap().clone();
+    cluster.must_transfer_leader(region.get_id(), peer_on_store1);
+    // nonwitness -> witness
+    let peer_on_store3 = find_peer(&region, nodes[2]).unwrap().clone();
+    cluster.pd_client.must_switch_witnesses(
+        region.get_id(),
+        vec![peer_on_store3.get_id()],
+        vec![true],
+    );
+
+    // witness -> nonwitness
+    fail::cfg("ignore request snapshot", "return").unwrap();
+    cluster
+        .pd_client
+        .switch_witnesses(region.get_id(), vec![peer_on_store3.get_id()], vec![false]);
+    std::thread::sleep(Duration::from_millis(100));
+    // as we ignore request snapshot, so snapshot should still not applied yet
+
+    let mut request = new_request(
+        region.get_id(),
+        region.get_region_epoch().clone(),
+        vec![new_get_cmd(b"k0")],
+        false,
+    );
+    request.mut_header().set_peer(peer_on_store3.clone());
+    request.mut_header().set_replica_read(true);
+
+    let resp = cluster
+        .read(None, request, Duration::from_millis(100))
+        .unwrap();
+    assert_eq!(
+        resp.get_header().get_error().get_is_witness(),
+        &kvproto::errorpb::IsWitness {
+            region_id: region.get_id(),
+            ..Default::default()
+        }
+    );
+
+    // start requesting snapshot and give enough time for applying snapshot to
+    // complete
+    fail::remove("ignore request snapshot");
+    std::thread::sleep(Duration::from_millis(500));
+
+    let mut request = new_request(
+        region.get_id(),
+        region.get_region_epoch().clone(),
+        vec![new_get_cmd(b"k0")],
+        false,
+    );
+    request.mut_header().set_peer(peer_on_store3);
+    request.mut_header().set_replica_read(true);
+
+    let resp = cluster
+        .read(None, request, Duration::from_millis(100))
+        .unwrap();
+    assert_eq!(resp.get_header().has_error(), false);
+}
+fn test_transfer_leader_msg_index() {
+    let mut cluster = new_node_cluster(0, 3);
+    cluster.cfg.raft_store.raft_entry_cache_life_time = ReadableDuration::secs(1000);
+    prevent_from_gc_raft_log(&mut cluster);
+    run_cluster_for_test_warmup_entry_cache(&mut cluster);
+
+    let (sx, rx) = channel::unbounded();
+    let recv_filter = Box::new(
+        RegionPacketFilter::new(1, 2)
+            .direction(Direction::Recv)
+            .msg_type(MessageType::MsgTransferLeader)
+            .set_msg_callback(Arc::new(move |m| {
+                sx.send(m.get_message().get_index()).unwrap();
+            })),
+    );
+    cluster.sim.wl().add_recv_filter(2, recv_filter);
+
+    // TransferLeaderMsg.index should be equal to the store3's replicated_index.
+    cluster.transfer_leader(1, new_peer(2, 2));
+    let replicated_index = cluster.raft_local_state(1, 3).last_index;
+    assert_eq!(
+        rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+        replicated_index,
+    );
+}
+fn test_dispatch_change() {
+    use std::{error::Error, result::Result};
+
+    use online_config::ConfigManager;
+
+    #[derive(Clone)]
+    struct CfgManager(Arc<Mutex<RaftstoreConfig>>);
+
+    impl ConfigManager for CfgManager {
+        fn dispatch(&mut self, c: ConfigChange) -> Result<(), Box<dyn Error>> {
+            self.0.lock().unwrap().update(c)
+        }
+    }
+
+    let (mut cfg, _dir) = TikvConfig::with_tmp().unwrap();
+    cfg.validate().unwrap();
+    let cfg_controller = ConfigController::new(cfg);
+    let mut cfg = cfg_controller.get_current();
+    let mgr = CfgManager(Arc::new(Mutex::new(cfg.raft_store.clone())));
+    cfg_controller.register(Module::Raftstore, Box::new(mgr.clone()));
+
+    cfg_controller
+        .update(change("raftstore.raft-log-gc-threshold", "2000"))
+        .unwrap();
+
+    // config update
+    cfg.raft_store.raft_log_gc_threshold = 2000;
+    assert_eq!(cfg_controller.get_current(), cfg);
+
+    // config change should also dispatch to raftstore config manager
+    assert_eq!(mgr.0.lock().unwrap().raft_log_gc_threshold, 2000);
+}
+fn test_merge_pessimistic_locks_with_concurrent_prewrite() {
+    let mut cluster = new_server_cluster(0, 2);
+    configure_for_merge(&mut cluster.cfg);
+    cluster.cfg.pessimistic_txn.pipelined = true;
+    cluster.cfg.pessimistic_txn.in_memory = true;
+    let pd_client = Arc::clone(&cluster.pd_client);
+    pd_client.disable_default_operator();
+
+    cluster.run();
+
+    cluster.must_transfer_leader(1, new_peer(1, 1));
+
+    cluster.must_put(b"k1", b"v1");
+    cluster.must_put(b"k3", b"v3");
+
+    let region = cluster.get_region(b"k1");
+    cluster.must_split(&region, b"k2");
+    let left = cluster.get_region(b"k1");
+    let right = cluster.get_region(b"k3");
+
+    cluster.must_transfer_leader(right.id, new_peer(2, 2));
+
+    let addr = cluster.sim.rl().get_addr(1);
+    let env = Arc::new(Environment::new(1));
+    let channel = ChannelBuilder::new(env).connect(&addr);
+    let client = TikvClient::new(channel);
+
+    let snapshot = cluster.must_get_snapshot_of_region(left.id);
+    let txn_ext = snapshot.txn_ext.unwrap();
+    let lock = PessimisticLock {
+        primary: b"k0".to_vec().into_boxed_slice(),
+        start_ts: 10.into(),
+        ttl: 3000,
+        for_update_ts: 20.into(),
+        min_commit_ts: 30.into(),
+        last_change_ts: 15.into(),
+        versions_to_last_change: 3,
+    };
+    txn_ext
+        .pessimistic_locks
+        .write()
+        .insert(vec![
+            (Key::from_raw(b"k0"), lock.clone()),
+            (Key::from_raw(b"k1"), lock),
+        ])
+        .unwrap();
+
+    let mut mutation = Mutation::default();
+    mutation.set_op(Op::Put);
+    mutation.set_key(b"k0".to_vec());
+    mutation.set_value(b"v".to_vec());
+    let mut req = PrewriteRequest::default();
+    req.set_context(cluster.get_ctx(b"k0"));
+    req.set_mutations(vec![mutation].into());
+    req.set_pessimistic_actions(vec![DoPessimisticCheck]);
+    req.set_start_version(10);
+    req.set_for_update_ts(40);
+    req.set_primary_lock(b"k0".to_vec());
+
+    // First, pause apply and prewrite.
+    fail::cfg("on_handle_apply", "pause").unwrap();
+    let req2 = req.clone();
+    let client2 = client.clone();
+    let resp = thread::spawn(move || client2.kv_prewrite(&req2).unwrap());
+    thread::sleep(Duration::from_millis(500));
+
+    // Then, start merging. PrepareMerge should wait until prewrite is done.
+    cluster.merge_region(left.id, right.id, Callback::None);
+    thread::sleep(Duration::from_millis(500));
+    assert!(txn_ext.pessimistic_locks.read().is_writable());
+
+    // But a later prewrite request should fail because we have already banned all
+    // later proposals.
+    req.mut_mutations()[0].set_key(b"k1".to_vec());
+    let resp2 = thread::spawn(move || client.kv_prewrite(&req).unwrap());
+
+    fail::remove("on_handle_apply");
+    let resp = resp.join().unwrap();
+    assert!(!resp.has_region_error(), "{:?}", resp);
+
+    let resp2 = resp2.join().unwrap();
+    assert!(resp2.has_region_error());
+}
+fn test_analyze_sampling_reservoir() {
+    let data = vec![
+        (1, Some("name:0"), 2),
+        (2, Some("name:4"), 3),
+        (4, Some("name:3"), 1),
+        (5, None, 4),
+        (6, Some("name:1"), 1),
+        (7, Some("name:1"), 1),
+        (8, Some("name:1"), 1),
+        (9, Some("name:2"), 1),
+        (10, Some("name:2"), 1),
+    ];
+
+    let product = ProductTable::new();
+    let (_, endpoint, _) = init_data_with_commit(&product, &data, true);
+
+    // Pass the 2nd column as a column group.
+    let req = new_analyze_sampling_req(&product, 1, 5, 0.0);
+    let resp = handle_request(&endpoint, req);
+    assert!(!resp.get_data().is_empty());
+    let mut analyze_resp = AnalyzeColumnsResp::default();
+    analyze_resp.merge_from_bytes(resp.get_data()).unwrap();
+    let collector = analyze_resp.get_row_collector();
+    assert_eq!(collector.get_samples().len(), 5);
+    // The column group is at 4th place and the data should be equal to the 2nd.
+    assert_eq!(collector.get_null_counts(), vec![0, 1, 0, 1]);
+    assert_eq!(collector.get_count(), 9);
+    assert_eq!(collector.get_fm_sketch().len(), 4);
+    assert_eq!(collector.get_total_size(), vec![72, 56, 9, 56]);
+}
+fn test_mismatch_store_node() {
+    let count = 3;
+    let mut cluster = new_server_cluster(0, count);
+    cluster.run();
+    cluster.must_put(b"k1", b"v1");
+    let node_ids = cluster.get_node_ids();
+    let mut iter = node_ids.iter();
+    let node1_id = *iter.next().unwrap();
+    let node2_id = *iter.next().unwrap();
+    let node3_id = *iter.next().unwrap();
+    let pd_client = cluster.pd_client.clone();
+    must_get_equal(&cluster.get_engine(node1_id), b"k1", b"v1");
+    must_get_equal(&cluster.get_engine(node2_id), b"k1", b"v1");
+    must_get_equal(&cluster.get_engine(node3_id), b"k1", b"v1");
+    let node1_addr = pd_client
+        .get_store(node1_id)
+        .unwrap()
+        .get_address()
+        .to_string();
+    let node2_addr = pd_client
+        .get_store(node2_id)
+        .unwrap()
+        .get_address()
+        .to_string();
+    let node3_addr = cluster
+        .pd_client
+        .get_store(node3_id)
+        .unwrap()
+        .get_address()
+        .to_string();
+    cluster.stop_node(node2_id);
+    cluster.stop_node(node3_id);
+    // run node2
+    cluster.cfg.server.addr = node3_addr.clone();
+    cluster.run_node(node2_id).unwrap();
+    let filter = RegionPacketFilter::new(1, node2_id)
+        .direction(Direction::Send)
+        .msg_type(MessageType::MsgRequestPreVote);
+    cluster.add_send_filter(CloneFilterFactory(filter));
+    // run node3
+    cluster.cfg.server.addr = node2_addr.clone();
+    cluster.run_node(node3_id).unwrap();
+    let filter = RegionPacketFilter::new(1, node3_id)
+        .direction(Direction::Send)
+        .msg_type(MessageType::MsgRequestPreVote);
+    cluster.add_send_filter(CloneFilterFactory(filter));
+    sleep_ms(600);
+    fail::cfg("mock_store_refresh_interval_secs", "return(0)").unwrap();
+    cluster.must_put(b"k2", b"v2");
+    assert_eq!(
+        node1_addr,
+        pd_client.get_store(node1_id).unwrap().get_address()
+    );
+    assert_eq!(
+        node3_addr,
+        pd_client.get_store(node2_id).unwrap().get_address()
+    );
+    assert_eq!(
+        node2_addr,
+        cluster.pd_client.get_store(node3_id).unwrap().get_address()
+    );
+    must_get_equal(&cluster.get_engine(node3_id), b"k2", b"v2");
+    must_get_equal(&cluster.get_engine(node2_id), b"k2", b"v2");
+    fail::remove("mock_store_refresh_interval_secs");
+}
+fn test_load_global_config() {
+    let (mut _server, client) = new_test_server_and_client(ReadableDuration::millis(100));
+    let global_items = vec![("test1", "val1"), ("test2", "val2"), ("test3", "val3")];
+    let check_items = global_items.clone();
+    if let Err(err) = futures::executor::block_on(
+        client.store_global_config(
+            String::from("global"),
+            global_items
+                .iter()
+                .map(|(name, value)| {
+                    let mut item = GlobalConfigItem::default();
+                    item.set_name(name.to_string());
+                    item.set_payload(value.as_bytes().into());
+                    item
+                })
+                .collect::<Vec<GlobalConfigItem>>(),
+        ),
+    ) {
+        panic!("error occur {:?}", err);
+    }
+
+    let (res, revision) =
+        futures::executor::block_on(client.load_global_config(String::from("global"))).unwrap();
+    assert!(
+        res.iter()
+            .zip(check_items)
+            .all(|(item1, item2)| item1.name == item2.0 && item1.payload == item2.1.as_bytes())
+    );
+    assert_eq!(revision, 3);
+}

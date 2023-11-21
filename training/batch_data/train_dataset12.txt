@@ -1,0 +1,2914 @@
+fn test_something() {
+    let data = [];
+    let config = general_purpose::GeneralPurposeConfig::new()
+        .with_encode_padding(false)
+        .with_decode_padding_mode(engine::DecodePaddingMode::RequireNone);
+    let engine = general_purpose::GeneralPurpose::new(&base64::alphabet::STANDARD, config);
+    let encoded = engine.encode(data);
+    let decoded = engine.decode(&encoded).unwrap();
+    assert_eq!(data, decoded.as_slice());
+}
+fn vec_var_width_value_type() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+
+    let definition: TableDefinition<u8, Vec<&str>> = TableDefinition::new("x");
+
+    let value = vec!["hello", "world"];
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(definition).unwrap();
+        table.insert(0, &value).unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(definition).unwrap();
+    assert_eq!(value, table.get(0).unwrap().unwrap().value());
+}
+fn test_gc_peer_response() {
+    let cluster = Cluster::with_node_count(2, None);
+    let region_id = 2;
+    let mut req = cluster.routers[0].new_request_for(region_id);
+    let admin_req = req.mut_admin_request();
+    admin_req.set_cmd_type(AdminCmdType::ChangePeer);
+    admin_req
+        .mut_change_peer()
+        .set_change_type(ConfChangeType::AddLearnerNode);
+    let store_id = cluster.node(1).id();
+    let new_peer = new_learner_peer(store_id, 10);
+    admin_req.mut_change_peer().set_peer(new_peer.clone());
+    let resp = cluster.routers[0].admin_command(2, req.clone()).unwrap();
+    assert!(!resp.get_header().has_error(), "{:?}", resp);
+    let raft_engine = &cluster.node(0).running_state().unwrap().raft_engine;
+    let region_state = raft_engine
+        .get_region_state(region_id, u64::MAX)
+        .unwrap()
+        .unwrap();
+    assert!(region_state.get_removed_records().is_empty());
+
+    let new_conf_ver = req.get_header().get_region_epoch().get_conf_ver() + 1;
+    req.mut_header()
+        .mut_region_epoch()
+        .set_conf_ver(new_conf_ver);
+    req.mut_admin_request()
+        .mut_change_peer()
+        .set_change_type(ConfChangeType::RemoveNode);
+    let resp = cluster.routers[0]
+        .admin_command(region_id, req.clone())
+        .unwrap();
+    assert!(!resp.get_header().has_error(), "{:?}", resp);
+    cluster.routers[0].wait_flush(region_id, Duration::from_millis(300));
+    // Drain all existing messages.
+    while cluster.receiver(0).try_recv().is_ok() {}
+
+    let mut msg = Box::<RaftMessage>::default();
+    msg.set_region_id(region_id);
+    msg.set_to_peer(req.get_header().get_peer().clone());
+    msg.set_from_peer(new_peer);
+    let receiver = &cluster.receiver(0);
+    for ty in &[MessageType::MsgRequestVote, MessageType::MsgRequestPreVote] {
+        msg.mut_message().set_msg_type(*ty);
+        cluster.routers[0].send_raft_message(msg.clone()).unwrap();
+        let tombstone_msg = match receiver.recv_timeout(Duration::from_millis(300)) {
+            Ok(msg) => msg,
+            Err(e) => panic!("failed to receive tombstone message {:?}: {:?}", ty, e),
+        };
+        assert_tombstone_msg(&tombstone_msg, region_id, 10);
+    }
+    // Non-vote message should not trigger tombstone.
+    msg.mut_message().set_msg_type(MessageType::MsgHeartbeat);
+    cluster.routers[0].send_raft_message(msg).unwrap();
+    cluster
+        .receiver(0)
+        .recv_timeout(Duration::from_millis(300))
+        .unwrap_err();
+
+    // GcTick should also trigger tombstone.
+    cluster.routers[0]
+        .send(region_id, PeerMsg::Tick(PeerTick::GcPeer))
+        .unwrap();
+    let tombstone_msg = cluster
+        .receiver(0)
+        .recv_timeout(Duration::from_millis(300))
+        .unwrap();
+    assert_tombstone_msg(&tombstone_msg, region_id, 10);
+
+    // First message to create the peer and destroy.
+    cluster.routers[1]
+        .send_raft_message(Box::new(tombstone_msg.clone()))
+        .unwrap();
+    cluster.routers[1].wait_flush(region_id, Duration::from_millis(300));
+    cluster
+        .receiver(1)
+        .recv_timeout(Duration::from_millis(300))
+        .unwrap_err();
+    // Send message should trigger tombstone report.
+    cluster.routers[1]
+        .send_raft_message(Box::new(tombstone_msg))
+        .unwrap();
+    let report = cluster
+        .receiver(1)
+        .recv_timeout(Duration::from_millis(300))
+        .unwrap();
+    assert_valid_report(&report, region_id, 10);
+    cluster.routers[0]
+        .send_raft_message(Box::new(report))
+        .unwrap();
+    let raft_engine = &cluster.node(0).running_state().unwrap().raft_engine;
+    let region_state = raft_engine
+        .get_region_state(region_id, u64::MAX)
+        .unwrap()
+        .unwrap();
+    assert_eq!(region_state.get_removed_records().len(), 1);
+    // Tick should flush records gc.
+    cluster.routers[0]
+        .send(region_id, PeerMsg::Tick(PeerTick::GcPeer))
+        .unwrap();
+    // Trigger a write to make sure records gc is finished.
+    let header = Box::new(cluster.routers[0].new_request_for(region_id).take_header());
+    let mut put = SimpleWriteEncoder::with_capacity(64);
+    put.put(CF_DEFAULT, b"key", b"value");
+    let (msg, sub) = PeerMsg::simple_write(header, put.encode());
+    cluster.routers[0].send(region_id, msg).unwrap();
+    block_on(sub.result()).unwrap();
+    cluster.routers[0].wait_flush(region_id, Duration::from_millis(300));
+    let region_state = raft_engine
+        .get_region_state(region_id, u64::MAX)
+        .unwrap()
+        .unwrap();
+    assert!(region_state.get_removed_records().is_empty());
+}
+fn create_open() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(U64_TABLE).unwrap();
+        table.insert(&0, &1).unwrap();
+    }
+    write_txn.commit().unwrap();
+    drop(db);
+
+    let db2 = Database::open(tmpfile.path()).unwrap();
+
+    let read_txn = db2.begin_read().unwrap();
+    let table = read_txn.open_table(U64_TABLE).unwrap();
+    assert_eq!(1, table.get(&0).unwrap().unwrap().value());
+}
+fn backup_blocked_by_memory_lock() {
+    let suite = TestSuite::new(1, 144 * 1024 * 1024, ApiVersion::V1);
+
+    fail::cfg("raftkv_async_write_finish", "pause").unwrap();
+    let tikv_cli = suite.tikv_cli.clone();
+    let (k, v) = (b"my_key", b"my_value");
+    let mut mutation = Mutation::default();
+    mutation.set_op(Op::Put);
+    mutation.key = k.to_vec();
+    mutation.value = v.to_vec();
+    let mut prewrite_req = PrewriteRequest::default();
+    prewrite_req.set_context(suite.context.clone());
+    prewrite_req.mut_mutations().push(mutation);
+    prewrite_req.set_primary_lock(k.to_vec());
+    prewrite_req.set_start_version(20);
+    prewrite_req.set_lock_ttl(2000);
+    prewrite_req.set_use_async_commit(true);
+    let th = thread::spawn(move || tikv_cli.kv_prewrite(&prewrite_req).unwrap());
+
+    thread::sleep(Duration::from_millis(200));
+
+    // Trigger backup request.
+    let tmp = Builder::new().tempdir().unwrap();
+    let backup_ts = TimeStamp::from(21);
+    let storage_path = make_unique_dir(tmp.path());
+    let rx = suite.backup(
+        b"a".to_vec(), // start
+        b"z".to_vec(), // end
+        0.into(),      // begin_ts
+        backup_ts,
+        &storage_path,
+    );
+    let resp = block_on(rx.collect::<Vec<_>>());
+    match &resp[0].get_error().detail {
+        Some(Error_oneof_detail::KvError(key_error)) => {
+            assert!(key_error.has_locked());
+        }
+        _ => panic!("unexpected response"),
+    }
+
+    fail::remove("raftkv_async_write_finish");
+    th.join().unwrap();
+
+    suite.stop();
+}
+fn test_region_collection_seek_region() {
+    let mut cluster = new_node_cluster(0, 3);
+
+    let (tx, rx) = channel();
+    cluster
+        .sim
+        .wl()
+        .post_create_coprocessor_host(Box::new(move |id, host| {
+            let p = RegionInfoAccessor::new(host);
+            tx.send((id, p)).unwrap()
+        }));
+
+    cluster.run();
+    let region_info_providers: HashMap<_, _> = rx.try_iter().collect();
+    assert_eq!(region_info_providers.len(), 3);
+    let regions = prepare_cluster(&mut cluster);
+
+    for node_id in cluster.get_node_ids() {
+        let engine = &region_info_providers[&node_id];
+
+        // Test traverse all regions
+        let key = b"".to_vec();
+        let (tx, rx) = channel();
+        let tx_ = tx.clone();
+        engine
+            .seek_region(
+                &key,
+                Box::new(move |infos| {
+                    tx_.send(infos.map(|i| i.region.clone()).collect()).unwrap();
+                }),
+            )
+            .unwrap();
+        let sought_regions: Vec<_> = rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert_eq!(sought_regions, regions);
+
+        // Test end_key is exclusive
+        let (tx, rx) = channel();
+        let tx_ = tx.clone();
+        engine
+            .seek_region(
+                b"k1",
+                Box::new(move |infos| tx_.send(infos.next().unwrap().region.clone()).unwrap()),
+            )
+            .unwrap();
+        let region = rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert_eq!(region, regions[1]);
+
+        // Test seek from non-starting key
+        let tx_ = tx.clone();
+        engine
+            .seek_region(
+                b"k6\xff\xff\xff\xff\xff",
+                Box::new(move |infos| tx_.send(infos.next().unwrap().region.clone()).unwrap()),
+            )
+            .unwrap();
+        let region = rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert_eq!(region, regions[3]);
+        let tx_ = tx.clone();
+        engine
+            .seek_region(
+                b"\xff\xff\xff\xff\xff\xff\xff\xff",
+                Box::new(move |infos| tx_.send(infos.next().unwrap().region.clone()).unwrap()),
+            )
+            .unwrap();
+        let region = rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert_eq!(region, regions[5]);
+    }
+
+    for (_, p) in region_info_providers {
+        p.stop();
+    }
+}
+fn delete_table() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+
+    let y_def: MultimapTableDefinition<&str, &str> = MultimapTableDefinition::new("y");
+
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(STR_TABLE).unwrap();
+        table.insert("hello", "world").unwrap();
+        let mut multitable = write_txn.open_multimap_table(y_def).unwrap();
+        multitable.insert("hello2", "world2").unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let write_txn = db.begin_write().unwrap();
+    assert!(write_txn.delete_table(STR_TABLE).unwrap());
+    assert!(!write_txn.delete_table(STR_TABLE).unwrap());
+    assert!(write_txn.delete_multimap_table(y_def).unwrap());
+    assert!(!write_txn.delete_multimap_table(y_def).unwrap());
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let result = read_txn.open_table(STR_TABLE);
+    assert!(result.is_err());
+    let result = read_txn.open_multimap_table(y_def);
+    assert!(result.is_err());
+}
+fn range_query_reversed() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(U64_TABLE).unwrap();
+        for i in 0..10 {
+            table.insert(&i, &i).unwrap();
+        }
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(U64_TABLE).unwrap();
+    let mut iter = table.range(3..7).unwrap().rev();
+    for i in (3..7u64).rev() {
+        let (key, value) = iter.next().unwrap().unwrap();
+        assert_eq!(i, key.value());
+        assert_eq!(i, value.value());
+    }
+    assert!(iter.next().is_none());
+
+    // Test reversing multiple times
+    let mut iter = table.range(3..7).unwrap();
+    let (key, _) = iter.next().unwrap().unwrap();
+    assert_eq!(3, key.value());
+
+    let mut iter = iter.rev();
+    let (key, _) = iter.next().unwrap().unwrap();
+    assert_eq!(6, key.value());
+    let (key, _) = iter.next().unwrap().unwrap();
+    assert_eq!(5, key.value());
+
+    let mut iter = iter.rev();
+    let (key, _) = iter.next().unwrap().unwrap();
+    assert_eq!(4, key.value());
+
+    assert!(iter.next().is_none());
+}
+fn abort() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(STR_TABLE).unwrap();
+        table.insert("hello", "aborted").unwrap();
+        assert_eq!("aborted", table.get("hello").unwrap().unwrap().value());
+    }
+    write_txn.abort().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(STR_TABLE);
+    assert!(table.is_err());
+
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(STR_TABLE).unwrap();
+        table.insert("hello", "world").unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(STR_TABLE).unwrap();
+    assert_eq!("world", table.get("hello").unwrap().unwrap().value());
+    assert_eq!(table.len().unwrap(), 1);
+}
+async fn invalid_connect_protocol_enabled_setting() {
+    h2_support::trace_init!();
+
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        // Send a settings frame
+        srv.send(frames::settings().enable_connect_protocol(2).into())
+            .await
+            .unwrap();
+        srv.read_preface().await.unwrap();
+
+        let settings = assert_settings!(srv.next().await.expect("unexpected EOF").unwrap());
+        assert_default_settings!(settings);
+
+        // Send the ACK
+        let ack = frame::Settings::ack();
+
+        // TODO: Don't unwrap?
+        srv.send(ack.into()).await.unwrap();
+
+        let frame = srv.next().await.unwrap().unwrap();
+        let go_away = assert_go_away!(frame);
+        assert_eq!(go_away.reason(), Reason::PROTOCOL_ERROR);
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+
+        // we send a simple req here just to drive the connection so we can
+        // receive the server settings.
+        let request = Request::get("https://example.com/").body(()).unwrap();
+        let (response, _) = client.send_request(request, true).unwrap();
+
+        let error = h2.drive(response).await.unwrap_err();
+        assert_eq!(error.reason(), Some(Reason::PROTOCOL_ERROR));
+    };
+
+    join(srv, h2).await;
+}
+fn range_lifetime() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+
+    let definition: TableDefinition<&str, &str> = TableDefinition::new("x");
+
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(definition).unwrap();
+        table.insert("hello", "world").unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(definition).unwrap();
+
+    let mut iter = {
+        let start = "hello".to_string();
+        table.range::<&str>(start.as_str()..).unwrap()
+    };
+    assert_eq!(iter.next().unwrap().unwrap().1.value(), "world");
+    assert!(iter.next().is_none());
+}
+fn is_empty() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(STR_TABLE).unwrap();
+        assert!(table.is_empty().unwrap());
+        table.insert("hello", "world").unwrap();
+        assert!(!table.is_empty().unwrap());
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(STR_TABLE).unwrap();
+    assert!(!table.is_empty().unwrap());
+}
+fn test_region_collection_find_region_by_key() {
+    let mut cluster = new_node_cluster(0, 3);
+
+    let (tx, rx) = channel();
+    cluster
+        .sim
+        .wl()
+        .post_create_coprocessor_host(Box::new(move |id, host| {
+            let p = RegionInfoAccessor::new(host);
+            tx.send((id, p)).unwrap()
+        }));
+
+    cluster.run();
+    let region_info_providers: HashMap<_, _> = rx.try_iter().collect();
+    assert_eq!(region_info_providers.len(), 3);
+    let regions = prepare_cluster(&mut cluster);
+
+    for node_id in cluster.get_node_ids() {
+        let engine = &region_info_providers[&node_id];
+
+        let region = engine.find_region_by_key(b"").unwrap();
+        assert_eq!(region, regions[0]);
+
+        let region = engine.find_region_by_key(b"k2").unwrap();
+        assert_eq!(region, regions[1]);
+
+        let region = engine.find_region_by_key(b"k99").unwrap();
+        assert_eq!(region, *regions.last().unwrap());
+    }
+
+    for (_, p) in region_info_providers {
+        p.stop();
+    }
+}
+fn test_reject_proposal_during_region_merge() {
+    let mut cluster = new_node_cluster(0, 3);
+    configure_for_merge(&mut cluster.cfg);
+    let pd_client = cluster.pd_client.clone();
+    pd_client.disable_default_operator();
+    cluster.run();
+    cluster.must_transfer_leader(1, new_peer(1, 1));
+    cluster.must_put(b"k", b"v");
+
+    let r = cluster.get_region(b"");
+    cluster.must_split(&r, b"k");
+    // Let the new region catch up.
+    cluster.must_put(b"a", b"v");
+    cluster.must_put(b"k", b"v");
+
+    let prepare_merge_fp = "apply_before_prepare_merge";
+    let commit_merge_fp = "apply_before_commit_merge";
+
+    // Pause on applying so that prepare-merge is not finished.
+    fail::cfg(prepare_merge_fp, "pause").unwrap();
+    // Try to merge region.
+    let (merge_tx, merge_rx) = mpsc::channel();
+    let cb = Callback::read(Box::new(move |resp: ReadResponse<RocksSnapshot>| {
+        merge_tx.send(resp.response).unwrap()
+    }));
+    let source = cluster.get_region(b"");
+    let target = cluster.get_region(b"k");
+    cluster.merge_region(source.get_id(), target.get_id(), cb);
+    merge_rx
+        .recv_timeout(Duration::from_millis(100))
+        .unwrap_err();
+
+    // Try to put a key on the source region.
+    let force_delay_propose_batch_raft_command_fp = "force_delay_propose_batch_raft_command";
+    let mut receivers = vec![];
+    for i in 0..2 {
+        if i == 1 {
+            // Test another path of calling proposed callback.
+            fail::cfg(force_delay_propose_batch_raft_command_fp, "2*return").unwrap();
+        }
+        let write_req = make_write_req(&mut cluster, b"a");
+        let (cb, mut cb_receivers) = make_cb(&write_req);
+        cluster
+            .sim
+            .rl()
+            .async_command_on_node(1, write_req, cb)
+            .unwrap();
+        // The write request should be blocked until prepare-merge is finished.
+        cb_receivers.assert_not_ready();
+        receivers.push(cb_receivers);
+    }
+
+    // Pause on the second phase of region merge.
+    fail::cfg(commit_merge_fp, "pause").unwrap();
+
+    // prepare-merge is finished.
+    fail::remove(prepare_merge_fp);
+    assert!(
+        !merge_rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .get_header()
+            .has_error()
+    );
+    // The write request fails due to epoch not match.
+    for mut r in receivers {
+        r.assert_err();
+    }
+
+    // Write request is rejected because the source region is merging.
+    // It's not handled by epoch checker now.
+    for i in 0..2 {
+        if i == 1 {
+            // Test another path of calling proposed callback.
+            fail::cfg(force_delay_propose_batch_raft_command_fp, "2*return").unwrap();
+        }
+        let write_req = make_write_req(&mut cluster, b"a");
+        let (cb, mut cb_receivers) = make_cb(&write_req);
+        cluster
+            .sim
+            .rl()
+            .async_command_on_node(1, write_req, cb)
+            .unwrap();
+        cb_receivers.assert_err();
+    }
+
+    // Try to put a key on the target region.
+    let mut receivers = vec![];
+    for i in 0..2 {
+        if i == 1 {
+            // Test another path of calling proposed callback.
+            fail::cfg(force_delay_propose_batch_raft_command_fp, "2*return").unwrap();
+        }
+        let write_req = make_write_req(&mut cluster, b"k");
+        let (cb, mut cb_receivers) = make_cb(&write_req);
+        cluster
+            .sim
+            .rl()
+            .async_command_on_node(1, write_req, cb)
+            .unwrap();
+        // The write request should be blocked until commit-merge is finished.
+        cb_receivers.assert_not_ready();
+        receivers.push(cb_receivers);
+    }
+
+    // Wait for region merge done.
+    fail::remove(commit_merge_fp);
+    pd_client.check_merged_timeout(source.get_id(), Duration::from_secs(5));
+    // The write request fails due to epoch not match.
+    for mut r in receivers {
+        r.assert_err();
+    }
+
+    // New write request can succeed.
+    let write_req = make_write_req(&mut cluster, b"k");
+    let (cb, mut cb_receivers) = make_cb(&write_req);
+    cluster
+        .sim
+        .rl()
+        .async_command_on_node(1, write_req, cb)
+        .unwrap();
+    cb_receivers.assert_ok();
+}
+fn stored_size() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(STR_TABLE).unwrap();
+        table.insert("hello", "world").unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let write_txn = db.begin_write().unwrap();
+    assert_eq!(write_txn.stats().unwrap().stored_bytes(), 10);
+    assert!(write_txn.stats().unwrap().fragmented_bytes() > 0);
+    assert!(write_txn.stats().unwrap().metadata_bytes() > 0);
+    write_txn.abort().unwrap();
+}
+async fn too_big_headers_sends_431() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_frame_eq(settings, frames::settings().max_header_list_size(10));
+        client
+            .send_frame(
+                frames::headers(1)
+                    .request("GET", "https://example.com/")
+                    .field("some-header", "some-value")
+                    .eos(),
+            )
+            .await;
+        client
+            .recv_frame(frames::headers(1).response(431).eos())
+            .await;
+        idle_ms(10).await;
+    };
+
+    let srv = async move {
+        let mut srv = server::Builder::new()
+            .max_header_list_size(10)
+            .handshake::<_, Bytes>(io)
+            .await
+            .expect("handshake");
+
+        let req = srv.next().await;
+        assert!(req.is_none(), "req is {:?}", req);
+    };
+
+    join(client, srv).await;
+}
+fn test_restart_resume() {
+    let mut cluster = Cluster::default();
+    let raft_engine = cluster.node(0).running_state().unwrap().raft_engine.clone();
+    let router = &mut cluster.routers[0];
+
+    let region_id = 2;
+    let region = router.region_detail(region_id);
+    let peer = region.get_peers()[0].clone();
+    router.wait_applied_to_current_term(2, Duration::from_secs(3));
+
+    let fp = "async_write_before_cb";
+    fail::cfg(fp, "return").unwrap();
+
+    let split_region_id = 1000;
+    let mut new_peer = peer.clone();
+    new_peer.set_id(1001);
+    split_region(
+        router,
+        region,
+        peer,
+        split_region_id,
+        new_peer,
+        None,
+        None,
+        b"k11",
+        b"k11",
+        true,
+    );
+
+    let mut put = SimpleWriteEncoder::with_capacity(64);
+    put.put(CF_DEFAULT, b"k22", b"value");
+    let header = Box::new(router.new_request_for(region_id).take_header());
+    let (msg, mut sub) = PeerMsg::simple_write(header, put.encode());
+    router.send(region_id, msg).unwrap();
+    // Send a command to ensure split init is triggered.
+    block_on(sub.wait_proposed());
+
+    let region_state = raft_engine
+        .get_region_state(split_region_id, u64::MAX)
+        .unwrap()
+        .unwrap();
+    assert_eq!(region_state.get_tablet_index(), RAFT_INIT_LOG_INDEX);
+    let path = cluster
+        .node(0)
+        .tablet_registry()
+        .tablet_path(split_region_id, RAFT_INIT_LOG_INDEX);
+    assert!(!path.exists(), "{} should not exist", path.display());
+    drop(raft_engine);
+
+    cluster.restart(0);
+    // If split is resumed, the tablet should be installed.
+    assert!(
+        path.exists(),
+        "{} should exist after restart",
+        path.display()
+    );
+
+    // Both region should be recovered correctly.
+    let cases = vec![
+        (split_region_id, b"k01", b"v01"),
+        (region_id, b"k21", b"v21"),
+    ];
+    let router = &mut cluster.routers[0];
+    let new_epoch = router
+        .new_request_for(split_region_id)
+        .take_header()
+        .take_region_epoch();
+    // Split will be resumed for region 2, not removing the fp will make write block
+    // forever.
+    fail::remove(fp);
+    let timer = Instant::now();
+    for (region_id, key, val) in cases {
+        let mut put = SimpleWriteEncoder::with_capacity(64);
+        put.put(CF_DEFAULT, key, val);
+        let mut header = Box::new(router.new_request_for(region_id).take_header());
+        while timer.elapsed() < Duration::from_secs(3) {
+            // We need to wait till source peer replay split.
+            if *header.get_region_epoch() != new_epoch {
+                thread::sleep(Duration::from_millis(100));
+                header = Box::new(router.new_request_for(region_id).take_header());
+                continue;
+            }
+            break;
+        }
+        assert_eq!(*header.get_region_epoch(), new_epoch, "{:?}", header);
+        let (msg, sub) = PeerMsg::simple_write(header, put.encode());
+        router.send(region_id, msg).unwrap();
+        // Send a command to ensure split init is triggered.
+        let resp = block_on(sub.result()).unwrap();
+        assert!(!resp.get_header().has_error(), "{:?}", resp);
+    }
+}
+fn drain() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(U64_TABLE).unwrap();
+        for i in 0..10 {
+            table.insert(&i, &i).unwrap();
+        }
+        // Test draining uncommitted data
+        drop(table.drain(0..10).unwrap());
+        for i in 0..10 {
+            table.insert(&i, &i).unwrap();
+        }
+    }
+    write_txn.commit().unwrap();
+
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(U64_TABLE).unwrap();
+        assert_eq!(table.len().unwrap(), 10);
+        for (i, item) in table.drain(0..5).unwrap().enumerate() {
+            let (k, v) = item.unwrap();
+            assert_eq!(i as u64, k.value());
+            assert_eq!(i as u64, v.value());
+        }
+        assert_eq!(table.len().unwrap(), 5);
+        let mut i = 5u64;
+        for item in table.range(0..10).unwrap() {
+            let (k, v) = item.unwrap();
+            assert_eq!(i, k.value());
+            assert_eq!(i, v.value());
+            i += 1;
+        }
+    }
+    write_txn.abort().unwrap();
+
+    // Check that dropping the iter early works too
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(U64_TABLE).unwrap();
+        assert_eq!(table.len().unwrap(), 10);
+        drop(table.drain(0..5).unwrap());
+        assert_eq!(table.len().unwrap(), 5);
+    }
+    write_txn.abort().unwrap();
+}
+fn regression14() {
+    let tmpfile = create_tempfile();
+
+    let db = Database::create(tmpfile.path()).unwrap();
+
+    let table_def: MultimapTableDefinition<u64, &[u8]> = MultimapTableDefinition::new("x");
+
+    let mut tx = db.begin_write().unwrap();
+    tx.set_durability(Durability::None);
+    {
+        let mut t = tx.open_multimap_table(table_def).unwrap();
+        let value = vec![0; 1424];
+        t.insert(&539749, value.as_slice()).unwrap();
+    }
+    tx.commit().unwrap();
+
+    let mut tx = db.begin_write().unwrap();
+    tx.set_durability(Durability::None);
+    {
+        let mut t = tx.open_multimap_table(table_def).unwrap();
+        let value = vec![0; 2230];
+        t.insert(&776971, value.as_slice()).unwrap();
+
+        let mut iter = t.range(514043..(514043 + 514043)).unwrap().rev();
+        {
+            let (key, mut value_iter) = iter.next().unwrap().unwrap();
+            assert_eq!(key.value(), 776971);
+            assert_eq!(value_iter.next().unwrap().unwrap().value(), &[0; 2230]);
+        }
+        {
+            let (key, mut value_iter) = iter.next().unwrap().unwrap();
+            assert_eq!(key.value(), 539749);
+            assert_eq!(value_iter.next().unwrap().unwrap().value(), &[0; 1424]);
+        }
+    }
+    tx.abort().unwrap();
+}
+async fn recv_invalid_server_stream_id() {
+    h2_support::trace_init!();
+
+    let mock = mock_io::Builder::new()
+        .handshake()
+        // Write GET /
+        .write(&[
+            0, 0, 0x10, 1, 5, 0, 0, 0, 1, 0x82, 0x87, 0x41, 0x8B, 0x9D, 0x29, 0xAC, 0x4B, 0x8F,
+            0xA8, 0xE9, 0x19, 0x97, 0x21, 0xE9, 0x84,
+        ])
+        .write(SETTINGS_ACK)
+        // Read response
+        .read(&[0, 0, 1, 1, 5, 0, 0, 0, 2, 137])
+        // Write GO_AWAY
+        .write(&[0, 0, 8, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1])
+        .build();
+
+    let (mut client, h2) = client::handshake(mock).await.unwrap();
+
+    // Send the request
+    let request = Request::builder()
+        .uri("https://http2.akamai.com/")
+        .body(())
+        .unwrap();
+
+    tracing::info!("sending request");
+    let (response, _) = client.send_request(request, true).unwrap();
+
+    // The connection errors
+    assert!(h2.await.is_err());
+
+    // The stream errors
+    assert!(response.await.is_err());
+}
+fn len() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(STR_TABLE).unwrap();
+        table.insert("hello", "world").unwrap();
+        table.insert("hello2", "world2").unwrap();
+        table.insert("hi", "world").unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(STR_TABLE).unwrap();
+    assert_eq!(table.len().unwrap(), 3);
+}
+fn test_read_on_replica_check_memory_locks() {
+    let count = 3;
+    let mut cluster = new_server_cluster(0, count);
+    cluster.cfg.raft_store.hibernate_regions = false;
+    cluster.run();
+
+    let raw_key = b"key";
+    let encoded_key = Key::from_raw(raw_key);
+
+    // make sure leader has been elected.
+    assert_eq!(cluster.must_get(raw_key), None);
+
+    let region = cluster.get_region(b"");
+    let leader = cluster.leader_of_region(region.get_id()).unwrap();
+    let leader_cm = cluster.sim.rl().get_concurrency_manager(leader.get_id());
+
+    let lock = Lock::new(
+        LockType::Put,
+        raw_key.to_vec(),
+        10.into(),
+        20000,
+        None,
+        10.into(),
+        1,
+        20.into(),
+    );
+    let guard = block_on(leader_cm.lock_key(&encoded_key));
+    guard.with_lock(|l| *l = Some(lock.clone()));
+
+    // read on follower
+    let mut follower_peer = None;
+    let mut follower_id = 0;
+    let peers = region.get_peers();
+    for p in peers {
+        if p.get_id() != leader.get_id() {
+            follower_id = p.get_id();
+            follower_peer = Some(p.clone());
+            break;
+        }
+    }
+
+    assert!(follower_peer.is_some());
+    let mut follower_ctx = Context::default();
+    follower_ctx.set_region_id(region.get_id());
+    follower_ctx.set_region_epoch(region.get_region_epoch().clone());
+    follower_ctx.set_peer(follower_peer.as_ref().unwrap().clone());
+    follower_ctx.set_replica_read(true);
+    for use_max_ts in [false, true] {
+        let mut range = KeyRange::default();
+        range.set_start_key(encoded_key.as_encoded().to_vec());
+        let ts = if use_max_ts {
+            Some(TimeStamp::max())
+        } else {
+            Some(100.into())
+        };
+        let follower_snap_ctx = SnapContext {
+            pb_ctx: &follower_ctx,
+            start_ts: ts,
+            key_ranges: vec![range],
+            ..Default::default()
+        };
+        let mut follower_storage = cluster.sim.rl().storages[&follower_id].clone();
+        match follower_storage.snapshot(follower_snap_ctx) {
+            Err(Error(box ErrorInner::KeyIsLocked(lock_info))) => {
+                assert_eq!(lock_info, lock.clone().into_lock_info(raw_key.to_vec()))
+            }
+            other => panic!("unexpected result: {:?}", other),
+        }
+    }
+}
+async fn recv_push_when_push_disabled_is_conn_error() {
+    h2_support::trace_init!();
+
+    let (io, mut srv) = mock::new();
+    let mock = async move {
+        let _ = srv.assert_client_handshake().await;
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(
+            frames::push_promise(1, 3).request("GET", "https://http2.akamai.com/style.css"),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+        srv.recv_frame(frames::go_away(0).protocol_error()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, h2) = client::Builder::new()
+            .enable_push(false)
+            .handshake::<_, Bytes>(io)
+            .await
+            .unwrap();
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
+
+        let req = async move {
+            let res = client.send_request(request, true).unwrap().0.await;
+            let err = res.unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                "connection error detected: unspecific protocol error detected"
+            );
+        };
+
+        // client should see a protocol error
+        let conn = async move {
+            let res = h2.await;
+            let err = res.unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                "connection error detected: unspecific protocol error detected"
+            );
+        };
+
+        join(conn, req).await;
+    };
+
+    join(mock, h2).await;
+}
+fn read_isolation() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(STR_TABLE).unwrap();
+        table.insert("hello", "world").unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(STR_TABLE).unwrap();
+    assert_eq!("world", table.get("hello").unwrap().unwrap().value());
+
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut write_table = write_txn.open_table(STR_TABLE).unwrap();
+        write_table.remove("hello").unwrap();
+        write_table.insert("hello2", "world2").unwrap();
+        write_table.insert("hello3", "world3").unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn2 = db.begin_read().unwrap();
+    let table2 = read_txn2.open_table(STR_TABLE).unwrap();
+    assert!(table2.get("hello").unwrap().is_none());
+    assert_eq!("world2", table2.get("hello2").unwrap().unwrap().value());
+    assert_eq!("world3", table2.get("hello3").unwrap().unwrap().value());
+    assert_eq!(table2.len().unwrap(), 2);
+
+    assert_eq!("world", table.get("hello").unwrap().unwrap().value());
+    assert!(table.get("hello2").unwrap().is_none());
+    assert!(table.get("hello3").unwrap().is_none());
+    assert_eq!(table.len().unwrap(), 1);
+}
+fn test_turnoff_titan() {
+    let mut cluster = new_node_cluster(0, 3);
+    cluster.cfg.rocksdb.defaultcf.disable_auto_compactions = true;
+    cluster.cfg.rocksdb.defaultcf.num_levels = 1;
+    configure_for_enable_titan(&mut cluster, ReadableSize::kb(0));
+    cluster.run();
+    assert_eq!(cluster.must_get(b"k1"), None);
+
+    let size = 5;
+    for i in 0..size {
+        cluster
+            .put(
+                format!("k{:02}0", i).as_bytes(),
+                format!("v{}", i).as_bytes(),
+            )
+            .unwrap();
+    }
+    cluster.must_flush_cf(CF_DEFAULT, true);
+    for i in 0..size {
+        cluster
+            .put(
+                format!("k{:02}1", i).as_bytes(),
+                format!("v{}", i).as_bytes(),
+            )
+            .unwrap();
+    }
+    cluster.must_flush_cf(CF_DEFAULT, true);
+    for i in cluster.get_node_ids().into_iter() {
+        let engine = cluster.get_engine(i);
+        let db = engine.as_inner();
+        assert_eq!(
+            db.get_property_int("rocksdb.num-files-at-level0").unwrap(),
+            2
+        );
+        assert_eq!(
+            db.get_property_int("rocksdb.num-files-at-level1").unwrap(),
+            0
+        );
+        assert_eq!(
+            db.get_property_int("rocksdb.titandb.num-live-blob-file")
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            db.get_property_int("rocksdb.titandb.num-obsolete-blob-file")
+                .unwrap(),
+            0
+        );
+    }
+    cluster.shutdown();
+
+    // try reopen db when titan isn't properly turned off.
+    configure_for_disable_titan(&mut cluster);
+    cluster.pre_start_check().unwrap_err();
+
+    configure_for_enable_titan(&mut cluster, ReadableSize::kb(0));
+    cluster.pre_start_check().unwrap();
+    cluster.start().unwrap();
+    assert_eq!(cluster.must_get(b"k1"), None);
+    for i in cluster.get_node_ids().into_iter() {
+        let db = cluster.get_engine(i);
+        let opt = vec![("blob_run_mode", "kFallback")];
+        db.set_options_cf(CF_DEFAULT, &opt).unwrap();
+    }
+    cluster.compact_data();
+    let mut all_check_pass = true;
+    for _ in 0..10 {
+        // wait for gc completes.
+        sleep_ms(10);
+        all_check_pass = true;
+        for i in cluster.get_node_ids().into_iter() {
+            let engine = cluster.get_engine(i);
+            let db = engine.as_inner();
+            if db.get_property_int("rocksdb.num-files-at-level0").unwrap() != 0 {
+                all_check_pass = false;
+                break;
+            }
+            if db.get_property_int("rocksdb.num-files-at-level1").unwrap() != 1 {
+                all_check_pass = false;
+                break;
+            }
+            if db
+                .get_property_int("rocksdb.titandb.num-live-blob-file")
+                .unwrap()
+                != 0
+            {
+                all_check_pass = false;
+                break;
+            }
+        }
+        if all_check_pass {
+            break;
+        }
+    }
+    if !all_check_pass {
+        panic!("unexpected titan gc results");
+    }
+    cluster.shutdown();
+
+    configure_for_disable_titan(&mut cluster);
+    // wait till files are purged, timeout set to purge_obsolete_files_period.
+    for _ in 1..100 {
+        sleep_ms(10);
+        if cluster.pre_start_check().is_ok() {
+            return;
+        }
+    }
+    cluster.pre_start_check().unwrap();
+}
+fn test_prewrite_without_value() {
+    let cluster = new_server_cluster(0, 2);
+    cluster.pd_client.disable_default_operator();
+    let mut suite = TestSuiteBuilder::new().cluster(cluster).build();
+    let rid = suite.cluster.get_region(&[]).id;
+    let ctx = suite.get_context(rid);
+    let client = suite.get_tikv_client(rid).clone();
+    let large_value = vec![b'x'; 2 * txn_types::SHORT_VALUE_MAX_LEN];
+
+    // Perform a pessimistic prewrite with a large value.
+    let mut muts = vec![Mutation::default()];
+    muts[0].set_op(Op::Put);
+    muts[0].key = b"key".to_vec();
+    muts[0].value = large_value.clone();
+    try_kv_prewrite_pessimistic(&client, ctx.clone(), muts, b"key".to_vec(), 10);
+
+    let req = suite.new_changedata_request(rid);
+    let (mut req_tx, _, receive_event) = new_event_feed(suite.get_region_cdc_client(rid));
+    block_on(req_tx.send((req, WriteFlags::default()))).unwrap();
+
+    // The prewrite can be retrieved from incremental scan.
+    let event = receive_event(false);
+    assert_eq!(
+        event.get_events()[0].get_entries().entries[0].value,
+        large_value
+    );
+
+    // check_txn_status will put the lock again, but without value.
+    must_check_txn_status(&client, ctx.clone(), b"key", 10, 12, 12);
+    must_kv_commit(&client, ctx, vec![b"key".to_vec()], 10, 14, 14);
+    // The lock without value shouldn't be retrieved.
+    let event = receive_event(false);
+    assert_eq!(event.get_events()[0].get_entries().entries[0].commit_ts, 14);
+}
+fn test_region_collection_get_regions_in_range() {
+    let mut cluster = new_node_cluster(0, 3);
+
+    let (tx, rx) = channel();
+    cluster
+        .sim
+        .wl()
+        .post_create_coprocessor_host(Box::new(move |id, host| {
+            let p = RegionInfoAccessor::new(host);
+            tx.send((id, p)).unwrap()
+        }));
+
+    cluster.run();
+    let region_info_providers: HashMap<_, _> = rx.try_iter().collect();
+    assert_eq!(region_info_providers.len(), 3);
+    let regions = prepare_cluster(&mut cluster);
+
+    for node_id in cluster.get_node_ids() {
+        let engine = &region_info_providers[&node_id];
+
+        let result = engine.get_regions_in_range(b"", b"").unwrap();
+        assert_eq!(result, regions);
+
+        let result = engine.get_regions_in_range(b"k1", b"k3").unwrap();
+        assert_eq!(&result, &regions[1..3]);
+
+        let result = engine.get_regions_in_range(b"k3", b"k8").unwrap();
+        assert_eq!(&result, &regions[2..5]);
+
+        let result = engine.get_regions_in_range(b"k6", b"k8").unwrap();
+        assert_eq!(&result, &regions[3..5]);
+
+        let result = engine.get_regions_in_range(b"k7", b"k99").unwrap();
+        assert_eq!(&result, &regions[4..6]);
+
+        let result = engine.get_regions_in_range(b"k99", b"").unwrap();
+        assert_eq!(&result, &regions[5..6]);
+    }
+
+    for (_, p) in region_info_providers {
+        p.stop();
+    }
+}
+fn range_query() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(U64_TABLE).unwrap();
+        for i in 0..10 {
+            table.insert(&i, &i).unwrap();
+        }
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(U64_TABLE).unwrap();
+    let mut iter = table.range(3..7).unwrap();
+    for i in 3..7u64 {
+        let (key, value) = iter.next().unwrap().unwrap();
+        assert_eq!(i, key.value());
+        assert_eq!(i, value.value());
+    }
+    assert!(iter.next().is_none());
+
+    let mut iter = table.range(3..=7).unwrap();
+    for i in 3..=7u64 {
+        let (key, value) = iter.next().unwrap().unwrap();
+        assert_eq!(i, key.value());
+        assert_eq!(i, value.value());
+    }
+    assert!(iter.next().is_none());
+
+    let total: u64 = table
+        .range(1..=3)
+        .unwrap()
+        .map(|item| item.unwrap().1.value())
+        .sum();
+    assert_eq!(total, 6);
+}
+fn insert_reserve() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+    let def: TableDefinition<&str, &[u8]> = TableDefinition::new("x");
+    let value = "world";
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(def).unwrap();
+        let mut reserved = table
+            .insert_reserve("hello", value.len().try_into().unwrap())
+            .unwrap();
+        reserved.as_mut().copy_from_slice(value.as_bytes());
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(def).unwrap();
+    assert_eq!(
+        value.as_bytes(),
+        table.get("hello").unwrap().unwrap().value()
+    );
+}
+fn test_split() {
+    let mut cluster = Cluster::default();
+    let store_id = cluster.node(0).id();
+    let raft_engine = cluster.node(0).running_state().unwrap().raft_engine.clone();
+    let router = &mut cluster.routers[0];
+
+    let region_2 = 2;
+    let region = router.region_detail(region_2);
+    let peer = region.get_peers()[0].clone();
+    router.wait_applied_to_current_term(region_2, Duration::from_secs(3));
+
+    // Region 2 ["", ""]
+    //   -> Region 2    ["", "k22"]
+    //      Region 1000 ["k22", ""] peer(1, 10)
+    let region_state = raft_engine
+        .get_region_state(region_2, u64::MAX)
+        .unwrap()
+        .unwrap();
+    assert_eq!(region_state.get_tablet_index(), RAFT_INIT_LOG_INDEX);
+    let (left, mut right) = split_region(
+        router,
+        region,
+        peer.clone(),
+        1000,
+        new_peer(store_id, 10),
+        Some(b"k11"),
+        Some(b"k33"),
+        b"k22",
+        b"k22",
+        false,
+    );
+    let region_state = raft_engine
+        .get_region_state(region_2, u64::MAX)
+        .unwrap()
+        .unwrap();
+    assert_ne!(region_state.get_tablet_index(), RAFT_INIT_LOG_INDEX);
+    assert_eq!(
+        region_state.get_region().get_region_epoch().get_version(),
+        INIT_EPOCH_VER + 1
+    );
+    let region_state0 = raft_engine
+        .get_region_state(region_2, region_state.get_tablet_index())
+        .unwrap()
+        .unwrap();
+    assert_eq!(region_state, region_state0);
+    let flushed_index = raft_engine
+        .get_flushed_index(region_2, CF_RAFT)
+        .unwrap()
+        .unwrap();
+    assert!(
+        flushed_index >= region_state.get_tablet_index(),
+        "{flushed_index} >= {}",
+        region_state.get_tablet_index()
+    );
+
+    // Region 2 ["", "k22"]
+    //   -> Region 2    ["", "k11"]
+    //      Region 1001 ["k11", "k22"] peer(1, 11)
+    let _ = split_region(
+        router,
+        left,
+        peer,
+        1001,
+        new_peer(store_id, 11),
+        Some(b"k00"),
+        Some(b"k11"),
+        b"k11",
+        b"k11",
+        false,
+    );
+    let region_state = raft_engine
+        .get_region_state(region_2, u64::MAX)
+        .unwrap()
+        .unwrap();
+    assert_ne!(
+        region_state.get_tablet_index(),
+        region_state0.get_tablet_index()
+    );
+    assert_eq!(
+        region_state.get_region().get_region_epoch().get_version(),
+        INIT_EPOCH_VER + 2
+    );
+    let region_state1 = raft_engine
+        .get_region_state(region_2, region_state.get_tablet_index())
+        .unwrap()
+        .unwrap();
+    assert_eq!(region_state, region_state1);
+    let flushed_index = raft_engine
+        .get_flushed_index(region_2, CF_RAFT)
+        .unwrap()
+        .unwrap();
+    assert!(
+        flushed_index >= region_state.get_tablet_index(),
+        "{flushed_index} >= {}",
+        region_state.get_tablet_index()
+    );
+
+    // Region 1000 ["k22", ""] peer(1, 10)
+    //   -> Region 1000 ["k22", "k33"] peer(1, 10)
+    //      Region 1002 ["k33", ""]    peer(1, 12)
+    let region_1000 = 1000;
+    let region_state = raft_engine
+        .get_region_state(region_1000, u64::MAX)
+        .unwrap()
+        .unwrap();
+    assert_eq!(region_state.get_tablet_index(), RAFT_INIT_LOG_INDEX);
+    right = split_region(
+        router,
+        right,
+        new_peer(store_id, 10),
+        1002,
+        new_peer(store_id, 12),
+        Some(b"k22"),
+        Some(b"k33"),
+        b"k33",
+        b"k33",
+        false,
+    )
+    .1;
+    let region_state = raft_engine
+        .get_region_state(region_1000, u64::MAX)
+        .unwrap()
+        .unwrap();
+    assert_ne!(region_state.get_tablet_index(), RAFT_INIT_LOG_INDEX);
+    assert_eq!(
+        region_state.get_region().get_region_epoch().get_version(),
+        INIT_EPOCH_VER + 2
+    );
+    let region_state2 = raft_engine
+        .get_region_state(region_1000, region_state.get_tablet_index())
+        .unwrap()
+        .unwrap();
+    assert_eq!(region_state, region_state2);
+    let flushed_index = raft_engine
+        .get_flushed_index(region_1000, CF_RAFT)
+        .unwrap()
+        .unwrap();
+    assert!(
+        flushed_index >= region_state.get_tablet_index(),
+        "{flushed_index} >= {}",
+        region_state.get_tablet_index()
+    );
+
+    // 1002 -> 1002, 1003
+    let split_key = Key::from_raw(b"k44").append_ts(TimeStamp::zero());
+    let actual_split_key = split_key.clone().truncate_ts().unwrap();
+    split_region(
+        router,
+        right,
+        new_peer(store_id, 12),
+        1003,
+        new_peer(store_id, 13),
+        Some(b"k33"),
+        Some(b"k55"),
+        split_key.as_encoded(),
+        actual_split_key.as_encoded(),
+        false,
+    );
+
+    // Split should survive restart.
+    drop(raft_engine);
+    cluster.restart(0);
+    let region_and_key = vec![
+        (2, b"k00"),
+        (1000, b"k22"),
+        (1001, b"k11"),
+        (1002, b"k33"),
+        (1003, b"k55"),
+    ];
+    for (region_id, key) in region_and_key {
+        let snapshot = cluster.routers[0].stale_snapshot(region_id);
+        assert!(
+            snapshot.get_value(key).unwrap().is_some(),
+            "{} {:?}",
+            region_id,
+            key
+        );
+    }
+}
+fn drain_filter_all_elements_next_back() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(U64_TABLE).unwrap();
+        for i in 0..10 {
+            table.insert(&i, &i).unwrap();
+        }
+    }
+    write_txn.commit().unwrap();
+
+    let write_txn = db.begin_write().unwrap();
+    let mut table = write_txn.open_table(U64_TABLE).unwrap();
+    let mut iter = table.drain_filter(0..10, |_, _| true).unwrap();
+    for i in (0..10).rev() {
+        let (k, v) = iter.next_back().unwrap().unwrap();
+        assert_eq!(i, k.value());
+        assert_eq!(i, v.value());
+    }
+}
+fn test_snapshot_failed_2() {
+    let product = ProductTable::new();
+    let (store, endpoint) = init_with_data(&product, &[]);
+    let req = DagSelect::from(&product).build();
+
+    store.get_engine().trigger_not_leader();
+    let resp = handle_request(&endpoint, req);
+
+    assert!(resp.get_region_error().has_not_leader());
+}
+fn iter() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(U64_TABLE).unwrap();
+        for i in 0..10 {
+            table.insert(&i, &i).unwrap();
+        }
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(U64_TABLE).unwrap();
+    let mut iter = table.iter().unwrap();
+    for i in 0..10 {
+        let (k, v) = iter.next().unwrap().unwrap();
+        assert_eq!(i, k.value());
+        assert_eq!(i, v.value());
+    }
+}
+fn empty_type() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+
+    let definition: TableDefinition<u8, ()> = TableDefinition::new("x");
+
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(definition).unwrap();
+        table.insert(&0, &()).unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(definition).unwrap();
+    assert!(!table.is_empty().unwrap());
+}
+fn drain_lifetime() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+
+    let definition: TableDefinition<&str, &str> = TableDefinition::new("x");
+
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(definition).unwrap();
+        table.insert("hello", "world").unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let txn = db.begin_write().unwrap();
+    let mut table = txn.open_table(definition).unwrap();
+
+    let mut iter = {
+        let start = "hello".to_string();
+        table.drain::<&str>(start.as_str()..).unwrap()
+    };
+    assert_eq!(iter.next().unwrap().unwrap().1.value(), "world");
+    assert!(iter.next().is_none());
+}
+fn non_page_size_multiple() {
+    let tmpfile = create_tempfile();
+
+    let db = Database::create(tmpfile.path()).unwrap();
+    let txn = db.begin_write().unwrap();
+    let key = vec![0u8; 1024];
+    let value = vec![0u8; 1];
+    {
+        let mut table = txn.open_table(SLICE_TABLE).unwrap();
+        table.insert(key.as_slice(), value.as_slice()).unwrap();
+    }
+    txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(SLICE_TABLE).unwrap();
+    assert_eq!(table.len().unwrap(), 1);
+}
+fn vec_fixed_width_value_type() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+
+    let definition: TableDefinition<u8, Vec<u64>> = TableDefinition::new("x");
+
+    let value = vec![0, 1, 2, 3];
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(definition).unwrap();
+        table.insert(0, &value).unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(definition).unwrap();
+    assert_eq!(value, table.get(0).unwrap().unwrap().value());
+}
+fn persistent_savepoint() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+    let definition: TableDefinition<u32, &str> = TableDefinition::new("x");
+
+    let txn = db.begin_write().unwrap();
+    {
+        let mut table = txn.open_table(definition).unwrap();
+        table.insert(&0, "hello").unwrap();
+    }
+    txn.commit().unwrap();
+
+    let txn = db.begin_write().unwrap();
+    let savepoint_id = txn.persistent_savepoint().unwrap();
+    {
+        let mut table = txn.open_table(definition).unwrap();
+        table.remove(&0).unwrap();
+    }
+    txn.commit().unwrap();
+
+    drop(db);
+    let db = Database::create(tmpfile.path()).unwrap();
+    // Make sure running the GC doesn't invalidate the savepoint
+    let txn = db.begin_write().unwrap();
+    txn.commit().unwrap();
+    let txn = db.begin_write().unwrap();
+    txn.commit().unwrap();
+
+    let mut txn = db.begin_write().unwrap();
+    let savepoint = txn.get_persistent_savepoint(savepoint_id).unwrap();
+
+    txn.restore_savepoint(&savepoint).unwrap();
+    txn.commit().unwrap();
+
+    let txn = db.begin_read().unwrap();
+    let table = txn.open_table(definition).unwrap();
+    assert_eq!(table.get(&0).unwrap().unwrap().value(), "hello");
+}
+fn regression8() {
+    let tmpfile = create_tempfile();
+
+    let db = Database::create(tmpfile.path()).unwrap();
+
+    let table_def: TableDefinition<u64, &[u8]> = TableDefinition::new("x");
+
+    let mut tx = db.begin_write().unwrap();
+    tx.set_durability(Durability::None);
+    {
+        let mut t = tx.open_table(table_def).unwrap();
+        let v = vec![0u8; 1186];
+        t.insert(&145227, v.as_slice()).unwrap();
+        let v = vec![0u8; 1585];
+        t.insert(&565922, v.as_slice()).unwrap();
+    }
+    tx.commit().unwrap();
+
+    let tx = db.begin_write().unwrap();
+    {
+        let mut t = tx.open_table(table_def).unwrap();
+        let v = vec![0u8; 2040];
+        t.insert(&94937, v.as_slice()).unwrap();
+        let v = vec![0u8; 2058];
+        t.insert(&130571, v.as_slice()).unwrap();
+        t.remove(&145227).unwrap();
+    }
+    tx.commit().unwrap();
+
+    let tx = db.begin_write().unwrap();
+    {
+        let mut t = tx.open_table(table_def).unwrap();
+        let v = vec![0u8; 947];
+        t.insert(&118749, v.as_slice()).unwrap();
+    }
+    tx.commit().unwrap();
+
+    let tx = db.begin_write().unwrap();
+    {
+        let t = tx.open_table(table_def).unwrap();
+        let mut iter = t.range(118749..142650).unwrap();
+        assert_eq!(iter.next().unwrap().unwrap().0.value(), 118749);
+        assert_eq!(iter.next().unwrap().unwrap().0.value(), 130571);
+        assert!(iter.next().is_none());
+    }
+    tx.commit().unwrap();
+}
+fn test_not_invoke_committed_cb_when_fail_to_commit() {
+    let mut cluster = new_node_cluster(0, 3);
+    cluster.pd_client.disable_default_operator();
+    cluster.run();
+    cluster.must_transfer_leader(1, new_peer(1, 1));
+    cluster.must_put(b"k", b"v");
+
+    // Partition the leader and followers to let the leader fails to commit the
+    // proposal.
+    cluster.partition(vec![1], vec![2, 3]);
+    let write_req = make_write_req(&mut cluster, b"k1");
+    let (cb, mut cb_receivers) = make_cb(&write_req);
+    cluster
+        .sim
+        .rl()
+        .async_command_on_node(1, write_req, cb)
+        .unwrap();
+    // Check the request is proposed but not committed.
+    cb_receivers
+        .committed
+        .recv_timeout(Duration::from_millis(200))
+        .unwrap_err();
+    cb_receivers.proposed.try_recv().unwrap();
+
+    // The election timeout is 250ms by default.
+    let election_timeout = cluster.cfg.raft_store.raft_base_tick_interval.0
+        * cluster.cfg.raft_store.raft_election_timeout_ticks as u32;
+    std::thread::sleep(2 * election_timeout);
+
+    // Make sure a new leader is elected and will discard the previous proposal when
+    // partition is recovered.
+    cluster.must_put(b"k2", b"v");
+    cluster.clear_send_filters();
+
+    let resp = cb_receivers
+        .applied
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap();
+    assert!(resp.get_header().has_error(), "{:?}", resp);
+    // The committed callback shouldn't be invoked.
+    cb_receivers.committed.try_recv().unwrap_err();
+}
+fn file_path() -> Result<()> {
+    let tempdir = tempdir();
+    let sst_path = tempdir
+        .path()
+        .join("test-data.sst")
+        .to_string_lossy()
+        .to_string();
+    let sst_builder = <KvTestEngine as SstExt>::SstWriterBuilder::new();
+    let mut sst_writer = sst_builder.build(&sst_path)?;
+
+    sst_writer.put(b"k1", b"v1")?;
+    let info = sst_writer.finish()?;
+    assert_eq!(info.file_path().to_str(), Some(sst_path.as_str()));
+
+    Ok(())
+}
+fn f32_type() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+
+    let definition: TableDefinition<u8, f32> = TableDefinition::new("x");
+
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(definition).unwrap();
+        table.insert(&0, &0.3).unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(definition).unwrap();
+    assert_eq!(0.3, table.get(&0).unwrap().unwrap().value());
+}
+fn non_durable_commit_persistence() {
+    let tmpfile = create_tempfile();
+
+    let db = Database::create(tmpfile.path()).unwrap();
+    let mut txn = db.begin_write().unwrap();
+    txn.set_durability(Durability::None);
+    let pairs = gen_data(100, 16, 20);
+    {
+        let mut table = txn.open_table(SLICE_TABLE).unwrap();
+        for i in 0..ELEMENTS {
+            let (key, value) = &pairs[i % pairs.len()];
+            table.insert(key.as_slice(), value.as_slice()).unwrap();
+        }
+    }
+    txn.commit().unwrap();
+
+    // Check that cleanly closing the database persists the non-durable commit
+    drop(db);
+    let db = Database::create(tmpfile.path()).unwrap();
+    let txn = db.begin_read().unwrap();
+    let table = txn.open_table(SLICE_TABLE).unwrap();
+
+    let mut key_order: Vec<usize> = (0..ELEMENTS).collect();
+    key_order.shuffle(&mut rand::thread_rng());
+
+    {
+        for i in &key_order {
+            let (key, value) = &pairs[*i % pairs.len()];
+            assert_eq!(table.get(key.as_slice()).unwrap().unwrap().value(), value);
+        }
+    }
+}
+fn vec_vec_type() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+
+    let definition: TableDefinition<u8, Vec<Vec<&str>>> = TableDefinition::new("x");
+
+    let value = vec![vec!["hello", "world"], vec!["this", "is", "a", "test"]];
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(definition).unwrap();
+        table.insert(0, &value).unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(definition).unwrap();
+    assert_eq!(value, table.get(0).unwrap().unwrap().value());
+}
+fn test_readpool_full() {
+    let product = ProductTable::new();
+    let (_, endpoint) = init_with_data(&product, &[]);
+    let req = DagSelect::from(&product).build();
+
+    fail::cfg("future_pool_spawn_full", "return()").unwrap();
+    let resp = handle_request(&endpoint, req);
+
+    assert!(resp.get_region_error().has_server_is_busy());
+}
+fn generic_signature_lifetimes() {
+    fn write_key_generic<K: RedbKey>(
+        table: TableDefinition<K, &[u8]>,
+        key: K::SelfType<'_>,
+        db: &Database,
+    ) {
+        let buf = [1, 2, 3];
+        let write_txn = db.begin_write().unwrap();
+        {
+            let mut table = write_txn.open_table(table).unwrap();
+            table.insert(key, buf.as_slice()).unwrap();
+        }
+        write_txn.commit().unwrap();
+    }
+
+    fn read_key_generic<K: RedbKey>(
+        table: TableDefinition<K, &[u8]>,
+        key: K::SelfType<'_>,
+        db: &Database,
+    ) {
+        let buf = [1, 2, 3];
+        let read_txn = db.begin_read().unwrap();
+        let table = read_txn.open_table(table).unwrap();
+        assert_eq!(table.get(key).unwrap().unwrap().value(), buf);
+    }
+
+    let tmpfile = create_tempfile();
+    let db = &Database::create(tmpfile.path()).unwrap();
+    {
+        let (table, key) = (TableDefinition::<&str, _>::new("&str"), "key");
+        write_key_generic(table, key, db);
+        read_key_generic(table, key, db);
+    }
+    {
+        let (table, key) = (TableDefinition::<(), _>::new("()"), ());
+        write_key_generic(table, key, db);
+        read_key_generic(table, key, db);
+    }
+}
+fn delete() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_multimap_table(STR_TABLE).unwrap();
+        table.insert("hello", "world").unwrap();
+        table.insert("hello", "world2").unwrap();
+        table.insert("hello", "world3").unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_multimap_table(STR_TABLE).unwrap();
+    assert_eq!(
+        vec![
+            "world".to_string(),
+            "world2".to_string(),
+            "world3".to_string()
+        ],
+        get_vec(&table, "hello")
+    );
+    assert_eq!(table.len().unwrap(), 3);
+
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_multimap_table(STR_TABLE).unwrap();
+        table.remove("hello", "world2").unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_multimap_table(STR_TABLE).unwrap();
+    assert_eq!(
+        vec!["world".to_string(), "world3".to_string()],
+        get_vec(&table, "hello")
+    );
+    assert_eq!(table.len().unwrap(), 2);
+
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_multimap_table(STR_TABLE).unwrap();
+        let mut iter = table.remove_all("hello").unwrap();
+        assert_eq!("world", iter.next().unwrap().unwrap().value());
+        assert_eq!("world3", iter.next().unwrap().unwrap().value());
+        assert!(iter.next().is_none());
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_multimap_table(STR_TABLE).unwrap();
+    assert!(table.is_empty().unwrap());
+    let empty: Vec<String> = vec![];
+    assert_eq!(empty, get_vec(&table, "hello"));
+}
+fn tuple3_type() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+
+    let table_def: TableDefinition<(&str, u8, u16), (u16, u32)> = TableDefinition::new("table");
+
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(table_def).unwrap();
+        table.insert(&("hello", 5, 6), &(0, 123)).unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(table_def).unwrap();
+    assert_eq!(
+        table.get(&("hello", 5, 6)).unwrap().unwrap().value(),
+        (0, 123)
+    );
+}
+fn test_reject_proposal_during_region_split() {
+    let mut cluster = new_node_cluster(0, 3);
+    let pd_client = cluster.pd_client.clone();
+    pd_client.disable_default_operator();
+    cluster.run();
+    cluster.must_transfer_leader(1, new_peer(1, 1));
+    cluster.must_put(b"k", b"v");
+
+    // Pause on applying so that region split is not finished.
+    let fp = "apply_before_split";
+    fail::cfg(fp, "pause").unwrap();
+
+    // Try to split region.
+    let (split_tx, split_rx) = mpsc::channel();
+    let cb = Callback::read(Box::new(move |resp: ReadResponse<RocksSnapshot>| {
+        split_tx.send(resp.response).unwrap()
+    }));
+    let r = cluster.get_region(b"");
+    cluster.split_region(&r, b"k", cb);
+    split_rx
+        .recv_timeout(Duration::from_millis(100))
+        .unwrap_err();
+
+    // Try to put a key.
+    let force_delay_propose_batch_raft_command_fp = "force_delay_propose_batch_raft_command";
+    let mut receivers = vec![];
+    for i in 0..2 {
+        if i == 1 {
+            // Test another path of calling proposed callback.
+            fail::cfg(force_delay_propose_batch_raft_command_fp, "2*return").unwrap();
+        }
+        let write_req = make_write_req(&mut cluster, b"k1");
+        let (cb, mut cb_receivers) = make_cb(&write_req);
+        cluster
+            .sim
+            .rl()
+            .async_command_on_node(1, write_req, cb)
+            .unwrap();
+        // The write request should be blocked until split is finished.
+        cb_receivers.assert_not_ready();
+        receivers.push(cb_receivers);
+    }
+
+    fail::remove(fp);
+    // Split is finished.
+    assert!(
+        !split_rx
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .get_header()
+            .has_error()
+    );
+
+    // The write request fails due to epoch not match.
+    for mut r in receivers {
+        r.assert_err();
+    }
+
+    // New write request can succeed.
+    let write_req = make_write_req(&mut cluster, b"k1");
+    let (cb, mut cb_receivers) = make_cb(&write_req);
+    cluster
+        .sim
+        .rl()
+        .async_command_on_node(1, write_req, cb)
+        .unwrap();
+    cb_receivers.assert_ok();
+}
+fn multi_page_kv() {
+    let tmpfile = create_tempfile();
+    let elements = 4;
+    let page_size = 4096;
+
+    let db = Builder::new().create(tmpfile.path()).unwrap();
+    let txn = db.begin_write().unwrap();
+
+    let mut key = vec![0u8; page_size + 1];
+    let mut value = vec![0; page_size + 1];
+    {
+        let mut table = txn.open_table(SLICE_TABLE).unwrap();
+        for i in 0..elements {
+            key[0] = i;
+            value[0] = i;
+            table.insert(key.as_slice(), value.as_slice()).unwrap();
+        }
+    }
+    txn.commit().unwrap();
+
+    let txn = db.begin_read().unwrap();
+    let table = txn.open_table(SLICE_TABLE).unwrap();
+    for i in 0..elements {
+        key[0] = i;
+        value[0] = i;
+        assert_eq!(&value, table.get(key.as_slice()).unwrap().unwrap().value());
+    }
+
+    let txn = db.begin_write().unwrap();
+    {
+        let mut table = txn.open_table(SLICE_TABLE).unwrap();
+        for i in 0..elements {
+            key[0] = i;
+            table.remove(key.as_slice()).unwrap();
+        }
+    }
+    txn.commit().unwrap();
+}
+fn non_durable_read_isolation() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+    let mut write_txn = db.begin_write().unwrap();
+    write_txn.set_durability(Durability::None);
+    {
+        let mut table = write_txn.open_table(STR_TABLE).unwrap();
+        table.insert("hello", "world").unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let read_table = read_txn.open_table(STR_TABLE).unwrap();
+    assert_eq!("world", read_table.get("hello").unwrap().unwrap().value());
+
+    let mut write_txn = db.begin_write().unwrap();
+    write_txn.set_durability(Durability::None);
+    {
+        let mut table = write_txn.open_table(STR_TABLE).unwrap();
+        table.remove("hello").unwrap();
+        table.insert("hello2", "world2").unwrap();
+        table.insert("hello3", "world3").unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn2 = db.begin_read().unwrap();
+    let read_table2 = read_txn2.open_table(STR_TABLE).unwrap();
+    assert!(read_table2.get("hello").unwrap().is_none());
+    assert_eq!(
+        "world2",
+        read_table2.get("hello2").unwrap().unwrap().value()
+    );
+    assert_eq!(
+        "world3",
+        read_table2.get("hello3").unwrap().unwrap().value()
+    );
+    assert_eq!(read_table2.len().unwrap(), 2);
+
+    assert_eq!("world", read_table.get("hello").unwrap().unwrap().value());
+    assert!(read_table.get("hello2").unwrap().is_none());
+    assert!(read_table.get("hello3").unwrap().is_none());
+    assert_eq!(read_table.len().unwrap(), 1);
+}
+fn test_destroy_by_larger_id() {
+    let mut cluster = Cluster::default();
+    let router = &cluster.routers[0];
+    let test_region_id = 4;
+    let test_peer_id = 6;
+    let init_term = 5;
+    let mut msg = Box::<RaftMessage>::default();
+    msg.set_region_id(test_region_id);
+    msg.set_to_peer(new_peer(1, test_peer_id));
+    msg.mut_region_epoch().set_conf_ver(1);
+    msg.set_from_peer(new_peer(2, 8));
+    let raft_message = msg.mut_message();
+    raft_message.set_msg_type(MessageType::MsgHeartbeat);
+    raft_message.set_from(6);
+    raft_message.set_term(init_term);
+    // Create the peer.
+    router.send_raft_message(msg.clone()).unwrap();
+    // There must be heartbeat response.
+    let hb = cluster
+        .receiver(0)
+        .recv_timeout(Duration::from_millis(300))
+        .unwrap();
+    assert_eq!(
+        hb.get_message().get_msg_type(),
+        MessageType::MsgHeartbeatResponse
+    );
+
+    let timeout = Duration::from_secs(3);
+    let meta = router
+        .must_query_debug_info(test_region_id, timeout)
+        .unwrap();
+    assert_eq!(meta.raft_status.id, test_peer_id);
+
+    // Smaller ID should be ignored.
+    let mut smaller_id_msg = msg;
+    smaller_id_msg.set_to_peer(new_peer(1, test_peer_id - 1));
+    smaller_id_msg.mut_message().set_term(init_term + 1);
+    router.send_raft_message(smaller_id_msg.clone()).unwrap();
+    let meta = router
+        .must_query_debug_info(test_region_id, timeout)
+        .unwrap();
+    assert_eq!(meta.raft_status.id, test_peer_id);
+    assert_eq!(meta.raft_status.hard_state.term, init_term);
+    cluster
+        .receiver(0)
+        .recv_timeout(Duration::from_millis(300))
+        .unwrap_err();
+
+    // Smaller ID tombstone message should trigger report.
+    let mut smaller_id_tombstone_msg = smaller_id_msg.clone();
+    smaller_id_tombstone_msg.set_is_tombstone(true);
+    router.send_raft_message(smaller_id_tombstone_msg).unwrap();
+    let report = cluster
+        .receiver(0)
+        .recv_timeout(Duration::from_millis(300))
+        .unwrap();
+    assert_valid_report(&report, test_region_id, test_peer_id - 1);
+
+    // Larger ID should trigger destroy.
+    let mut larger_id_msg = smaller_id_msg;
+    larger_id_msg.set_to_peer(new_peer(1, test_peer_id + 1));
+    router.send_raft_message(larger_id_msg).unwrap();
+    assert_peer_not_exist(test_region_id, test_peer_id, router);
+    let meta = router
+        .must_query_debug_info(test_region_id, timeout)
+        .unwrap();
+    assert_eq!(meta.raft_status.id, test_peer_id + 1);
+    assert_eq!(meta.raft_status.hard_state.term, init_term + 1);
+
+    // New peer should survive restart.
+    cluster.restart(0);
+    let router = &cluster.routers[0];
+    let meta = router
+        .must_query_debug_info(test_region_id, timeout)
+        .unwrap();
+    assert_eq!(meta.raft_status.id, test_peer_id + 1);
+    assert_eq!(meta.raft_status.hard_state.term, init_term + 1);
+}
+fn delete() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(STR_TABLE).unwrap();
+        table.insert("hello", "world").unwrap();
+        table.insert("hello2", "world").unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(STR_TABLE).unwrap();
+    assert_eq!("world", table.get("hello").unwrap().unwrap().value());
+    assert_eq!(table.len().unwrap(), 2);
+
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(STR_TABLE).unwrap();
+        assert_eq!("world", table.remove("hello").unwrap().unwrap().value());
+        assert!(table.remove("hello").unwrap().is_none());
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(STR_TABLE).unwrap();
+    assert!(table.get("hello").unwrap().is_none());
+    assert_eq!(table.len().unwrap(), 1);
+}
+fn multiple_tables() {
+    let definition1: TableDefinition<&str, &str> = TableDefinition::new("1");
+    let definition2: TableDefinition<&str, &str> = TableDefinition::new("2");
+
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(definition1).unwrap();
+        let mut table2 = write_txn.open_table(definition2).unwrap();
+
+        table.insert("hello", "world").unwrap();
+        table2.insert("hello", "world2").unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(definition1).unwrap();
+    let table2 = read_txn.open_table(definition2).unwrap();
+    assert_eq!(table.len().unwrap(), 1);
+    assert_eq!("world", table.get("hello").unwrap().unwrap().value());
+    assert_eq!(table2.len().unwrap(), 1);
+    assert_eq!("world2", table2.get("hello").unwrap().unwrap().value());
+}
+fn test_read_index_on_replica() {
+    let count = 3;
+    let mut cluster = new_server_cluster(0, count);
+    cluster.run();
+
+    let k1 = b"k1";
+    let (k2, v2) = (b"k2", b"v2");
+
+    // make sure leader has been elected.
+    assert_eq!(cluster.must_get(k1), None);
+
+    let region = cluster.get_region(b"");
+    let leader = cluster.leader_of_region(region.get_id()).unwrap();
+    let mut storage = cluster.sim.rl().storages[&leader.get_id()].clone();
+
+    let mut ctx = Context::default();
+    ctx.set_region_id(region.get_id());
+    ctx.set_region_epoch(region.get_region_epoch().clone());
+    ctx.set_peer(leader.clone());
+    let snap_ctx = SnapContext {
+        pb_ctx: &ctx,
+        ..Default::default()
+    };
+
+    // write some data
+    let peers = region.get_peers();
+    assert_none(snap_ctx, &mut storage, k2);
+    must_put(&ctx, &storage, k2, v2);
+
+    // read on follower
+    let mut follower_peer = None;
+    for p in peers {
+        if p.get_id() != leader.get_id() {
+            follower_peer = Some(p.clone());
+            break;
+        }
+    }
+
+    assert!(follower_peer.is_some());
+    ctx.set_peer(follower_peer.as_ref().unwrap().clone());
+    let resp = read_index_on_peer(
+        &mut cluster,
+        follower_peer.unwrap(),
+        region.clone(),
+        false,
+        std::time::Duration::from_secs(5),
+    );
+    assert!(!resp.as_ref().unwrap().get_header().has_error());
+    assert_ne!(
+        resp.unwrap().get_responses()[0]
+            .get_read_index()
+            .get_read_index(),
+        0
+    );
+}
+fn owned_get_signatures() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+
+    let definition: TableDefinition<u32, u32> = TableDefinition::new("x");
+
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(definition).unwrap();
+        for i in 0..10 {
+            table.insert(&i, &(i + 1)).unwrap();
+        }
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(definition).unwrap();
+
+    assert_eq!(2, table.get(&1).unwrap().unwrap().value());
+
+    let mut iter: Range<u32, u32> = table.range::<u32>(..).unwrap();
+    for i in 0..10 {
+        assert_eq!(iter.next().unwrap().unwrap().1.value(), i + 1);
+    }
+    assert!(iter.next().is_none());
+    let mut iter: Range<u32, u32> = table.range(0..10).unwrap();
+    for i in 0..10 {
+        assert_eq!(iter.next().unwrap().unwrap().1.value(), i + 1);
+    }
+    assert!(iter.next().is_none());
+    let mut iter = table.range::<&u32>(&0..&10).unwrap();
+    for i in 0..10 {
+        assert_eq!(iter.next().unwrap().unwrap().1.value(), i + 1);
+    }
+    assert!(iter.next().is_none());
+}
+fn test() {
+    let files = WalkDir::new("tests/terser/fixtures")
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|e| !e.file_type().is_dir())
+        .collect::<Vec<_>>();
+    assert!(!files.is_empty());
+    for file in files {
+        let path = file.path();
+        let source_text = std::fs::read_to_string(path).unwrap();
+        let source_type = SourceType::from_path(path).unwrap();
+        let allocator = Allocator::default();
+        let parser_return = Parser::new(&allocator, &source_text, source_type).parse();
+        let program = allocator.alloc(parser_return.program);
+        TestSuite::from_program(&source_text, program).execute_tests();
+    }
+}
+fn test_read_on_replica() {
+    let count = 3;
+    let mut cluster = new_server_cluster(0, count);
+    cluster.cfg.raft_store.hibernate_regions = false;
+    cluster.run();
+
+    let k1 = b"k1";
+    let (k2, v2) = (b"k2", b"v2");
+    let (k3, v3) = (b"k3", b"v3");
+    let (k4, v4) = (b"k4", b"v4");
+
+    // make sure leader has been elected.
+    assert_eq!(cluster.must_get(k1), None);
+
+    let region = cluster.get_region(b"");
+    let leader = cluster.leader_of_region(region.get_id()).unwrap();
+    let mut leader_storage = cluster.sim.rl().storages[&leader.get_id()].clone();
+
+    let mut leader_ctx = Context::default();
+    leader_ctx.set_region_id(region.get_id());
+    leader_ctx.set_region_epoch(region.get_region_epoch().clone());
+    leader_ctx.set_peer(leader.clone());
+    let leader_snap_ctx = SnapContext {
+        pb_ctx: &leader_ctx,
+        ..Default::default()
+    };
+
+    // write some data
+    let peers = region.get_peers();
+    assert_none(leader_snap_ctx, &mut leader_storage, k2);
+    must_put(&leader_ctx, &leader_storage, k2, v2);
+
+    // read on follower
+    let mut follower_peer = None;
+    let mut follower_id = 0;
+    for p in peers {
+        if p.get_id() != leader.get_id() {
+            follower_id = p.get_id();
+            follower_peer = Some(p.clone());
+            break;
+        }
+    }
+
+    assert!(follower_peer.is_some());
+    let mut follower_ctx = Context::default();
+    follower_ctx.set_region_id(region.get_id());
+    follower_ctx.set_region_epoch(region.get_region_epoch().clone());
+    follower_ctx.set_peer(follower_peer.as_ref().unwrap().clone());
+    follower_ctx.set_replica_read(true);
+    let follower_snap_ctx = SnapContext {
+        pb_ctx: &follower_ctx,
+        ..Default::default()
+    };
+    let mut follower_storage = cluster.sim.rl().storages[&follower_id].clone();
+    assert_has(follower_snap_ctx.clone(), &mut follower_storage, k2, v2);
+
+    must_put(&leader_ctx, &leader_storage, k3, v3);
+    assert_has(follower_snap_ctx.clone(), &mut follower_storage, k3, v3);
+
+    cluster.stop_node(follower_id);
+    must_put(&leader_ctx, &leader_storage, k4, v4);
+    cluster.run_node(follower_id).unwrap();
+    let mut follower_storage = cluster.sim.rl().storages[&follower_id].clone();
+    // sleep to ensure the follower has received a heartbeat from the leader
+    thread::sleep(time::Duration::from_millis(300));
+    assert_has(follower_snap_ctx, &mut follower_storage, k4, v4);
+}
+fn crypto_js() {
+    let f = super::fixture();
+
+    let resolver = Resolver::new(ResolveOptions {
+        alias_fields: vec![vec!["browser".into()]],
+        fallback: vec![(
+            "crypto".into(),
+            vec![AliasValue::Path(f.join("lib.js").to_string_lossy().to_string())],
+        )],
+        ..ResolveOptions::default()
+    });
+
+    let resolved_path = resolver.resolve(f.join("crypto-js"), "crypto").map(|r| r.full_path());
+    assert_eq!(resolved_path, Err(ResolveError::Ignored(f.join("crypto-js"))));
+}
+fn test_store_heartbeat() {
+    let region_id = 2;
+    let cluster = Cluster::with_node_count(1, None);
+    let store_id = cluster.node(0).id();
+    let router = &cluster.routers[0];
+    // load data to split bucket.
+    let header = Box::new(router.new_request_for(region_id).take_header());
+    let mut put = SimpleWriteEncoder::with_capacity(64);
+    put.put(CF_DEFAULT, b"key", b"value");
+    let data = put.encode();
+    let write_bytes = data.data_size();
+    let (msg, sub) = PeerMsg::simple_write(header, data);
+    router.send(region_id, msg).unwrap();
+    let _resp = block_on(sub.result()).unwrap();
+
+    // report store heartbeat to pd.
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    router
+        .store_router()
+        .send_control(StoreMsg::Tick(StoreTick::PdStoreHeartbeat))
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    let stats = block_on(cluster.node(0).pd_client().get_store_stats_async(store_id)).unwrap();
+    if stats.get_start_time() > 0 {
+        assert_ne!(stats.get_capacity(), 0);
+        assert_ne!(stats.get_used_size(), 0);
+        assert_eq!(stats.get_keys_written(), 1);
+        assert!(stats.get_bytes_written() > write_bytes.try_into().unwrap());
+    }
+}
+fn test_report_min_resolved_ts() {
+    fail::cfg("mock_tick_interval", "return(0)").unwrap();
+    fail::cfg("mock_collect_tick_interval", "return(0)").unwrap();
+    fail::cfg("mock_min_resolved_ts_interval", "return(0)").unwrap();
+    let mut suite = TestSuite::new(1);
+    // default config is 1s
+    assert_eq!(
+        suite
+            .cluster
+            .cfg
+            .tikv
+            .raft_store
+            .report_min_resolved_ts_interval,
+        ReadableDuration::secs(1)
+    );
+    let region = suite.cluster.get_region(&[]);
+    let ts1 = suite.cluster.pd_client.get_min_resolved_ts();
+
+    // Prewrite
+    let (k, v) = (b"k1", b"v");
+    let start_ts = block_on(suite.cluster.pd_client.get_tso()).unwrap();
+    let mut mutation = Mutation::default();
+    mutation.set_op(Op::Put);
+    mutation.key = k.to_vec();
+    mutation.value = v.to_vec();
+    suite.must_kv_prewrite(region.id, vec![mutation], k.to_vec(), start_ts, false);
+
+    // Commit
+    let commit_ts = block_on(suite.cluster.pd_client.get_tso()).unwrap();
+    suite.must_kv_commit(region.id, vec![k.to_vec()], start_ts, commit_ts);
+
+    sleep_ms(100);
+    let ts3 = suite.cluster.pd_client.get_min_resolved_ts();
+    let unapplied_ts = block_on(suite.cluster.pd_client.get_tso()).unwrap();
+    assert!(ts3 > ts1);
+    assert!(TimeStamp::new(ts3) > commit_ts);
+    assert!(TimeStamp::new(ts3) < unapplied_ts);
+    fail::remove("mock_tick_interval");
+    fail::remove("mock_collect_tick_interval");
+    fail::remove("mock_min_resolved_ts_interval");
+    suite.stop();
+}
+fn range_lifetime() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+
+    let definition: MultimapTableDefinition<&str, &str> = MultimapTableDefinition::new("x");
+
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_multimap_table(definition).unwrap();
+        table.insert("hello", "world").unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_multimap_table(definition).unwrap();
+
+    let mut iter = {
+        let start = "hello".to_string();
+        table.range::<&str>(start.as_str()..).unwrap()
+    };
+    assert_eq!(
+        iter.next()
+            .unwrap()
+            .unwrap()
+            .1
+            .next()
+            .unwrap()
+            .unwrap()
+            .value(),
+        "world"
+    );
+    assert!(iter.next().is_none());
+}
+fn test_merge() {
+    let mut cluster = Cluster::default();
+    let store_id = cluster.node(0).id();
+    let raft_engine = cluster.node(0).running_state().unwrap().raft_engine.clone();
+    let router = &mut cluster.routers[0];
+
+    let do_split =
+        |r: &mut TestRouter, region: Region, peer: &Peer, v: u64| -> (Region, Region, Peer) {
+            let rid = region.get_id();
+            let old_region_state = raft_engine
+                .get_region_state(rid, u64::MAX)
+                .unwrap()
+                .unwrap();
+            let new_peer = new_peer(store_id, peer.get_id() + 1);
+            let (lhs, rhs) = split_region(
+                r,
+                region,
+                peer.clone(),
+                rid + 1,
+                new_peer.clone(),
+                Some(format!("k{}{}", rid, v).as_bytes()),
+                Some(format!("k{}{}", rid + 1, v).as_bytes()),
+                format!("k{}", rid + 1).as_bytes(),
+                format!("k{}", rid + 1).as_bytes(),
+                false,
+            );
+            let region_state = raft_engine
+                .get_region_state(rid, u64::MAX)
+                .unwrap()
+                .unwrap();
+            assert!(region_state.get_tablet_index() > old_region_state.get_tablet_index());
+            assert_eq!(
+                region_state.get_region().get_region_epoch().get_version(),
+                old_region_state
+                    .get_region()
+                    .get_region_epoch()
+                    .get_version()
+                    + 1,
+            );
+            let region_state = raft_engine
+                .get_region_state(rid + 1, u64::MAX)
+                .unwrap()
+                .unwrap();
+            assert_eq!(region_state.get_tablet_index(), RAFT_INIT_LOG_INDEX);
+            (lhs, rhs, new_peer)
+        };
+
+    let region_1 = router.region_detail(2);
+    let peer_1 = region_1.get_peers()[0].clone();
+    router.wait_applied_to_current_term(2, Duration::from_secs(3));
+
+    // Split into 6.
+    let (region_1, region_2, peer_2) = do_split(router, region_1, &peer_1, 1);
+    let (region_2, region_3, peer_3) = do_split(router, region_2, &peer_2, 2);
+    let (region_3, region_4, peer_4) = do_split(router, region_3, &peer_3, 3);
+    let (region_4, region_5, peer_5) = do_split(router, region_4, &peer_4, 4);
+    let (region_5, region_6, peer_6) = do_split(router, region_5, &peer_5, 5);
+    drop(raft_engine);
+    // The last region version is smaller.
+    for (i, v) in [1, 2, 3, 4, 5, 5].iter().enumerate() {
+        let rid = region_1.get_id() + i as u64;
+        let snapshot = router.stale_snapshot(rid);
+        let key = format!("k{rid}{v}");
+        assert!(
+            snapshot.get_value(key.as_bytes()).unwrap().is_some(),
+            "{} {:?}",
+            rid,
+            key
+        );
+    }
+
+    let region_2 = merge_region(&cluster, 0, region_1.clone(), peer_1, region_2, true);
+    {
+        let snapshot = cluster.routers[0].stale_snapshot(region_2.get_id());
+        let key = format!("k{}1", region_1.get_id());
+        assert!(snapshot.get_value(key.as_bytes()).unwrap().is_some());
+    }
+    let region_5 = merge_region(&cluster, 0, region_6.clone(), peer_6, region_5, true);
+    {
+        let snapshot = cluster.routers[0].stale_snapshot(region_5.get_id());
+        let key = format!("k{}5", region_6.get_id());
+        assert!(snapshot.get_value(key.as_bytes()).unwrap().is_some());
+    }
+    let region_3 = merge_region(&cluster, 0, region_2, peer_2, region_3, true);
+    let region_4 = merge_region(&cluster, 0, region_3, peer_3, region_4, true);
+    let region_5 = merge_region(&cluster, 0, region_4, peer_4, region_5, true);
+
+    cluster.restart(0);
+    let snapshot = cluster.routers[0].stale_snapshot(region_5.get_id());
+    for (i, v) in [1, 2, 3, 4, 5, 5].iter().enumerate() {
+        let rid = region_1.get_id() + i as u64;
+        let key = format!("k{rid}{v}");
+        assert!(
+            snapshot.get_value(key.as_bytes()).unwrap().is_some(),
+            "{} {:?}",
+            rid,
+            key
+        );
+    }
+}
+fn test_remove_by_conf_change() {
+    let cluster = Cluster::with_node_count(2, None);
+    let (region_id, peer_id, offset_id) = (2, 10, 1);
+    let mut req = add_learner(&cluster, offset_id, region_id, peer_id);
+
+    // write one kv to make flow control replicated.
+    let (key, val) = (b"key", b"value");
+    write_kv(&cluster, region_id, key, val);
+
+    let new_conf_ver = req.get_header().get_region_epoch().get_conf_ver() + 1;
+    req.mut_header()
+        .mut_region_epoch()
+        .set_conf_ver(new_conf_ver);
+    req.mut_admin_request()
+        .mut_change_peer()
+        .set_change_type(ConfChangeType::RemoveNode);
+    let (admin_msg, admin_sub) = PeerMsg::admin_command(req.clone());
+    // write one kv after removal
+    let (key, val) = (b"key1", b"value");
+    let header = Box::new(cluster.routers[0].new_request_for(region_id).take_header());
+    let mut put = SimpleWriteEncoder::with_capacity(64);
+    put.put(CF_DEFAULT, key, val);
+    let (msg, sub) = PeerMsg::simple_write(header, put.encode());
+    // Send them at the same time so they will be all sent to learner.
+    cluster.routers[0].send(region_id, admin_msg).unwrap();
+    cluster.routers[0].send(region_id, msg).unwrap();
+    let resp = block_on(admin_sub.result()).unwrap();
+    assert!(!resp.get_header().has_error(), "{:?}", resp);
+    let resp = block_on(sub.result()).unwrap();
+    assert!(!resp.get_header().has_error(), "{:?}", resp);
+
+    // Dispatch messages so the learner will receive conf remove and write at the
+    // same time.
+    cluster.dispatch(region_id, vec![]);
+    cluster.routers[1].wait_flush(region_id, Duration::from_millis(300));
+    // Wait for apply.
+    std::thread::sleep(Duration::from_millis(100));
+    let raft_engine = &cluster.node(1).running_state().unwrap().raft_engine;
+    let region_state = raft_engine
+        .get_region_state(region_id, u64::MAX)
+        .unwrap()
+        .unwrap();
+    assert_eq!(region_state.get_state(), PeerState::Tombstone);
+    assert_eq!(raft_engine.get_raft_state(region_id).unwrap(), None);
+}
+async fn too_big_headers_sends_reset_after_431_if_not_eos() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+        assert_frame_eq(settings, frames::settings().max_header_list_size(10));
+        client
+            .send_frame(
+                frames::headers(1)
+                    .request("GET", "https://example.com/")
+                    .field("some-header", "some-value"),
+            )
+            .await;
+        client
+            .recv_frame(frames::headers(1).response(431).eos())
+            .await;
+        client.recv_frame(frames::reset(1).refused()).await;
+    };
+
+    let srv = async move {
+        let mut srv = server::Builder::new()
+            .max_header_list_size(10)
+            .handshake::<_, Bytes>(io)
+            .await
+            .expect("handshake");
+
+        let req = srv.next().await;
+        assert!(req.is_none(), "req is {:?}", req);
+    };
+
+    join(client, srv).await;
+}
+fn regression7() {
+    let tmpfile = create_tempfile();
+
+    let db = Database::create(tmpfile.path()).unwrap();
+
+    let table_def: TableDefinition<u64, &[u8]> = TableDefinition::new("x");
+
+    let tx = db.begin_write().unwrap();
+    {
+        let mut t = tx.open_table(table_def).unwrap();
+        let big_value = vec![0u8; 4063];
+        t.insert(&35723, big_value.as_slice()).unwrap();
+        t.remove(&145278).unwrap();
+        t.remove(&145227).unwrap();
+    }
+    tx.commit().unwrap();
+
+    let mut tx = db.begin_write().unwrap();
+    tx.set_durability(Durability::None);
+    {
+        let mut t = tx.open_table(table_def).unwrap();
+        let v = vec![0u8; 47];
+        t.insert(&66469, v.as_slice()).unwrap();
+        let v = vec![0u8; 2414];
+        t.insert(&146255, v.as_slice()).unwrap();
+        let v = vec![0u8; 159];
+        t.insert(&153701, v.as_slice()).unwrap();
+        let v = vec![0u8; 1186];
+        t.insert(&145227, v.as_slice()).unwrap();
+        let v = vec![0u8; 223];
+        t.insert(&118749, v.as_slice()).unwrap();
+
+        t.remove(&145227).unwrap();
+
+        let mut iter = t.range(138763..(138763 + 232359)).unwrap().rev();
+        assert_eq!(iter.next().unwrap().unwrap().0.value(), 153701);
+        assert_eq!(iter.next().unwrap().unwrap().0.value(), 146255);
+        assert!(iter.next().is_none());
+    }
+    tx.commit().unwrap();
+}
+fn is_empty() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_multimap_table(STR_TABLE).unwrap();
+        table.insert("hello", "world").unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_multimap_table(STR_TABLE).unwrap();
+    assert!(!table.is_empty().unwrap());
+}
+async fn request_stream_id_overflows() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::Builder::new()
+            .initial_stream_id(::std::u32::MAX >> 1)
+            .handshake::<_, Bytes>(io)
+            .await
+            .unwrap();
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+
+        // first request is allowed
+        let (response, _) = client.send_request(request, true).unwrap();
+        let _x = h2.drive(response).await.unwrap();
+
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("https://example.com/")
+            .body(())
+            .unwrap();
+        // second cannot use the next stream id, it's over
+        let poll_err = poll_fn(|cx| client.poll_ready(cx)).await.unwrap_err();
+        assert_eq!(poll_err.to_string(), "user error: stream ID overflowed");
+
+        let err = client.send_request(request, true).unwrap_err();
+        assert_eq!(err.to_string(), "user error: stream ID overflowed");
+
+        h2.await.unwrap();
+    };
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(::std::u32::MAX >> 1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(::std::u32::MAX >> 1).response(200).eos())
+            .await;
+        idle_ms(10).await;
+    };
+
+    join(srv, h2).await;
+}
+fn test_node_async_fetch() {
+    let count = 3;
+    let mut cluster = new_node_cluster(0, count);
+
+    cluster.cfg.raft_store.raft_log_gc_count_limit = Some(100000);
+    cluster.cfg.raft_store.raft_log_gc_threshold = 50;
+    cluster.cfg.raft_store.raft_log_gc_size_limit = Some(ReadableSize::mb(20));
+    cluster.cfg.raft_store.raft_log_gc_tick_interval = ReadableDuration::millis(100);
+    cluster.cfg.raft_store.raft_log_reserve_max_ticks = 2;
+    cluster.cfg.raft_store.raft_entry_cache_life_time = ReadableDuration::millis(100);
+    cluster.run();
+
+    cluster.must_put(b"k1", b"v1");
+
+    let mut before_states = HashMap::default();
+
+    for (&id, engines) in &cluster.engines {
+        must_get_equal(&engines.kv, b"k1", b"v1");
+        let mut state: RaftApplyState = engines
+            .kv
+            .get_msg_cf(CF_RAFT, &keys::apply_state_key(1))
+            .unwrap()
+            .unwrap_or_default();
+        let state = state.take_truncated_state();
+        // compact should not start
+        assert_eq!(RAFT_INIT_LOG_INDEX, state.get_index());
+        assert_eq!(RAFT_INIT_LOG_TERM, state.get_term());
+        before_states.insert(id, state);
+    }
+
+    cluster.stop_node(1);
+
+    for i in 1..60u32 {
+        let k = i.to_string().into_bytes();
+        let v = k.clone();
+        cluster.must_put(&k, &v);
+    }
+
+    // wait log gc.
+    sleep_ms(500);
+
+    let (sender, receiver) = mpsc::channel();
+    let sync_sender = Mutex::new(sender);
+    fail::cfg_callback("on_async_fetch_return", move || {
+        let sender = sync_sender.lock().unwrap();
+        sender.send(true).unwrap();
+    })
+    .unwrap();
+    cluster.run_node(1).unwrap();
+
+    // limit has not reached, should not gc.
+    for (&id, engines) in &cluster.engines {
+        let mut state: RaftApplyState = engines
+            .kv
+            .get_msg_cf(CF_RAFT, &keys::apply_state_key(1))
+            .unwrap()
+            .unwrap_or_default();
+        let after_state = state.take_truncated_state();
+
+        let before_state = &before_states[&id];
+        let idx = after_state.get_index();
+        assert_eq!(idx, before_state.get_index());
+    }
+
+    assert_eq!(
+        receiver.recv_timeout(Duration::from_millis(500)).unwrap(),
+        true
+    );
+
+    // logs should be replicated to node 1 successfully.
+    for i in 1..60u32 {
+        let k = i.to_string().into_bytes();
+        let v = k.clone();
+        must_get_equal(&cluster.engines[&1].kv, &k, &v);
+    }
+
+    for i in 60..500u32 {
+        let k = i.to_string().into_bytes();
+        let v = k.clone();
+        cluster.must_put(&k, &v);
+        let v2 = cluster.get(&k);
+        assert_eq!(v2, Some(v));
+
+        if i > 100
+            && check_compacted(
+                &cluster.engines,
+                &before_states,
+                1,
+                false, // must_compacted
+            )
+        {
+            return;
+        }
+    }
+    check_compacted(
+        &cluster.engines,
+        &before_states,
+        1,
+        true, // must_compacted
+    );
+}
+fn drain_filter_lifetime() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+
+    let definition: TableDefinition<&str, &str> = TableDefinition::new("x");
+
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(definition).unwrap();
+        table.insert("hello", "world").unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let txn = db.begin_write().unwrap();
+    let mut table = txn.open_table(definition).unwrap();
+
+    let mut iter = {
+        let start = "hello".to_string();
+        table.drain_filter(start.as_str().., |_, _| true).unwrap()
+    };
+    assert_eq!(iter.next().unwrap().unwrap().1.value(), "world");
+    assert!(iter.next().is_none());
+}

@@ -1,0 +1,438 @@
+fn test_accept_proposal_during_conf_change() {
+    let mut cluster = new_node_cluster(0, 2);
+    cluster.pd_client.disable_default_operator();
+    let r = cluster.run_conf_change();
+    cluster.must_put(b"a", b"v");
+
+    let conf_change_fp = "apply_on_conf_change_all_1";
+    fail::cfg(conf_change_fp, "pause").unwrap();
+    let mut add_peer_rx = cluster.async_add_peer(r, new_peer(2, 2)).unwrap();
+    add_peer_rx
+        .recv_timeout(Duration::from_millis(100))
+        .unwrap_err();
+
+    // Conf change doesn't affect proposals.
+    let write_req = make_write_req(&mut cluster, b"k");
+    let (cb, mut cb_receivers) = make_cb(&write_req);
+    cluster
+        .sim
+        .rl()
+        .async_command_on_node(1, write_req, cb)
+        .unwrap();
+    cb_receivers
+        .committed
+        .recv_timeout(Duration::from_millis(300))
+        .unwrap();
+    cb_receivers.proposed.try_recv().unwrap();
+
+    fail::remove(conf_change_fp);
+    assert!(
+        !add_peer_rx
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .get_header()
+            .has_error()
+    );
+    assert!(
+        !cb_receivers
+            .applied
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .get_header()
+            .has_error()
+    );
+    must_get_equal(&cluster.get_engine(2), b"k", b"v");
+}
+fn test_raftkv_precheck_write_with_ctx() {
+    let mut cluster = new_server_cluster(0, 3);
+    cluster.run();
+
+    // make sure leader has been elected.
+    assert_eq!(cluster.must_get(b"k1"), None);
+
+    let region = cluster.get_region(b"");
+    let leader = cluster.leader_of_region(region.get_id()).unwrap();
+    let follower = region
+        .get_peers()
+        .iter()
+        .find(|p| p.get_id() != leader.get_id())
+        .unwrap();
+
+    let leader_storage = cluster.sim.rl().storages[&leader.get_id()].clone();
+    let follower_storage = cluster.sim.rl().storages[&follower.get_id()].clone();
+
+    // Assume this is a write request.
+    let mut ctx = Context::default();
+    ctx.set_region_id(region.get_id());
+    ctx.set_region_epoch(region.get_region_epoch().clone());
+    ctx.set_peer(region.get_peers()[0].clone());
+
+    // The (write) request can be sent to the leader.
+    leader_storage.precheck_write_with_ctx(&ctx).unwrap();
+    // The (write) request should not be send to a follower.
+    follower_storage.precheck_write_with_ctx(&ctx).unwrap_err();
+
+    // Leader has network partition and it must be not leader any more.
+    let filter = Box::new(RegionPacketFilter::new(
+        region.get_id(),
+        leader.get_store_id(),
+    ));
+    cluster
+        .sim
+        .wl()
+        .add_recv_filter(leader.get_store_id(), filter.clone());
+    cluster
+        .sim
+        .wl()
+        .add_send_filter(leader.get_store_id(), filter);
+    sleep_until_election_triggered(&cluster.cfg);
+    leader_storage.precheck_write_with_ctx(&ctx).unwrap_err();
+}
+fn str_type() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+
+    let definition: TableDefinition<&str, &str> = TableDefinition::new("x");
+
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(definition).unwrap();
+        table.insert("hello", "world").unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(definition).unwrap();
+    assert_eq!("world", table.get("hello").unwrap().unwrap().value());
+
+    let mut iter = table.iter().unwrap();
+    assert_eq!(iter.next().unwrap().unwrap().1.value(), "world");
+    assert!(iter.next().is_none());
+
+    let mut iter: Range<&str, &str> = table.range("a".."z").unwrap();
+    assert_eq!(iter.next().unwrap().unwrap().1.value(), "world");
+    assert!(iter.next().is_none());
+}
+fn iter() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_multimap_table(U64_TABLE).unwrap();
+        for i in 0..10 {
+            for j in 0..10 {
+                table.insert(&i, &j).unwrap();
+            }
+        }
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_multimap_table(U64_TABLE).unwrap();
+    let mut iter = table.iter().unwrap();
+    for i in 0..10 {
+        let (k, mut values) = iter.next().unwrap().unwrap();
+        assert_eq!(k.value(), i);
+        for j in 0..10 {
+            assert_eq!(values.next().unwrap().unwrap().value(), j);
+        }
+    }
+}
+fn test_something() {
+    let data = [];
+    let encoded = STANDARD.encode(data);
+    let decoded = STANDARD.decode(&encoded).unwrap();
+    assert_eq!(data, decoded.as_slice());
+}
+fn test_read_leader_in_lease() {
+    let count = 3;
+    let mut cluster = new_server_cluster(0, count);
+    cluster.run();
+
+    let k1 = b"k1";
+    let (k2, v2) = (b"k2", b"v2");
+
+    // make sure leader has been elected.
+    assert_eq!(cluster.must_get(k1), None);
+
+    let region = cluster.get_region(b"");
+    let leader = cluster.leader_of_region(region.get_id()).unwrap();
+    let mut storage = cluster.sim.rl().storages[&leader.get_id()].clone();
+
+    let mut ctx = Context::default();
+    ctx.set_region_id(region.get_id());
+    ctx.set_region_epoch(region.get_region_epoch().clone());
+    ctx.set_peer(leader.clone());
+    let snap_ctx = SnapContext {
+        pb_ctx: &ctx,
+        ..Default::default()
+    };
+
+    // write some data
+    assert_none(snap_ctx.clone(), &mut storage, k2);
+    must_put(&ctx, &storage, k2, v2);
+
+    // isolate leader
+    cluster.add_send_filter(IsolationFilterFactory::new(leader.get_store_id()));
+
+    // leader still in lease, check if can read on leader
+    assert_eq!(can_read(snap_ctx, &mut storage, k2, v2), true);
+}
+fn roundtrip_decode_trailing_10_bytes() {
+    // This is a special case because we decode 8 byte blocks of input at a time as much as we can,
+    // ideally unrolled to 32 bytes at a time, in stages 1 and 2. Since we also write a u64's worth
+    // of bytes (8) to the output, we always write 2 garbage bytes that then will be overwritten by
+    // the NEXT block. However, if the next block only contains 2 bytes, it will decode to 1 byte,
+    // and therefore be too short to cover up the trailing 2 garbage bytes. Thus, we have stage 3
+    // to handle that case.
+
+    for num_quads in 0..25 {
+        let mut s: String = "ABCD".repeat(num_quads);
+        s.push_str("EFGHIJKLZg");
+
+        let engine = GeneralPurpose::new(&alphabet::STANDARD, NO_PAD);
+        let decoded = engine.decode(&s).unwrap();
+        assert_eq!(num_quads * 3 + 7, decoded.len());
+
+        assert_eq!(s, engine.encode(&decoded));
+    }
+}
+fn compaction() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+    let definition: TableDefinition<u32, &[u8]> = TableDefinition::new("x");
+
+    let big_value = vec![0u8; 100 * 1024];
+
+    let txn = db.begin_write().unwrap();
+    {
+        let mut table = txn.open_table(definition).unwrap();
+        // Insert 10MiB of data
+        for i in 0..100 {
+            table.insert(&i, big_value.as_slice()).unwrap();
+        }
+    }
+    txn.commit().unwrap();
+
+    let txn = db.begin_write().unwrap();
+    {
+        let mut table = txn.open_table(definition).unwrap();
+        // Delete 90% of it
+        for i in 0..90 {
+            table.remove(&i).unwrap();
+        }
+    }
+    txn.commit().unwrap();
+    // Second commit to trigger dynamic compaction
+    let txn = db.begin_write().unwrap();
+    txn.commit().unwrap();
+
+    // The values are > 1 page, so shouldn't get relocated. Therefore there should be a bunch of fragmented space,
+    // since we left the last 100 values in the db.
+    drop(db);
+    let file_size = tmpfile.as_file().metadata().unwrap().len();
+    let mut db = Database::open(tmpfile.path()).unwrap();
+
+    assert!(db.compact().unwrap());
+    drop(db);
+    let file_size2 = tmpfile.as_file().metadata().unwrap().len();
+    assert!(file_size2 < file_size);
+}
+fn range_query() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_multimap_table(SLICE_U64_TABLE).unwrap();
+        for i in 0..5 {
+            table.insert(b"0".as_slice(), &i).unwrap();
+        }
+        for i in 5..10 {
+            table.insert(b"1".as_slice(), &i).unwrap();
+        }
+        for i in 10..15 {
+            table.insert(b"2".as_slice(), &i).unwrap();
+        }
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_multimap_table(SLICE_U64_TABLE).unwrap();
+    let start = b"0".as_ref();
+    let end = b"1".as_ref();
+    let mut iter = table.range(start..=end).unwrap();
+
+    {
+        let (key, mut values) = iter.next().unwrap().unwrap();
+        for i in 0..5 {
+            assert_eq!(b"0", key.value());
+            let value = values.next().unwrap().unwrap();
+            assert_eq!(i, value.value());
+        }
+    }
+    {
+        let (key, mut values) = iter.next().unwrap().unwrap();
+        for i in 5..10 {
+            assert_eq!(b"1", key.value());
+            let value = values.next().unwrap().unwrap();
+            assert_eq!(i, value.value());
+        }
+    }
+    assert!(iter.next().is_none());
+
+    let mut total: u64 = 0;
+    for item in table.range(start..=end).unwrap() {
+        let (_, values) = item.unwrap();
+        total += values.map(|x| x.unwrap().value()).sum::<u64>();
+    }
+    assert_eq!(total, 45);
+}
+fn test_unknown_peer() {
+    let cluster = Cluster::with_node_count(1, None);
+
+    let router = &cluster.routers[0];
+    let header = router.new_request_for(2).take_header();
+
+    // Create a fake message to see whether it's responded.
+    let from_peer = new_peer(10, 10);
+    let mut msg = Box::<RaftMessage>::default();
+    msg.set_region_id(2);
+    msg.set_to_peer(header.get_peer().clone());
+    msg.set_region_epoch(header.get_region_epoch().clone());
+    msg.set_from_peer(from_peer.clone());
+    let raft_message = msg.mut_message();
+    raft_message.set_msg_type(raft::prelude::MessageType::MsgHeartbeat);
+    raft_message.set_from(10);
+    raft_message.set_term(10);
+
+    router.send_raft_message(msg).unwrap();
+    router.wait_flush(2, Duration::from_secs(3));
+    // If peer cache is updated correctly, it should be able to respond.
+    let msg = cluster.receiver(0).try_recv().unwrap();
+    assert_eq!(*msg.get_to_peer(), from_peer);
+    assert_eq!(msg.get_from_peer(), header.get_peer());
+    assert_eq!(
+        msg.get_message().get_msg_type(),
+        MessageType::MsgHeartbeatResponse
+    );
+}
+fn option_type() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+
+    let definition: TableDefinition<Option<u8>, Option<u32>> = TableDefinition::new("x");
+
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(definition).unwrap();
+        table.insert(None, None).unwrap();
+        table.insert(None, Some(0)).unwrap();
+        table.insert(Some(1), Some(1)).unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(definition).unwrap();
+    assert_eq!(table.get(None).unwrap().unwrap().value(), Some(0));
+    assert_eq!(table.get(Some(1)).unwrap().unwrap().value(), Some(1));
+    let mut iter = table.iter().unwrap();
+    assert_eq!(iter.next().unwrap().unwrap().0.value(), None);
+    assert_eq!(iter.next().unwrap().unwrap().0.value(), Some(1));
+}
+fn efficient_storage() {
+    let tmpfile = create_tempfile();
+    let expected_max_size = 1024 * 1024;
+    // Write enough values that big_key.len() * entries > db_size to check that duplicate key data is not stored
+    // and entries * sizeof(u32) > page_size to validate that large numbers of values can be stored per key
+    let entries = 10000;
+    let db = Database::create(tmpfile.path()).unwrap();
+    let table_def: MultimapTableDefinition<&[u8], u32> = MultimapTableDefinition::new("x");
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_multimap_table(table_def).unwrap();
+        let big_key = [0u8; 1000];
+        for i in 0..entries {
+            table.insert(big_key.as_slice(), &i).unwrap();
+        }
+    }
+    assert!(write_txn.stats().unwrap().stored_bytes() <= expected_max_size);
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_multimap_table(table_def).unwrap();
+    assert_eq!(table.len().unwrap(), entries as u64);
+}
+fn read_isolation2() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(STR_TABLE).unwrap();
+        table.insert("hello", "world").unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let write_txn = db.begin_write().unwrap();
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(STR_TABLE).unwrap();
+    assert_eq!("world", table.get("hello").unwrap().unwrap().value());
+    {
+        let mut write_table = write_txn.open_table(STR_TABLE).unwrap();
+        write_table.remove("hello").unwrap();
+        write_table.insert("hello2", "world2").unwrap();
+        write_table.insert("hello3", "world3").unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn2 = db.begin_read().unwrap();
+    let table2 = read_txn2.open_table(STR_TABLE).unwrap();
+    assert!(table2.get("hello").unwrap().is_none());
+    assert_eq!("world2", table2.get("hello2").unwrap().unwrap().value());
+    assert_eq!("world3", table2.get("hello3").unwrap().unwrap().value());
+    assert_eq!(table2.len().unwrap(), 2);
+
+    assert_eq!("world", table.get("hello").unwrap().unwrap().value());
+    assert!(table.get("hello2").unwrap().is_none());
+    assert!(table.get("hello3").unwrap().is_none());
+    assert_eq!(table.len().unwrap(), 1);
+}
+fn tuple4_type() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+
+    let table_def: TableDefinition<(&str, u8, u16, u32), (u16, u32)> =
+        TableDefinition::new("table");
+
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(table_def).unwrap();
+        table.insert(&("hello", 5, 6, 7), &(0, 123)).unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(table_def).unwrap();
+    assert_eq!(
+        table.get(&("hello", 5, 6, 7)).unwrap().unwrap().value(),
+        (0, 123)
+    );
+}
+fn tuple_type_lifetime() {
+    let tmpfile = create_tempfile();
+    let db = Database::create(tmpfile.path()).unwrap();
+
+    let table_def: TableDefinition<(&str, u8), (u16, u32)> = TableDefinition::new("table");
+
+    let write_txn = db.begin_write().unwrap();
+    {
+        let mut table = write_txn.open_table(table_def).unwrap();
+        table
+            .insert(&(String::from("hello").as_str(), 5), &(0, 123))
+            .unwrap();
+    }
+    write_txn.commit().unwrap();
+
+    let read_txn = db.begin_read().unwrap();
+    let table = read_txn.open_table(table_def).unwrap();
+    assert_eq!(table.get(&("hello", 5)).unwrap().unwrap().value(), (0, 123));
+}

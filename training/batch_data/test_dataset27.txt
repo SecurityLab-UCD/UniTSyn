@@ -1,0 +1,464 @@
+fn upgrade_severity() {
+    let mut fs = MemoryFileSystem::default();
+    let mut console = BufferConsole::default();
+    let file_path = Path::new("biome.json");
+    fs.insert(
+        file_path.into(),
+        CONFIG_LINTER_UPGRADE_DIAGNOSTIC.as_bytes(),
+    );
+
+    let file_path = Path::new("file.js");
+    fs.insert(file_path.into(), UPGRADE_SEVERITY_CODE.as_bytes());
+
+    let result = run_cli(
+        DynRef::Borrowed(&mut fs),
+        &mut console,
+        Args::from([("check"), file_path.as_os_str().to_str().unwrap()].as_slice()),
+    );
+
+    assert!(result.is_err(), "run_cli returned {result:?}");
+
+    let messages = &console.out_buffer;
+
+    let error_count = messages
+        .iter()
+        .filter(|m| m.level == LogLevel::Error)
+        .filter(|m| {
+            let content = format!("{:?}", m.content);
+            content.contains("style/noNegationElse")
+        })
+        .count();
+
+    assert_eq!(
+        error_count, 1,
+        "expected 1 error-level message in console buffer, found {error_count:?}:\n{:?}",
+        console.out_buffer
+    );
+
+    assert_cli_snapshot(SnapshotPayload::new(
+        module_path!(),
+        "upgrade_severity",
+        fs,
+        console,
+        result,
+    ));
+}
+fn parse_exists_subquery() {
+    let expected_inner = verified_query("SELECT 1");
+    let sql = "SELECT * FROM t WHERE EXISTS (SELECT 1)";
+    let select = verified_only_select(sql);
+    assert_eq!(
+        Expr::Exists {
+            negated: false,
+            subquery: Box::new(expected_inner.clone()),
+        },
+        select.selection.unwrap(),
+    );
+
+    let sql = "SELECT * FROM t WHERE NOT EXISTS (SELECT 1)";
+    let select = verified_only_select(sql);
+    assert_eq!(
+        Expr::Exists {
+            negated: true,
+            subquery: Box::new(expected_inner),
+        },
+        select.selection.unwrap(),
+    );
+
+    verified_stmt("SELECT * FROM t WHERE EXISTS (WITH u AS (SELECT 1) SELECT * FROM u)");
+    verified_stmt("SELECT EXISTS (SELECT 1)");
+
+    let res = parse_sql_statements("SELECT EXISTS (");
+    assert_eq!(
+        ParserError::ParserError(
+            "Expected SELECT, VALUES, or a subquery in the query body, found: EOF".to_string()
+        ),
+        res.unwrap_err(),
+    );
+
+    let res = parse_sql_statements("SELECT EXISTS (NULL)");
+    assert_eq!(
+        ParserError::ParserError(
+            "Expected SELECT, VALUES, or a subquery in the query body, found: NULL".to_string()
+        ),
+        res.unwrap_err(),
+    );
+}
+fn parse_bad_if_not_exists() {
+    let res = pg().parse_sql_statements("CREATE TABLE NOT EXISTS uk_cities ()");
+    assert_eq!(
+        ParserError::ParserError("Expected end of statement, found: EXISTS".to_string()),
+        res.unwrap_err()
+    );
+
+    let res = pg().parse_sql_statements("CREATE TABLE IF EXISTS uk_cities ()");
+    assert_eq!(
+        ParserError::ParserError("Expected end of statement, found: EXISTS".to_string()),
+        res.unwrap_err()
+    );
+
+    let res = pg().parse_sql_statements("CREATE TABLE IF uk_cities ()");
+    assert_eq!(
+        ParserError::ParserError("Expected end of statement, found: uk_cities".to_string()),
+        res.unwrap_err()
+    );
+
+    let res = pg().parse_sql_statements("CREATE TABLE IF NOT uk_cities ()");
+    assert_eq!(
+        ParserError::ParserError("Expected end of statement, found: NOT".to_string()),
+        res.unwrap_err()
+    );
+}
+fn parse_create_table_auto_increment() {
+    let sql = "CREATE TABLE foo (bar INT PRIMARY KEY AUTOINCREMENT)";
+    match sqlite_and_generic().verified_stmt(sql) {
+        Statement::CreateTable { name, columns, .. } => {
+            assert_eq!(name.to_string(), "foo");
+            assert_eq!(
+                vec![ColumnDef {
+                    name: "bar".into(),
+                    data_type: DataType::Int(None),
+                    collation: None,
+                    options: vec![
+                        ColumnOptionDef {
+                            name: None,
+                            option: ColumnOption::Unique { is_primary: true },
+                        },
+                        ColumnOptionDef {
+                            name: None,
+                            option: ColumnOption::DialectSpecific(vec![Token::make_keyword(
+                                "AUTOINCREMENT"
+                            )]),
+                        },
+                    ],
+                }],
+                columns
+            );
+        }
+        _ => unreachable!(),
+    }
+}
+fn parse_create_or_replace_view() {
+    let sql = "CREATE OR REPLACE VIEW v AS SELECT 1";
+    match verified_stmt(sql) {
+        Statement::CreateView {
+            name,
+            columns,
+            or_replace,
+            with_options,
+            query,
+            materialized,
+            cluster_by,
+            with_no_schema_binding: late_binding,
+            if_not_exists,
+            temporary,
+        } => {
+            assert_eq!("v", name.to_string());
+            assert_eq!(columns, vec![]);
+            assert_eq!(with_options, vec![]);
+            assert_eq!("SELECT 1", query.to_string());
+            assert!(!materialized);
+            assert!(or_replace);
+            assert_eq!(cluster_by, vec![]);
+            assert!(!late_binding);
+            assert!(!if_not_exists);
+            assert!(!temporary);
+        }
+        _ => unreachable!(),
+    }
+}
+fn parse_derived_tables() {
+    let sql = "SELECT a.x, b.y FROM (SELECT x FROM foo) AS a CROSS JOIN (SELECT y FROM bar) AS b";
+    let _ = verified_only_select(sql);
+    //TODO: add assertions
+
+    let sql = "SELECT a.x, b.y \
+               FROM (SELECT x FROM foo) AS a (x) \
+               CROSS JOIN (SELECT y FROM bar) AS b (y)";
+    let _ = verified_only_select(sql);
+    //TODO: add assertions
+
+    let sql = "SELECT * FROM (((SELECT 1)))";
+    let _ = verified_only_select(sql);
+    // TODO: add assertions
+
+    let sql = "SELECT * FROM t NATURAL JOIN (((SELECT 1)))";
+    let _ = verified_only_select(sql);
+    // TODO: add assertions
+
+    let sql = "SELECT * FROM (((SELECT 1) UNION (SELECT 2)) AS t1 NATURAL JOIN t2)";
+    let select = verified_only_select(sql);
+    let from = only(select.from);
+    assert_eq!(
+        from.relation,
+        TableFactor::NestedJoin {
+            table_with_joins: Box::new(TableWithJoins {
+                relation: TableFactor::Derived {
+                    lateral: false,
+                    subquery: Box::new(verified_query("(SELECT 1) UNION (SELECT 2)")),
+                    alias: Some(TableAlias {
+                        name: "t1".into(),
+                        columns: vec![],
+                    }),
+                },
+                joins: vec![Join {
+                    relation: TableFactor::Table {
+                        name: ObjectName(vec!["t2".into()]),
+                        alias: None,
+                        args: None,
+                        with_hints: vec![],
+                        version: None,
+                        partitions: vec![],
+                    },
+                    join_operator: JoinOperator::Inner(JoinConstraint::Natural),
+                }],
+            }),
+            alias: None,
+        }
+    );
+}
+fn parse_create_view_temporary() {
+    let sql = "CREATE TEMPORARY VIEW myschema.myview AS SELECT foo FROM bar";
+    match verified_stmt(sql) {
+        Statement::CreateView {
+            name,
+            columns,
+            query,
+            or_replace,
+            materialized,
+            with_options,
+            cluster_by,
+            with_no_schema_binding: late_binding,
+            if_not_exists,
+            temporary,
+        } => {
+            assert_eq!("myschema.myview", name.to_string());
+            assert_eq!(Vec::<Ident>::new(), columns);
+            assert_eq!("SELECT foo FROM bar", query.to_string());
+            assert!(!materialized);
+            assert!(!or_replace);
+            assert_eq!(with_options, vec![]);
+            assert_eq!(cluster_by, vec![]);
+            assert!(!late_binding);
+            assert!(!if_not_exists);
+            assert!(temporary);
+        }
+        _ => unreachable!(),
+    }
+}
+fn test_snowflake_trim() {
+    let real_sql = r#"SELECT customer_id, TRIM(sub_items.value:item_price_id, '"', "a") AS item_price_id FROM models_staging.subscriptions"#;
+    assert_eq!(snowflake().verified_stmt(real_sql).to_string(), real_sql);
+
+    let sql_only_select = "SELECT TRIM('xyz', 'a')";
+    let select = snowflake().verified_only_select(sql_only_select);
+    assert_eq!(
+        &Expr::Trim {
+            expr: Box::new(Expr::Value(Value::SingleQuotedString("xyz".to_owned()))),
+            trim_where: None,
+            trim_what: None,
+            trim_characters: Some(vec![Expr::Value(Value::SingleQuotedString("a".to_owned()))]),
+        },
+        expr_from_projection(only(&select.projection))
+    );
+
+    // missing comma separation
+    let error_sql = "SELECT TRIM('xyz' 'a')";
+    assert_eq!(
+        ParserError::ParserError("Expected ), found: 'a'".to_owned()),
+        snowflake().parse_sql_statements(error_sql).unwrap_err()
+    );
+}
+fn pragma_funciton_style() {
+    let sql = "PRAGMA cache_size(10)";
+    match sqlite_and_generic().verified_stmt(sql) {
+        Statement::Pragma {
+            name,
+            value: Some(val),
+            is_eq: false,
+        } => {
+            assert_eq!("cache_size", name.to_string());
+            assert_eq!("10", val.to_string());
+        }
+        _ => unreachable!(),
+    }
+}
+fn parse_window_function_with_filter() {
+    for func_name in [
+        "row_number",
+        "rank",
+        "max",
+        "count",
+        "user_defined_function",
+    ] {
+        let sql = format!("SELECT {}(x) FILTER (WHERE y) OVER () FROM t", func_name);
+        let select = sqlite().verified_only_select(&sql);
+        assert_eq!(select.to_string(), sql);
+        assert_eq!(
+            select.projection,
+            vec![SelectItem::UnnamedExpr(Expr::Function(Function {
+                name: ObjectName(vec![Ident::new(func_name)]),
+                args: vec![FunctionArg::Unnamed(FunctionArgExpr::Expr(
+                    Expr::Identifier(Ident::new("x"))
+                ))],
+                null_treatment: None,
+                over: Some(WindowType::WindowSpec(WindowSpec {
+                    partition_by: vec![],
+                    order_by: vec![],
+                    window_frame: None,
+                })),
+                filter: Some(Box::new(Expr::Identifier(Ident::new("y")))),
+                distinct: false,
+                special: false,
+                order_by: vec![]
+            }))]
+        );
+    }
+}
+fn test_square_brackets_over_db_schema_table_name() {
+    let select = redshift().verified_only_select("SELECT [col1] FROM [test_schema].[test_table]");
+    assert_eq!(
+        select.projection[0],
+        SelectItem::UnnamedExpr(Expr::Identifier(Ident {
+            value: "col1".to_string(),
+            quote_style: Some('[')
+        })),
+    );
+    assert_eq!(
+        select.from[0],
+        TableWithJoins {
+            relation: TableFactor::Table {
+                name: ObjectName(vec![
+                    Ident {
+                        value: "test_schema".to_string(),
+                        quote_style: Some('[')
+                    },
+                    Ident {
+                        value: "test_table".to_string(),
+                        quote_style: Some('[')
+                    }
+                ]),
+                alias: None,
+                args: None,
+                with_hints: vec![],
+                version: None,
+                partitions: vec![],
+            },
+            joins: vec![],
+        }
+    );
+}
+fn parse_create_view_temporary_if_not_exists() {
+    let sql = "CREATE TEMPORARY VIEW IF NOT EXISTS myschema.myview AS SELECT foo FROM bar";
+    match sqlite_and_generic().verified_stmt(sql) {
+        Statement::CreateView {
+            name,
+            columns,
+            query,
+            or_replace,
+            materialized,
+            with_options,
+            cluster_by,
+            with_no_schema_binding: late_binding,
+            if_not_exists,
+            temporary,
+        } => {
+            assert_eq!("myschema.myview", name.to_string());
+            assert_eq!(Vec::<Ident>::new(), columns);
+            assert_eq!("SELECT foo FROM bar", query.to_string());
+            assert!(!materialized);
+            assert!(!or_replace);
+            assert_eq!(with_options, vec![]);
+            assert_eq!(cluster_by, vec![]);
+            assert!(!late_binding);
+            assert!(if_not_exists);
+            assert!(temporary);
+        }
+        _ => unreachable!(),
+    }
+}
+fn parse_alter_table_alter_column() {
+    pg().one_statement_parses_to(
+        "ALTER TABLE tab ALTER COLUMN is_active TYPE TEXT USING 'text'",
+        "ALTER TABLE tab ALTER COLUMN is_active SET DATA TYPE TEXT USING 'text'",
+    );
+
+    match alter_table_op(
+        pg().verified_stmt(
+            "ALTER TABLE tab ALTER COLUMN is_active SET DATA TYPE TEXT USING 'text'",
+        ),
+    ) {
+        AlterTableOperation::AlterColumn { column_name, op } => {
+            assert_eq!("is_active", column_name.to_string());
+            let using_expr = Expr::Value(Value::SingleQuotedString("text".to_string()));
+            assert_eq!(
+                op,
+                AlterColumnOperation::SetDataType {
+                    data_type: DataType::Text,
+                    using: Some(using_expr),
+                }
+            );
+        }
+        _ => unreachable!(),
+    }
+}
+fn parse_like() {
+    fn chk(negated: bool) {
+        let sql = &format!(
+            "SELECT * FROM customers WHERE name {}LIKE '%a'",
+            if negated { "NOT " } else { "" }
+        );
+        let select = ms_and_generic().verified_only_select(sql);
+        assert_eq!(
+            Expr::Like {
+                expr: Box::new(Expr::Identifier(Ident::new("name"))),
+                negated,
+                pattern: Box::new(Expr::Value(Value::SingleQuotedString("%a".to_string()))),
+                escape_char: None,
+            },
+            select.selection.unwrap()
+        );
+
+        // Test with escape char
+        let sql = &format!(
+            "SELECT * FROM customers WHERE name {}LIKE '%a' ESCAPE '\\'",
+            if negated { "NOT " } else { "" }
+        );
+        let select = ms_and_generic().verified_only_select(sql);
+        assert_eq!(
+            Expr::Like {
+                expr: Box::new(Expr::Identifier(Ident::new("name"))),
+                negated,
+                pattern: Box::new(Expr::Value(Value::SingleQuotedString("%a".to_string()))),
+                escape_char: Some('\\'),
+            },
+            select.selection.unwrap()
+        );
+
+        // This statement tests that LIKE and NOT LIKE have the same precedence.
+        // This was previously mishandled (#81).
+        let sql = &format!(
+            "SELECT * FROM customers WHERE name {}LIKE '%a' IS NULL",
+            if negated { "NOT " } else { "" }
+        );
+        let select = ms_and_generic().verified_only_select(sql);
+        assert_eq!(
+            Expr::IsNull(Box::new(Expr::Like {
+                expr: Box::new(Expr::Identifier(Ident::new("name"))),
+                negated,
+                pattern: Box::new(Expr::Value(Value::SingleQuotedString("%a".to_string()))),
+                escape_char: None,
+            })),
+            select.selection.unwrap()
+        );
+    }
+    chk(false);
+    chk(true);
+}
+fn parse_mssql_top_with_ties() {
+    let sql = "SELECT TOP (5) WITH TIES * FROM foo";
+    let select = ms_and_generic().verified_only_select(sql);
+    let top = select.top.unwrap();
+    assert_eq!(Some(Expr::Value(number("5"))), top.quantity);
+    assert!(top.with_ties);
+}

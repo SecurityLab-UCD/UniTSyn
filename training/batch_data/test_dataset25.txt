@@ -1,0 +1,577 @@
+fn parse_delete_statement() {
+    let sql = "DELETE FROM \"table\"";
+    match verified_stmt(sql) {
+        Statement::Delete { from, .. } => {
+            assert_eq!(
+                TableFactor::Table {
+                    name: ObjectName(vec![Ident::with_quote('"', "table")]),
+                    alias: None,
+                    args: None,
+                    with_hints: vec![],
+                    version: None,
+                    partitions: vec![],
+                },
+                from[0].relation
+            );
+        }
+        _ => unreachable!(),
+    }
+}
+fn test_fields_on_unit_struct() {
+    let input = quote! {
+        struct S;
+    };
+
+    snapshot!(input as DeriveInput, @r###"
+    DeriveInput {
+        vis: Visibility::Inherited,
+        ident: "S",
+        generics: Generics,
+        data: Data::Struct {
+            fields: Fields::Unit,
+            semi_token: Some,
+        },
+    }
+    "###);
+
+    let data = match input.data {
+        Data::Struct(data) => data,
+        _ => panic!("expected a struct"),
+    };
+
+    assert_eq!(0, data.fields.iter().count());
+}
+fn test_compute_inv_pow5() {
+    for (i, entry) in DOUBLE_POW5_INV_SPLIT[..292].iter().enumerate() {
+        assert_eq!(*entry, unsafe { compute_inv_pow5(i as u32) }, "entry {}", i);
+    }
+}
+fn parse_typed_struct_syntax() {
+    // typed struct syntax https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#typed_struct_syntax
+    // syntax: STRUCT<[field_name] field_type, ...>( expr1 [, ... ])
+
+    let sql = r#"SELECT STRUCT<INT64>(5), STRUCT<x INT64, y STRING>(1, t.str_col), STRUCT<arr ARRAY<FLOAT64>, str STRUCT<BOOL>>(nested_col)"#;
+    let select = bigquery().verified_only_select(sql);
+    assert_eq!(3, select.projection.len());
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::Value(number("5")),],
+            fields: vec![StructField {
+                field_name: None,
+                field_type: DataType::Int64,
+            }]
+        },
+        expr_from_projection(&select.projection[0])
+    );
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![
+                Expr::Value(number("1")),
+                Expr::CompoundIdentifier(vec![
+                    Ident {
+                        value: "t".into(),
+                        quote_style: None,
+                    },
+                    Ident {
+                        value: "str_col".into(),
+                        quote_style: None,
+                    },
+                ]),
+            ],
+            fields: vec![
+                StructField {
+                    field_name: Some(Ident {
+                        value: "x".into(),
+                        quote_style: None,
+                    }),
+                    field_type: DataType::Int64
+                },
+                StructField {
+                    field_name: Some(Ident {
+                        value: "y".into(),
+                        quote_style: None,
+                    }),
+                    field_type: DataType::String(None)
+                },
+            ]
+        },
+        expr_from_projection(&select.projection[1])
+    );
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::Identifier(Ident {
+                value: "nested_col".into(),
+                quote_style: None,
+            }),],
+            fields: vec![
+                StructField {
+                    field_name: Some("arr".into()),
+                    field_type: DataType::Array(ArrayElemTypeDef::AngleBracket(Box::new(
+                        DataType::Float64
+                    )))
+                },
+                StructField {
+                    field_name: Some("str".into()),
+                    field_type: DataType::Struct(vec![StructField {
+                        field_name: None,
+                        field_type: DataType::Bool
+                    }])
+                },
+            ]
+        },
+        expr_from_projection(&select.projection[2])
+    );
+
+    let sql = r#"SELECT STRUCT<x STRUCT, y ARRAY<STRUCT>>(nested_col)"#;
+    let select = bigquery().verified_only_select(sql);
+    assert_eq!(1, select.projection.len());
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::Identifier(Ident {
+                value: "nested_col".into(),
+                quote_style: None,
+            }),],
+            fields: vec![
+                StructField {
+                    field_name: Some("x".into()),
+                    field_type: DataType::Struct(Default::default())
+                },
+                StructField {
+                    field_name: Some("y".into()),
+                    field_type: DataType::Array(ArrayElemTypeDef::AngleBracket(Box::new(
+                        DataType::Struct(Default::default())
+                    )))
+                },
+            ]
+        },
+        expr_from_projection(&select.projection[0])
+    );
+
+    let sql = r#"SELECT STRUCT<BOOL>(true), STRUCT<BYTES(42)>(B'abc')"#;
+    let select = bigquery().verified_only_select(sql);
+    assert_eq!(2, select.projection.len());
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::Value(Value::Boolean(true)),],
+            fields: vec![StructField {
+                field_name: None,
+                field_type: DataType::Bool
+            }]
+        },
+        expr_from_projection(&select.projection[0])
+    );
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::Value(Value::SingleQuotedByteStringLiteral(
+                "abc".into()
+            )),],
+            fields: vec![StructField {
+                field_name: None,
+                field_type: DataType::Bytes(Some(42))
+            }]
+        },
+        expr_from_projection(&select.projection[1])
+    );
+
+    let sql = r#"SELECT STRUCT<DATE>("2011-05-05"), STRUCT<DATETIME>(DATETIME '1999-01-01 01:23:34.45'), STRUCT<FLOAT64>(5.0), STRUCT<INT64>(1)"#;
+    let select = bigquery().verified_only_select(sql);
+    assert_eq!(4, select.projection.len());
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::Value(Value::DoubleQuotedString(
+                "2011-05-05".to_string()
+            )),],
+            fields: vec![StructField {
+                field_name: None,
+                field_type: DataType::Date
+            }]
+        },
+        expr_from_projection(&select.projection[0])
+    );
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::TypedString {
+                data_type: DataType::Datetime(None),
+                value: "1999-01-01 01:23:34.45".to_string()
+            },],
+            fields: vec![StructField {
+                field_name: None,
+                field_type: DataType::Datetime(None)
+            }]
+        },
+        expr_from_projection(&select.projection[1])
+    );
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::Value(number("5.0")),],
+            fields: vec![StructField {
+                field_name: None,
+                field_type: DataType::Float64
+            }]
+        },
+        expr_from_projection(&select.projection[2])
+    );
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::Value(number("1")),],
+            fields: vec![StructField {
+                field_name: None,
+                field_type: DataType::Int64
+            }]
+        },
+        expr_from_projection(&select.projection[3])
+    );
+
+    let sql = r#"SELECT STRUCT<INTERVAL>(INTERVAL '1-2 3 4:5:6.789999'), STRUCT<JSON>(JSON '{"class" : {"students" : [{"name" : "Jane"}]}}')"#;
+    let select = bigquery().verified_only_select(sql);
+    assert_eq!(2, select.projection.len());
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::Interval(ast::Interval {
+                value: Box::new(Expr::Value(Value::SingleQuotedString(
+                    "1-2 3 4:5:6.789999".to_string()
+                ))),
+                leading_field: None,
+                leading_precision: None,
+                last_field: None,
+                fractional_seconds_precision: None
+            }),],
+            fields: vec![StructField {
+                field_name: None,
+                field_type: DataType::Interval
+            }]
+        },
+        expr_from_projection(&select.projection[0])
+    );
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::TypedString {
+                data_type: DataType::JSON,
+                value: r#"{"class" : {"students" : [{"name" : "Jane"}]}}"#.to_string()
+            },],
+            fields: vec![StructField {
+                field_name: None,
+                field_type: DataType::JSON
+            }]
+        },
+        expr_from_projection(&select.projection[1])
+    );
+
+    let sql = r#"SELECT STRUCT<STRING(42)>("foo"), STRUCT<TIMESTAMP>(TIMESTAMP '2008-12-25 15:30:00 America/Los_Angeles'), STRUCT<TIME>(TIME '15:30:00')"#;
+    let select = bigquery().verified_only_select(sql);
+    assert_eq!(3, select.projection.len());
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::Value(Value::DoubleQuotedString("foo".to_string())),],
+            fields: vec![StructField {
+                field_name: None,
+                field_type: DataType::String(Some(42))
+            }]
+        },
+        expr_from_projection(&select.projection[0])
+    );
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::TypedString {
+                data_type: DataType::Timestamp(None, TimezoneInfo::None),
+                value: "2008-12-25 15:30:00 America/Los_Angeles".to_string()
+            },],
+            fields: vec![StructField {
+                field_name: None,
+                field_type: DataType::Timestamp(None, TimezoneInfo::None)
+            }]
+        },
+        expr_from_projection(&select.projection[1])
+    );
+
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::TypedString {
+                data_type: DataType::Time(None, TimezoneInfo::None),
+                value: "15:30:00".to_string()
+            },],
+            fields: vec![StructField {
+                field_name: None,
+                field_type: DataType::Time(None, TimezoneInfo::None)
+            }]
+        },
+        expr_from_projection(&select.projection[2])
+    );
+
+    let sql = r#"SELECT STRUCT<NUMERIC>(NUMERIC '1'), STRUCT<BIGNUMERIC>(BIGNUMERIC '1')"#;
+    let select = bigquery().verified_only_select(sql);
+    assert_eq!(2, select.projection.len());
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::TypedString {
+                data_type: DataType::Numeric(ExactNumberInfo::None),
+                value: "1".to_string()
+            },],
+            fields: vec![StructField {
+                field_name: None,
+                field_type: DataType::Numeric(ExactNumberInfo::None)
+            }]
+        },
+        expr_from_projection(&select.projection[0])
+    );
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::TypedString {
+                data_type: DataType::BigNumeric(ExactNumberInfo::None),
+                value: "1".to_string()
+            },],
+            fields: vec![StructField {
+                field_name: None,
+                field_type: DataType::BigNumeric(ExactNumberInfo::None)
+            }]
+        },
+        expr_from_projection(&select.projection[1])
+    );
+}
+fn test_expr_size() {
+    assert_eq!(mem::size_of::<Expr>(), 176);
+}
+fn extract_elif_else_range() -> Result<(), ParseError> {
+    let contents = "if a:
+    ...
+elif b:
+    ...
+";
+    let mut stmts = parse_suite(contents, "<filename>")?;
+    let stmt = stmts
+        .pop()
+        .and_then(ruff_python_ast::Stmt::if_stmt)
+        .unwrap();
+    let range = elif_else_range(&stmt.elif_else_clauses[0], contents).unwrap();
+    assert_eq!(range.start(), TextSize::from(14));
+    assert_eq!(range.end(), TextSize::from(18));
+
+    let contents = "if a:
+    ...
+else:
+    ...
+";
+    let mut stmts = parse_suite(contents, "<filename>")?;
+    let stmt = stmts
+        .pop()
+        .and_then(ruff_python_ast::Stmt::if_stmt)
+        .unwrap();
+    let range = elif_else_range(&stmt.elif_else_clauses[0], contents).unwrap();
+    assert_eq!(range.start(), TextSize::from(14));
+    assert_eq!(range.end(), TextSize::from(18));
+
+    Ok(())
+}
+fn test_parse_meta_item_multiple() {
+    let input = "foo(word, name = 5, list(name2 = 6), word2)";
+    let (inner, meta) = (input, input);
+
+    snapshot!(inner as MetaList, @r###"
+    MetaList {
+        path: Path {
+            segments: [
+                PathSegment {
+                    ident: "foo",
+                },
+            ],
+        },
+        delimiter: MacroDelimiter::Paren,
+        tokens: TokenStream(`word , name = 5 , list (name2 = 6) , word2`),
+    }
+    "###);
+
+    snapshot!(meta as Meta, @r###"
+    Meta::List {
+        path: Path {
+            segments: [
+                PathSegment {
+                    ident: "foo",
+                },
+            ],
+        },
+        delimiter: MacroDelimiter::Paren,
+        tokens: TokenStream(`word , name = 5 , list (name2 = 6) , word2`),
+    }
+    "###);
+
+    assert_eq!(meta, inner.into());
+}
+fn test_closing_bracket_in_double_quote_mixed() {
+    let mut r = Reader::from_str(r#"<a attr="'>'" check="'2'"></a>"#);
+    r.trim_text(true);
+    match r.read_event() {
+        Ok(Start(e)) => {
+            let mut attrs = e.attributes();
+            assert_eq!(
+                attrs.next(),
+                Some(Ok(Attribute {
+                    key: QName(b"attr"),
+                    value: Cow::Borrowed(b"'>'"),
+                }))
+            );
+            assert_eq!(
+                attrs.next(),
+                Some(Ok(Attribute {
+                    key: QName(b"check"),
+                    value: Cow::Borrowed(b"'2'"),
+                }))
+            );
+            assert_eq!(attrs.next(), None);
+        }
+        x => panic!("expected <a attr='>'>, got {:?}", x),
+    }
+    next_eq!(r, End, b"a");
+}
+fn parse_raw_literal() {
+    let sql = r#"SELECT R'abc', R"abc", R'f\(abc,(.*),def\)', R"f\(abc,(.*),def\)""#;
+    let stmt = bigquery().one_statement_parses_to(
+        sql,
+        r"SELECT R'abc', R'abc', R'f\(abc,(.*),def\)', R'f\(abc,(.*),def\)'",
+    );
+    if let Statement::Query(query) = stmt {
+        if let SetExpr::Select(select) = *query.body {
+            assert_eq!(4, select.projection.len());
+            assert_eq!(
+                &Expr::Value(Value::RawStringLiteral("abc".to_string())),
+                expr_from_projection(&select.projection[0])
+            );
+            assert_eq!(
+                &Expr::Value(Value::RawStringLiteral("abc".to_string())),
+                expr_from_projection(&select.projection[1])
+            );
+            assert_eq!(
+                &Expr::Value(Value::RawStringLiteral(r"f\(abc,(.*),def\)".to_string())),
+                expr_from_projection(&select.projection[2])
+            );
+            assert_eq!(
+                &Expr::Value(Value::RawStringLiteral(r"f\(abc,(.*),def\)".to_string())),
+                expr_from_projection(&select.projection[3])
+            );
+            return;
+        }
+    }
+    panic!("invalid query")
+}
+fn test_bigquery_trim() {
+    let real_sql = r#"SELECT customer_id, TRIM(item_price_id, '"', "a") AS item_price_id FROM models_staging.subscriptions"#;
+    assert_eq!(bigquery().verified_stmt(real_sql).to_string(), real_sql);
+
+    let sql_only_select = "SELECT TRIM('xyz', 'a')";
+    let select = bigquery().verified_only_select(sql_only_select);
+    assert_eq!(
+        &Expr::Trim {
+            expr: Box::new(Expr::Value(Value::SingleQuotedString("xyz".to_owned()))),
+            trim_where: None,
+            trim_what: None,
+            trim_characters: Some(vec![Expr::Value(Value::SingleQuotedString("a".to_owned()))]),
+        },
+        expr_from_projection(only(&select.projection))
+    );
+
+    // missing comma separation
+    let error_sql = "SELECT TRIM('xyz' 'a')";
+    assert_eq!(
+        ParserError::ParserError("Expected ), found: 'a'".to_owned()),
+        bigquery().parse_sql_statements(error_sql).unwrap_err()
+    );
+}
+fn test_min_and_max() {
+    assert_eq!(f64::from_bits(0x7fefffffffffffff), 1.7976931348623157e308);
+    check!(1.7976931348623157e308);
+    assert_eq!(f64::from_bits(1), 5e-324);
+    check!(5e-324);
+}
+fn parse_typeless_struct_syntax() {
+    // typeless struct syntax https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#typeless_struct_syntax
+    // syntax: STRUCT( expr1 [AS field_name] [, ... ])
+    let sql = "SELECT STRUCT(1, 2, 3), STRUCT('abc'), STRUCT(1, t.str_col), STRUCT(1 AS a, 'abc' AS b), STRUCT(str_col AS abc)";
+    let select = bigquery().verified_only_select(sql);
+    assert_eq!(5, select.projection.len());
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![
+                Expr::Value(number("1")),
+                Expr::Value(number("2")),
+                Expr::Value(number("3")),
+            ],
+            fields: Default::default()
+        },
+        expr_from_projection(&select.projection[0])
+    );
+
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::Value(Value::SingleQuotedString("abc".to_string())),],
+            fields: Default::default()
+        },
+        expr_from_projection(&select.projection[1])
+    );
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![
+                Expr::Value(number("1")),
+                Expr::CompoundIdentifier(vec![Ident::from("t"), Ident::from("str_col")]),
+            ],
+            fields: Default::default()
+        },
+        expr_from_projection(&select.projection[2])
+    );
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![
+                Expr::Named {
+                    expr: Expr::Value(number("1")).into(),
+                    name: Ident::from("a")
+                },
+                Expr::Named {
+                    expr: Expr::Value(Value::SingleQuotedString("abc".to_string())).into(),
+                    name: Ident::from("b")
+                },
+            ],
+            fields: Default::default()
+        },
+        expr_from_projection(&select.projection[3])
+    );
+    assert_eq!(
+        &Expr::Struct {
+            values: vec![Expr::Named {
+                expr: Expr::Identifier(Ident::from("str_col")).into(),
+                name: Ident::from("abc")
+            }],
+            fields: Default::default()
+        },
+        expr_from_projection(&select.projection[4])
+    );
+}
+fn test_float_to_bits() {
+    assert_eq!(0, 0.0_f32.to_bits());
+    assert_eq!(0x40490fda, 3.1415926_f32.to_bits());
+}
+fn TinyVec_try_reserve() {
+  let mut tv: TinyVec<[i32; 4]> = Default::default();
+  assert_eq!(tv.capacity(), 4);
+  tv.extend_from_slice(&[1, 2]);
+  assert_eq!(tv.capacity(), 4);
+  assert!(tv.try_reserve(2).is_ok());
+  assert_eq!(tv.capacity(), 4);
+  assert!(tv.try_reserve(4).is_ok());
+  assert!(tv.capacity() >= 6);
+  tv.extend_from_slice(&[3, 4, 5, 6]);
+  assert!(tv.try_reserve(4).is_ok());
+  assert!(tv.capacity() >= 10);
+}
+fn TinyVec_swap_remove() {
+  let mut tv: TinyVec<[i32; 10]> = Default::default();
+  tv.push(1);
+  tv.push(2);
+  tv.push(3);
+  tv.push(4);
+  assert_eq!(tv.swap_remove(3), 4);
+  assert_eq!(&tv[..], &[1, 2, 3][..]);
+  assert_eq!(tv.swap_remove(0), 1);
+  assert_eq!(&tv[..], &[3, 2][..]);
+  assert_eq!(tv.swap_remove(0), 3);
+  assert_eq!(&tv[..], &[2][..]);
+  assert_eq!(tv.swap_remove(0), 2);
+  assert_eq!(&tv[..], &[][..]);
+}

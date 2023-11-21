@@ -1,0 +1,389 @@
+fn parse_mod() {
+    use self::Expr::*;
+    let sql = "a % b";
+    assert_eq!(
+        BinaryOp {
+            left: Box::new(Identifier(Ident::new("a"))),
+            op: BinaryOperator::Modulo,
+            right: Box::new(Identifier(Ident::new("b"))),
+        },
+        verified_expr(sql)
+    );
+}
+fn parse_ceil_datetime() {
+    let sql = "SELECT CEIL(d TO DAY)";
+    let select = verified_only_select(sql);
+    assert_eq!(
+        &Expr::Ceil {
+            expr: Box::new(Expr::Identifier(Ident::new("d"))),
+            field: DateTimeField::Day,
+        },
+        expr_from_projection(only(&select.projection)),
+    );
+
+    one_statement_parses_to("SELECT CEIL(d to day)", "SELECT CEIL(d TO DAY)");
+
+    verified_stmt("SELECT CEIL(d TO HOUR) FROM df");
+    verified_stmt("SELECT CEIL(d TO MINUTE) FROM df");
+    verified_stmt("SELECT CEIL(d TO SECOND) FROM df");
+    verified_stmt("SELECT CEIL(d TO MILLISECOND) FROM df");
+
+    let res = parse_sql_statements("SELECT CEIL(d TO JIFFY) FROM df");
+    assert_eq!(
+        ParserError::ParserError("Expected date/time field, found: JIFFY".to_string()),
+        res.unwrap_err()
+    );
+}
+fn parse_alter_table_drop_column() {
+    check_one("DROP COLUMN IF EXISTS is_active CASCADE");
+    one_statement_parses_to(
+        "ALTER TABLE tab DROP IF EXISTS is_active CASCADE",
+        "ALTER TABLE tab DROP COLUMN IF EXISTS is_active CASCADE",
+    );
+    one_statement_parses_to(
+        "ALTER TABLE tab DROP is_active CASCADE",
+        "ALTER TABLE tab DROP COLUMN is_active CASCADE",
+    );
+
+    fn check_one(constraint_text: &str) {
+        match alter_table_op(verified_stmt(&format!("ALTER TABLE tab {constraint_text}"))) {
+            AlterTableOperation::DropColumn {
+                column_name,
+                if_exists,
+                cascade,
+            } => {
+                assert_eq!("is_active", column_name.to_string());
+                assert!(if_exists);
+                assert!(cascade);
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+fn parse_collate() {
+    let sql = "SELECT name COLLATE \"de_DE\" FROM customer";
+    assert_matches!(
+        only(&all_dialects().verified_only_select(sql).projection),
+        SelectItem::UnnamedExpr(Expr::Collate { .. })
+    );
+}
+fn parse_between_with_expr() {
+    use self::BinaryOperator::*;
+    let sql = "SELECT * FROM t WHERE 1 BETWEEN 1 + 2 AND 3 + 4 IS NULL";
+    let select = verified_only_select(sql);
+    assert_eq!(
+        Expr::IsNull(Box::new(Expr::Between {
+            expr: Box::new(Expr::Value(number("1"))),
+            low: Box::new(Expr::BinaryOp {
+                left: Box::new(Expr::Value(number("1"))),
+                op: Plus,
+                right: Box::new(Expr::Value(number("2"))),
+            }),
+            high: Box::new(Expr::BinaryOp {
+                left: Box::new(Expr::Value(number("3"))),
+                op: Plus,
+                right: Box::new(Expr::Value(number("4"))),
+            }),
+            negated: false,
+        })),
+        select.selection.unwrap()
+    );
+
+    let sql = "SELECT * FROM t WHERE 1 = 1 AND 1 + x BETWEEN 1 AND 2";
+    let select = verified_only_select(sql);
+    assert_eq!(
+        Expr::BinaryOp {
+            left: Box::new(Expr::BinaryOp {
+                left: Box::new(Expr::Value(number("1"))),
+                op: BinaryOperator::Eq,
+                right: Box::new(Expr::Value(number("1"))),
+            }),
+            op: BinaryOperator::And,
+            right: Box::new(Expr::Between {
+                expr: Box::new(Expr::BinaryOp {
+                    left: Box::new(Expr::Value(number("1"))),
+                    op: BinaryOperator::Plus,
+                    right: Box::new(Expr::Identifier(Ident::new("x"))),
+                }),
+                low: Box::new(Expr::Value(number("1"))),
+                high: Box::new(Expr::Value(number("2"))),
+                negated: false,
+            }),
+        },
+        select.selection.unwrap(),
+    )
+}
+fn parse_bignumeric_keyword() {
+    let sql = r#"SELECT BIGNUMERIC '0'"#;
+    let select = verified_only_select(sql);
+    assert_eq!(
+        &Expr::TypedString {
+            data_type: DataType::BigNumeric(ExactNumberInfo::None),
+            value: r#"0"#.into()
+        },
+        expr_from_projection(only(&select.projection)),
+    );
+    verified_stmt("SELECT BIGNUMERIC '0'");
+
+    let sql = r#"SELECT BIGNUMERIC '123456'"#;
+    let select = verified_only_select(sql);
+    assert_eq!(
+        &Expr::TypedString {
+            data_type: DataType::BigNumeric(ExactNumberInfo::None),
+            value: r#"123456"#.into()
+        },
+        expr_from_projection(only(&select.projection)),
+    );
+    verified_stmt("SELECT BIGNUMERIC '123456'");
+
+    let sql = r#"SELECT BIGNUMERIC '-3.14'"#;
+    let select = verified_only_select(sql);
+    assert_eq!(
+        &Expr::TypedString {
+            data_type: DataType::BigNumeric(ExactNumberInfo::None),
+            value: r#"-3.14"#.into()
+        },
+        expr_from_projection(only(&select.projection)),
+    );
+    verified_stmt("SELECT BIGNUMERIC '-3.14'");
+
+    let sql = r#"SELECT BIGNUMERIC '-0.54321'"#;
+    let select = verified_only_select(sql);
+    assert_eq!(
+        &Expr::TypedString {
+            data_type: DataType::BigNumeric(ExactNumberInfo::None),
+            value: r#"-0.54321"#.into()
+        },
+        expr_from_projection(only(&select.projection)),
+    );
+    verified_stmt("SELECT BIGNUMERIC '-0.54321'");
+
+    let sql = r#"SELECT BIGNUMERIC '1.23456e05'"#;
+    let select = verified_only_select(sql);
+    assert_eq!(
+        &Expr::TypedString {
+            data_type: DataType::BigNumeric(ExactNumberInfo::None),
+            value: r#"1.23456e05"#.into()
+        },
+        expr_from_projection(only(&select.projection)),
+    );
+    verified_stmt("SELECT BIGNUMERIC '1.23456e05'");
+
+    let sql = r#"SELECT BIGNUMERIC '-9.876e-3'"#;
+    let select = verified_only_select(sql);
+    assert_eq!(
+        &Expr::TypedString {
+            data_type: DataType::BigNumeric(ExactNumberInfo::None),
+            value: r#"-9.876e-3"#.into()
+        },
+        expr_from_projection(only(&select.projection)),
+    );
+    verified_stmt("SELECT BIGNUMERIC '-9.876e-3'");
+}
+fn parse_bitwise_ops() {
+    let bitwise_ops = &[
+        ("^", BinaryOperator::BitwiseXor, all_dialects_but_pg()),
+        ("|", BinaryOperator::BitwiseOr, all_dialects()),
+        ("&", BinaryOperator::BitwiseAnd, all_dialects()),
+    ];
+
+    for (str_op, op, dialects) in bitwise_ops {
+        let select = dialects.verified_only_select(&format!("SELECT a {} b", &str_op));
+        assert_eq!(
+            SelectItem::UnnamedExpr(Expr::BinaryOp {
+                left: Box::new(Expr::Identifier(Ident::new("a"))),
+                op: op.clone(),
+                right: Box::new(Expr::Identifier(Ident::new("b"))),
+            }),
+            select.projection[0]
+        );
+    }
+}
+fn parse_select_count_wildcard() {
+    let sql = "SELECT COUNT(*) FROM customer";
+    let select = verified_only_select(sql);
+    assert_eq!(
+        &Expr::Function(Function {
+            name: ObjectName(vec![Ident::new("COUNT")]),
+            args: vec![FunctionArg::Unnamed(FunctionArgExpr::Wildcard)],
+            null_treatment: None,
+            filter: None,
+            over: None,
+            distinct: false,
+            special: false,
+            order_by: vec![],
+        }),
+        expr_from_projection(only(&select.projection))
+    );
+}
+fn parse_alter_table_alter_column_type() {
+    let alter_stmt = "ALTER TABLE tab";
+    match alter_table_op(verified_stmt(
+        "ALTER TABLE tab ALTER COLUMN is_active SET DATA TYPE TEXT",
+    )) {
+        AlterTableOperation::AlterColumn { column_name, op } => {
+            assert_eq!("is_active", column_name.to_string());
+            assert_eq!(
+                op,
+                AlterColumnOperation::SetDataType {
+                    data_type: DataType::Text,
+                    using: None,
+                }
+            );
+        }
+        _ => unreachable!(),
+    }
+
+    let dialect = TestedDialects {
+        dialects: vec![Box::new(GenericDialect {})],
+        options: None,
+    };
+
+    let res =
+        dialect.parse_sql_statements(&format!("{alter_stmt} ALTER COLUMN is_active TYPE TEXT"));
+    assert_eq!(
+        ParserError::ParserError("Expected SET/DROP NOT NULL, SET DEFAULT, SET DATA TYPE after ALTER COLUMN, found: TYPE".to_string()),
+        res.unwrap_err()
+    );
+
+    let res = dialect.parse_sql_statements(&format!(
+        "{alter_stmt} ALTER COLUMN is_active SET DATA TYPE TEXT USING 'text'"
+    ));
+    assert_eq!(
+        ParserError::ParserError("Expected end of statement, found: USING".to_string()),
+        res.unwrap_err()
+    );
+}
+fn parse_listagg() {
+    let sql = "SELECT LISTAGG(DISTINCT dateid, ', ' ON OVERFLOW TRUNCATE '%' WITHOUT COUNT) \
+               WITHIN GROUP (ORDER BY id, username)";
+    let select = verified_only_select(sql);
+
+    verified_stmt("SELECT LISTAGG(sellerid) WITHIN GROUP (ORDER BY dateid)");
+    verified_stmt("SELECT LISTAGG(dateid)");
+    verified_stmt("SELECT LISTAGG(DISTINCT dateid)");
+    verified_stmt("SELECT LISTAGG(dateid ON OVERFLOW ERROR)");
+    verified_stmt("SELECT LISTAGG(dateid ON OVERFLOW TRUNCATE N'...' WITH COUNT)");
+    verified_stmt("SELECT LISTAGG(dateid ON OVERFLOW TRUNCATE X'deadbeef' WITH COUNT)");
+
+    let expr = Box::new(Expr::Identifier(Ident::new("dateid")));
+    let on_overflow = Some(ListAggOnOverflow::Truncate {
+        filler: Some(Box::new(Expr::Value(Value::SingleQuotedString(
+            "%".to_string(),
+        )))),
+        with_count: false,
+    });
+    let within_group = vec![
+        OrderByExpr {
+            expr: Expr::Identifier(Ident {
+                value: "id".to_string(),
+                quote_style: None,
+            }),
+            asc: None,
+            nulls_first: None,
+        },
+        OrderByExpr {
+            expr: Expr::Identifier(Ident {
+                value: "username".to_string(),
+                quote_style: None,
+            }),
+            asc: None,
+            nulls_first: None,
+        },
+    ];
+    assert_eq!(
+        &Expr::ListAgg(ListAgg {
+            distinct: true,
+            expr,
+            separator: Some(Box::new(Expr::Value(Value::SingleQuotedString(
+                ", ".to_string()
+            )))),
+            on_overflow,
+            within_group,
+        }),
+        expr_from_projection(only(&select.projection))
+    );
+}
+fn parse_literal_date() {
+    let sql = "SELECT DATE '1999-01-01'";
+    let select = verified_only_select(sql);
+    assert_eq!(
+        &Expr::TypedString {
+            data_type: DataType::Date,
+            value: "1999-01-01".into(),
+        },
+        expr_from_projection(only(&select.projection)),
+    );
+}
+fn parse_select_with_date_column_name() {
+    let sql = "SELECT date";
+    let select = verified_only_select(sql);
+    assert_eq!(
+        &Expr::Identifier(Ident {
+            value: "date".into(),
+            quote_style: None,
+        }),
+        expr_from_projection(only(&select.projection)),
+    );
+}
+fn parse_searched_case_expr() {
+    let sql = "SELECT CASE WHEN bar IS NULL THEN 'null' WHEN bar = 0 THEN '=0' WHEN bar >= 0 THEN '>=0' ELSE '<0' END FROM foo";
+    use self::BinaryOperator::*;
+    use self::Expr::{BinaryOp, Case, Identifier, IsNull};
+    let select = verified_only_select(sql);
+    assert_eq!(
+        &Case {
+            operand: None,
+            conditions: vec![
+                IsNull(Box::new(Identifier(Ident::new("bar")))),
+                BinaryOp {
+                    left: Box::new(Identifier(Ident::new("bar"))),
+                    op: Eq,
+                    right: Box::new(Expr::Value(number("0"))),
+                },
+                BinaryOp {
+                    left: Box::new(Identifier(Ident::new("bar"))),
+                    op: GtEq,
+                    right: Box::new(Expr::Value(number("0"))),
+                },
+            ],
+            results: vec![
+                Expr::Value(Value::SingleQuotedString("null".to_string())),
+                Expr::Value(Value::SingleQuotedString("=0".to_string())),
+                Expr::Value(Value::SingleQuotedString(">=0".to_string())),
+            ],
+            else_result: Some(Box::new(Expr::Value(Value::SingleQuotedString(
+                "<0".to_string()
+            )))),
+        },
+        expr_from_projection(only(&select.projection)),
+    );
+}
+fn parse_is_distinct_from() {
+    use self::Expr::*;
+    let sql = "a IS DISTINCT FROM b";
+    assert_eq!(
+        IsDistinctFrom(
+            Box::new(Identifier(Ident::new("a"))),
+            Box::new(Identifier(Ident::new("b"))),
+        ),
+        verified_expr(sql)
+    );
+}
+fn parse_compound_expr_1() {
+    use self::BinaryOperator::*;
+    use self::Expr::*;
+    let sql = "a + b * c";
+    assert_eq!(
+        BinaryOp {
+            left: Box::new(Identifier(Ident::new("a"))),
+            op: Plus,
+            right: Box::new(BinaryOp {
+                left: Box::new(Identifier(Ident::new("b"))),
+                op: Multiply,
+                right: Box::new(Identifier(Ident::new("c"))),
+            }),
+        },
+        verified_expr(sql)
+    );
+}

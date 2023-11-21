@@ -1,0 +1,927 @@
+fn parse_f64_large_zeros_test() {
+    // Test numbers with a massive number of 0s in the integer component.
+    let parse = move |x| f64::from_lexical_partial(x);
+    assert_eq!(Ok((71610528364411830000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000.0, 308)), parse(b"71610528364411830000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"));
+    assert_eq!(Ok((126769393745745060000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000.0, 309)), parse(b"126769393745745060000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"));
+    assert_eq!(Ok((38652960461239320000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000.0, 308)), parse(b"38652960461239320000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"));
+}
+fn starts_with_test() {
+    assert_eq!(shared::starts_with(b"NaN".iter(), b"nAN".iter()), false);
+    assert_eq!(shared::starts_with(b"nAN".iter(), b"nAN".iter()), true);
+    assert_eq!(shared::starts_with(b"nAN1".iter(), b"nAN".iter()), true);
+    assert_eq!(shared::starts_with(b"nAN1".iter(), b"nAN12".iter()), false);
+}
+fn floor_log2_test() {
+    assert_eq!(algorithm::floor_log2(25), 4);
+    assert_eq!(algorithm::floor_log2(30), 4);
+    assert_eq!(algorithm::floor_log2(125), 6);
+    assert_eq!(algorithm::floor_log2(126), 6);
+    assert_eq!(algorithm::floor_log2(128), 7);
+}
+fn mantissa_limit_test() {
+    assert_eq!(f32::mantissa_limit(10), 7);
+    assert_eq!(f64::mantissa_limit(10), 15);
+}
+fn is_endpoint_test() {
+    assert_eq!(algorithm::is_endpoint(5, 2, 10), true);
+    assert_eq!(algorithm::is_endpoint(5, 6, 10), false);
+}
+fn test_cjk_compat_variants_with_hangul() {
+    assert_eq!(
+        "중국어 (홍콩)"
+            .chars()
+            .cjk_compat_variants()
+            .collect::<String>(),
+        "중국어 (홍콩)"
+    );
+}
+
+fn i8_decimal_test() {
+    assert_eq!(Ok(0), i8::from_lexical(b"0"));
+    assert_eq!(Ok(127), i8::from_lexical(b"127"));
+    assert_eq!(Err(Error::Overflow(2)), i8::from_lexical(b"128"));
+    assert_eq!(Err(Error::Overflow(2)), i8::from_lexical(b"255"));
+    assert_eq!(Ok(-1), i8::from_lexical(b"-1"));
+    assert_eq!(Err(Error::InvalidDigit(1)), i8::from_lexical(b"1a"));
+
+    assert_eq!(Ok((1, 1)), i8::from_lexical_partial(b"1"));
+    assert_eq!(Ok((1, 1)), i8::from_lexical_partial(b"1a"));
+    assert_eq!(Ok((-1, 2)), i8::from_lexical_partial(b"-1"));
+    assert_eq!(Ok((-1, 2)), i8::from_lexical_partial(b"-1a"));
+}
+fn u8_decimal_test() {
+    assert_eq!(Ok(0), u8::from_lexical(b"0"));
+    assert_eq!(Ok(127), u8::from_lexical(b"127"));
+    assert_eq!(Ok(128), u8::from_lexical(b"128"));
+    assert_eq!(Ok(255), u8::from_lexical(b"255"));
+    assert_eq!(Err(Error::InvalidDigit(0)), u8::from_lexical(b"-1"));
+    assert_eq!(Err(Error::InvalidDigit(1)), u8::from_lexical(b"1a"));
+}
+fn is_fast_path_test() {
+    let mut number = Number {
+        exponent: -4,
+        mantissa: 12345,
+        is_negative: false,
+        many_digits: false,
+        integer: &[],
+        fraction: None,
+    };
+    assert_eq!(number.is_fast_path::<f32, { STANDARD }>(), true);
+    assert_eq!(number.is_fast_path::<f64, { STANDARD }>(), true);
+
+    number.exponent = -15;
+    assert_eq!(number.is_fast_path::<f32, { STANDARD }>(), false);
+    assert_eq!(number.is_fast_path::<f64, { STANDARD }>(), true);
+
+    number.exponent = -25;
+    assert_eq!(number.is_fast_path::<f32, { STANDARD }>(), false);
+    assert_eq!(number.is_fast_path::<f64, { STANDARD }>(), false);
+
+    number.exponent = 25;
+    assert_eq!(number.is_fast_path::<f32, { STANDARD }>(), false);
+    assert_eq!(number.is_fast_path::<f64, { STANDARD }>(), true);
+
+    number.exponent = 36;
+    assert_eq!(number.is_fast_path::<f32, { STANDARD }>(), false);
+    assert_eq!(number.is_fast_path::<f64, { STANDARD }>(), true);
+
+    number.exponent = 38;
+    assert_eq!(number.is_fast_path::<f32, { STANDARD }>(), false);
+    assert_eq!(number.is_fast_path::<f64, { STANDARD }>(), false);
+
+    number.mantissa = 1 << 25;
+    number.exponent = 0;
+    assert_eq!(number.is_fast_path::<f32, { STANDARD }>(), false);
+    assert_eq!(number.is_fast_path::<f64, { STANDARD }>(), true);
+
+    number.mantissa = 1 << 54;
+    assert_eq!(number.is_fast_path::<f32, { STANDARD }>(), false);
+    assert_eq!(number.is_fast_path::<f64, { STANDARD }>(), false);
+
+    number.mantissa = 1 << 52;
+    assert_eq!(number.is_fast_path::<f32, { STANDARD }>(), false);
+    assert_eq!(number.is_fast_path::<f64, { STANDARD }>(), true);
+
+    number.many_digits = true;
+    assert_eq!(number.is_fast_path::<f32, { STANDARD }>(), false);
+    assert_eq!(number.is_fast_path::<f64, { STANDARD }>(), false);
+}
+fn leading_zeros_test() {
+    assert_eq!(Bigfloat::new().leading_zeros(), 0);
+
+    assert_eq!(Bigfloat::from_u32(0xFF).leading_zeros(), LIMB_BITS as u32 - 8);
+    assert_eq!(Bigfloat::from_u64(0xFF00000000).leading_zeros(), 24);
+
+    assert_eq!(Bigfloat::from_u32(0xF).leading_zeros(), LIMB_BITS as u32 - 4);
+    assert_eq!(Bigfloat::from_u64(0xF00000000).leading_zeros(), 28);
+
+    assert_eq!(Bigfloat::from_u32(0xF0).leading_zeros(), LIMB_BITS as u32 - 8);
+    assert_eq!(Bigfloat::from_u64(0xF000000000).leading_zeros(), 24);
+}
+fn scientific_exponent_test() {
+    let mut number = Number {
+        exponent: -4,
+        mantissa: 12345,
+        is_negative: false,
+        many_digits: false,
+        integer: &[],
+        fraction: None,
+    };
+    assert_eq!(slow::scientific_exponent::<{ STANDARD }>(&number), 0);
+
+    number.exponent = -15;
+    assert_eq!(slow::scientific_exponent::<{ STANDARD }>(&number), -11);
+
+    number.mantissa = 1234567890123456;
+    assert_eq!(slow::scientific_exponent::<{ STANDARD }>(&number), 0);
+}
+fn nth_bit_test() {
+    assert_eq!(mask::nth_bit(2), 0b100);
+}
+fn test_something() {
+    let data = [];
+    let stream_safe = input.chars().stream_safe().collect::<String>();
+    let mut value = Rc::new(RefCell::new(0));
+    let counter = Counter {
+        iter: stream_safe.chars(),
+        value: Rc::clone(&mut value),
+    };
+    for _ in counter.nfc() {
+        assert!(*value.borrow() <= MAX_NONSTARTERS + 1);
+        *value.borrow_mut() = 0;
+    }
+}
+fn is_left_endpoint_test() {
+    assert_eq!(algorithm::is_left_endpoint::<f64>(1), false);
+    assert_eq!(algorithm::is_left_endpoint::<f64>(2), true);
+    assert_eq!(algorithm::is_left_endpoint::<f64>(3), true);
+    assert_eq!(algorithm::is_left_endpoint::<f64>(4), false);
+}
+fn sqrtd_sanity_test() {
+    assert_eq!(libm::sqrtd(100.0), 10.0);
+    assert_eq!(libm::sqrtd(4.0), 2.0);
+}
+fn halfway_round_down_test() {
+    // Halfway, round-down tests
+    assert_eq!(compute_float64::<BINARY>(0, 9007199254740992, false), (1076, 0));
+    assert_eq!(compute_float64::<BINARY>(0, 9007199254740993, false), (1076, 0));
+    assert_eq!(compute_float64::<BINARY>(0, 9007199254740994, false), (1076, 1));
+
+    assert_eq!(compute_float64::<BINARY>(0, 18014398509481984, false), (1077, 0));
+    assert_eq!(compute_float64::<BINARY>(0, 18014398509481986, false), (1077, 0));
+    assert_eq!(compute_float64::<BINARY>(0, 18014398509481988, false), (1077, 1));
+
+    assert_eq!(compute_float64::<BINARY>(0, 9223372036854775808, false), (1086, 0));
+    assert_eq!(compute_float64::<BINARY>(0, 9223372036854776832, false), (1086, 0));
+    assert_eq!(compute_float64::<BINARY>(0, 9223372036854777856, false), (1086, 1));
+
+    // Add a 0 but say we're truncated.
+    assert_eq!(compute_float64::<BINARY>(-10, 9223372036854775808, true), (1076, 0));
+    assert_eq!(
+        compute_float64::<BINARY>(-10, 9223372036854776832, true),
+        (-31703, 9223372036854776832)
+    );
+    assert_eq!(compute_float64::<BINARY>(-10, 9223372036854777856, true), (1076, 1));
+
+    // Check other bases.
+    assert_eq!(compute_float64::<BASE4>(-2, 144115188075855872, false), (1076, 0));
+    assert_eq!(compute_float64::<BASE4>(-2, 144115188075855888, false), (1076, 0));
+    assert_eq!(compute_float64::<BASE4>(-2, 144115188075855904, false), (1076, 1));
+
+    assert_eq!(compute_float64::<OCTAL>(-2, 576460752303423488, false), (1076, 0));
+    assert_eq!(compute_float64::<OCTAL>(-2, 576460752303423552, false), (1076, 0));
+    assert_eq!(compute_float64::<OCTAL>(-2, 576460752303423616, false), (1076, 1));
+
+    assert_eq!(compute_float64::<HEX>(-1, 144115188075855872, false), (1076, 0));
+    assert_eq!(compute_float64::<HEX>(-1, 144115188075855888, false), (1076, 0));
+    assert_eq!(compute_float64::<HEX>(-1, 144115188075855904, false), (1076, 1));
+
+    assert_eq!(compute_float64::<BASE32>(-1, 288230376151711744, false), (1076, 0));
+    assert_eq!(compute_float64::<BASE32>(-1, 288230376151711776, false), (1076, 0));
+    assert_eq!(compute_float64::<BASE32>(-1, 288230376151711808, false), (1076, 1));
+}
+fn is_valid_letter_slice_test() {
+    assert_eq!(ascii::is_valid_letter_slice(b" 09a"), false);
+    assert_eq!(ascii::is_valid_letter_slice(b"aZAz"), true);
+}
+fn normal_cases() {
+    assert_eq!(libm::powd(2.0, 20.0), (1 << 20) as f64);
+    assert_eq!(libm::powd(-1.0, 9.0), -1.0);
+    assert!(libm::powd(-1.0, 2.2).is_nan());
+    assert!(libm::powd(-1.0, -1.14).is_nan());
+}
+fn test_parse_8digits() {
+    // 10000000
+    let value: u64 = 0x30_30_30_30_30_30_30_31;
+    assert_eq!(algorithm::parse_8digits::<{ STANDARD }>(value), 10000000);
+    #[cfg(feature = "radix")]
+    assert_eq!(algorithm::parse_8digits::<{ from_radix(5) }>(value), 78125);
+
+    // 00000010
+    let value: u64 = 0x30_31_30_30_30_30_30_30;
+    assert_eq!(algorithm::parse_8digits::<{ STANDARD }>(value), 10);
+    #[cfg(feature = "radix")]
+    assert_eq!(algorithm::parse_8digits::<{ from_radix(5) }>(value), 5);
+
+    // 12344321
+    let value: u64 = 0x31_32_33_34_34_33_32_31;
+    assert_eq!(algorithm::parse_8digits::<{ STANDARD }>(value), 12344321);
+    #[cfg(feature = "power-of-two")]
+    assert_eq!(algorithm::parse_8digits::<{ from_radix(8) }>(value), 2738385);
+
+    #[cfg(feature = "radix")]
+    {
+        assert_eq!(algorithm::parse_8digits::<{ from_radix(9) }>(value), 6052420);
+        assert_eq!(algorithm::parse_8digits::<{ from_radix(7) }>(value), 1120400);
+        assert_eq!(algorithm::parse_8digits::<{ from_radix(6) }>(value), 402745);
+        assert_eq!(algorithm::parse_8digits::<{ from_radix(5) }>(value), 121836);
+    }
+}
+fn parse_f64_lossy_test() {
+    const FORMAT: u128 = STANDARD;
+    let options = Options::builder().lossy(true).build().unwrap();
+    let parse = move |x| f64::from_lexical_partial_with_options::<FORMAT>(x, &options);
+
+    assert_eq!(Ok((1.2345, 6)), parse(b"1.2345"));
+    assert_eq!(Ok((12.345, 6)), parse(b"12.345"));
+    assert_eq!(Ok((12345.6789, 10)), parse(b"12345.6789"));
+    assert_eq!(Ok((1.2345e10, 9)), parse(b"1.2345e10"));
+}
+fn sqrtf_sanity_test() {
+    assert_eq!(libm::sqrtf(100.0), 10.0);
+    assert_eq!(libm::sqrtf(4.0), 2.0);
+}
+fn extreme_default_values() {
+    let pb = protobuf_unittest::TestExtremeDefaultValues::default();
+
+    assert_eq!(
+        b"\0\x01\x07\x08\x0C\n\r\t\x0B\\\'\"\xFE",
+        pb.escaped_bytes()
+    );
+
+    assert_eq!(0xFFFFFFFF, pb.large_uint32());
+    assert_eq!(0xFFFFFFFFFFFFFFFF, pb.large_uint64());
+    assert_eq!(-0x7FFFFFFF, pb.small_int32());
+    assert_eq!(-0x7FFFFFFFFFFFFFFF, pb.small_int64());
+    assert_eq!(-0x80000000, pb.really_small_int32());
+    assert_eq!(-0x8000000000000000, pb.really_small_int64());
+
+    assert_eq!(pb.utf8_string(), "\u{1234}");
+
+    assert_eq!(0.0, pb.zero_float());
+    assert_eq!(1.0, pb.one_float());
+    assert_eq!(1.5, pb.small_float());
+    assert_eq!(-1.0, pb.negative_one_float());
+    assert_eq!(-1.5, pb.negative_float());
+    assert_eq!(2E8, pb.large_float());
+    assert_eq!(-8e-28, pb.small_negative_float());
+
+    assert_eq!(f64::INFINITY, pb.inf_double());
+    assert_eq!(f64::NEG_INFINITY, pb.neg_inf_double());
+    assert_ne!(pb.nan_double(), pb.nan_double());
+    assert_eq!(f32::INFINITY, pb.inf_float());
+    assert_eq!(f32::NEG_INFINITY, pb.neg_inf_float());
+    assert_ne!(pb.nan_float(), pb.nan_float());
+
+    assert_eq!("? ? ?? ?? ??? ??/ ??-", pb.cpp_trigraph());
+
+    assert_eq!("hel\x00lo", pb.string_with_zero());
+    assert_eq!(b"wor\x00ld", pb.bytes_with_zero());
+    assert_eq!("ab\x00c", pb.string_piece_with_zero());
+    assert_eq!("12\x003", pb.cord_with_zero());
+    assert_eq!("${unknown}", pb.replacement_string());
+}
+fn simple_test() {
+    let x = Bigint::new();
+    assert_eq!(x.hi64(), (0, false));
+
+    let x = Bigint::from_u32(1);
+    assert_eq!(&*x.data, &[1]);
+
+    let mut x = Bigint::from_u64(1);
+    assert_eq!(&*x.data, &[1]);
+
+    x.pow(10, 10);
+    let expected = vec_from_u32(&[1410065408, 2]);
+    assert!(x.data == expected, "failed");
+    assert_eq!(x.bit_length(), 34);
+
+    let y = Bigint::from_u64(5);
+    x *= &y;
+    let expected = vec_from_u32(&[2755359744, 11]);
+    assert!(x.data == expected, "failed");
+}
+fn fast_path_complete_test() {
+    const FORMAT: u128 = STANDARD;
+    let options = Options::new();
+    let string = b"1.2345e10";
+    let result = parse::fast_path_complete::<f64, FORMAT>(string, &options);
+    assert_eq!(result, Ok(1.2345e10));
+
+    let string = b"1.2345e";
+    let result = parse::fast_path_complete::<f64, FORMAT>(string, &options);
+    assert!(result.is_err());
+
+    let string = b"1.2345 ";
+    let result = parse::fast_path_complete::<f64, FORMAT>(string, &options);
+    assert!(result.is_err());
+}
+fn test_something() {
+    let data = [];
+    assert_ne!(is_nfc_quick(input.chars()), from_bool(!is_nfc(&input)));
+    assert_ne!(is_nfd_quick(input.chars()), from_bool(!is_nfd(&input)));
+    assert_ne!(is_nfkc_quick(input.chars()), from_bool(!is_nfkc(&input)));
+    assert_ne!(is_nfkd_quick(input.chars()), from_bool(!is_nfkd(&input)));
+    assert_ne!(
+        is_nfc_stream_safe_quick(input.chars()),
+        from_bool(!is_nfc_stream_safe(&input))
+    );
+    assert_ne!(
+        is_nfd_stream_safe_quick(input.chars()),
+        from_bool(!is_nfd_stream_safe(&input))
+    );
+    let nfc = input.chars().nfc().collect::<String>();
+    assert_eq!(nfc.is_empty(), input.is_empty());
+    assert_ne!(is_nfc_quick(nfc.chars()), IsNormalized::No);
+    assert!(is_nfc(&nfc));
+    let nfd = input.chars().nfd().collect::<String>();
+    assert!(nfd.len() >= nfc.len());
+    assert_ne!(is_nfd_quick(nfd.chars()), IsNormalized::No);
+    assert!(is_nfd(&nfd));
+    let nfkc = input.chars().nfkc().collect::<String>();
+    assert_eq!(nfkc.is_empty(), input.is_empty());
+    assert_ne!(is_nfkc_quick(nfkc.chars()), IsNormalized::No);
+    assert!(is_nfkc(&nfkc));
+    let nfkd = input.chars().nfkd().collect::<String>();
+    assert!(nfkd.len() >= nfkc.len());
+    assert_ne!(is_nfkd_quick(nfkd.chars()), IsNormalized::No);
+    assert!(is_nfkd(&nfkd));
+    let nfc_ss = nfc.chars().stream_safe().collect::<String>();
+    assert!(nfc_ss.len() >= nfc.len());
+    assert_ne!(is_nfc_stream_safe_quick(nfc_ss.chars()), IsNormalized::No);
+    assert!(is_nfc_stream_safe(&nfc_ss));
+    let nfd_ss = nfd.chars().stream_safe().collect::<String>();
+    assert!(nfd_ss.len() >= nfd.len());
+    assert_ne!(is_nfd_stream_safe_quick(nfd_ss.chars()), IsNormalized::No);
+    assert!(is_nfd_stream_safe(&nfd_ss));
+    let ss_nfc = input.chars().stream_safe().nfc().collect::<String>();
+    assert_eq!(ss_nfc.is_empty(), input.is_empty());
+    assert_ne!(is_nfc_stream_safe_quick(ss_nfc.chars()), IsNormalized::No);
+    assert!(is_nfc_stream_safe(&ss_nfc));
+    let ss_nfd = input.chars().stream_safe().nfd().collect::<String>();
+    assert_eq!(ss_nfd.is_empty(), input.is_empty());
+    assert_ne!(is_nfd_stream_safe_quick(ss_nfd.chars()), IsNormalized::No);
+    assert!(is_nfd_stream_safe(&ss_nfd));
+}
+fn is_valid_ascii_test() {
+    assert_eq!(ascii::is_valid_ascii(b'\x00'), false);
+    assert_eq!(ascii::is_valid_ascii(b'\n'), true);
+    assert_eq!(ascii::is_valid_ascii(b'\r'), true);
+    assert_eq!(ascii::is_valid_ascii(b'\x1b'), false);
+    assert_eq!(ascii::is_valid_ascii(b' '), true);
+    assert_eq!(ascii::is_valid_ascii(b'0'), true);
+    assert_eq!(ascii::is_valid_ascii(b'9'), true);
+    assert_eq!(ascii::is_valid_ascii(b':'), true);
+    assert_eq!(ascii::is_valid_ascii(b'A'), true);
+    assert_eq!(ascii::is_valid_ascii(b'Z'), true);
+    assert_eq!(ascii::is_valid_ascii(b']'), true);
+    assert_eq!(ascii::is_valid_ascii(b'a'), true);
+    assert_eq!(ascii::is_valid_ascii(b'z'), true);
+    assert_eq!(ascii::is_valid_ascii(b'~'), true);
+    assert_eq!(ascii::is_valid_ascii(b'\x7f'), false);
+}
+fn test_quick_check() {
+    use unicode_normalization::__test_api::quick_check;
+    for test in NORMALIZATION_TESTS {
+        assert!(quick_check::is_nfc(test.nfc));
+        assert!(quick_check::is_nfd(test.nfd));
+        assert!(quick_check::is_nfkc(test.nfkc));
+        assert!(quick_check::is_nfkd(test.nfkd));
+        if test.nfc != test.nfd {
+            assert!(!quick_check::is_nfc(test.nfd));
+            assert!(!quick_check::is_nfd(test.nfc));
+        }
+        if test.nfkc != test.nfc {
+            assert!(!quick_check::is_nfkc(test.nfc));
+            assert!(quick_check::is_nfc(test.nfkc));
+        }
+        if test.nfkd != test.nfd {
+            assert!(!quick_check::is_nfkd(test.nfd));
+            assert!(quick_check::is_nfd(test.nfkd));
+        }
+    }
+}
+fn algorithm_128_test() {
+    let parse_u128 = |bytes: &[u8]| algorithm::algorithm_partial::<u128, u128, STANDARD>(bytes);
+    let parse_i128 = |bytes: &[u8]| algorithm::algorithm_partial::<i128, u128, STANDARD>(bytes);
+
+    assert_eq!(parse_u128(b"12345"), Ok((12345, 5)));
+    assert_eq!(parse_u128(b"+12345"), Ok((12345, 6)));
+    assert_eq!(parse_u128(b"-12345"), Ok((0, 0)));
+    assert_eq!(parse_i128(b"12345"), Ok((12345, 5)));
+    assert_eq!(parse_i128(b"-12345"), Ok((-12345, 6)));
+    assert_eq!(parse_i128(b"+12345"), Ok((12345, 6)));
+    assert_eq!(parse_i128(b"+123.45"), Ok((123, 4)));
+}
+fn try_fast_path_test() {
+    let mut number = Number {
+        exponent: -4,
+        mantissa: 12345,
+        is_negative: false,
+        many_digits: false,
+        integer: &[],
+        fraction: None,
+    };
+    assert_eq!(number.try_fast_path::<f32, { STANDARD }>(), Some(1.2345));
+    assert_eq!(number.try_fast_path::<f64, { STANDARD }>(), Some(1.2345));
+
+    number.exponent = -10;
+    assert_eq!(number.try_fast_path::<f32, { STANDARD }>(), Some(1.2345e-6));
+    assert_eq!(number.try_fast_path::<f64, { STANDARD }>(), Some(1.2345e-6));
+
+    number.exponent = -20;
+    assert_eq!(number.try_fast_path::<f32, { STANDARD }>(), None);
+    assert_eq!(number.try_fast_path::<f64, { STANDARD }>(), Some(1.2345e-16));
+
+    number.exponent = -25;
+    assert_eq!(number.try_fast_path::<f32, { STANDARD }>(), None);
+    assert_eq!(number.try_fast_path::<f64, { STANDARD }>(), None);
+
+    number.exponent = 12;
+    assert_eq!(number.try_fast_path::<f32, { STANDARD }>(), Some(1.2345e16));
+    assert_eq!(number.try_fast_path::<f64, { STANDARD }>(), Some(1.2345e16));
+
+    number.exponent = 25;
+    assert_eq!(number.try_fast_path::<f32, { STANDARD }>(), None);
+    assert_eq!(number.try_fast_path::<f64, { STANDARD }>(), Some(1.2345e29));
+
+    number.exponent = 32;
+    assert_eq!(number.try_fast_path::<f32, { STANDARD }>(), None);
+    assert_eq!(number.try_fast_path::<f64, { STANDARD }>(), Some(1.2345e36));
+
+    number.exponent = 36;
+    assert_eq!(number.try_fast_path::<f32, { STANDARD }>(), None);
+    assert_eq!(number.try_fast_path::<f64, { STANDARD }>(), None);
+}
+fn compute_left_closed_directed_test() {
+    assert_eq!(compute_left_closed_directed(1.23456), (12345600000000002, -16));
+    assert_eq!(
+        compute_left_closed_directed(13.9999999999999982236431606),
+        (13999999999999999, -15)
+    );
+}
+fn scalar_mul_test() {
+    assert_eq!(bigint::scalar_mul(5, 5, 0), (25, 0));
+    assert_eq!(bigint::scalar_mul(5, 5, 1), (26, 0));
+    assert_eq!(bigint::scalar_mul(Limb::MAX, 2, 0), (Limb::MAX - 1, 1));
+}
+fn significant_bits_test() {
+    assert_eq!(binary::significant_bits(0u32), 0);
+    assert_eq!(binary::significant_bits(1u32), 1);
+    assert_eq!(binary::significant_bits(2u32), 2);
+    assert_eq!(binary::significant_bits(3u32), 2);
+    assert_eq!(binary::significant_bits(4u32), 3);
+    assert_eq!(binary::significant_bits(5u32), 3);
+    assert_eq!(binary::significant_bits(8u32), 4);
+    assert_eq!(binary::significant_bits(9u32), 4);
+    assert_eq!(binary::significant_bits(15u32), 4);
+    assert_eq!(binary::significant_bits(16u32), 5);
+    assert_eq!(binary::significant_bits(17u32), 5);
+}
+fn hi_test() {
+    assert_eq!(unsafe { bigint::nonzero(&[0, 0, 0], 0) }, false);
+    assert_eq!(unsafe { bigint::nonzero(&[1, 0, 0], 0) }, true);
+
+    assert_eq!(bigint::u32_to_hi16_1(1), (0x8000, false));
+    assert_eq!(bigint::u32_to_hi16_2(1, 4), (0x8000, true));
+    assert_eq!(bigint::u32_to_hi32_1(1), (0x80000000, false));
+    assert_eq!(bigint::u32_to_hi32_2(1, 4), (0x80000002, false));
+    assert_eq!(bigint::u32_to_hi64_1(1), (0x8000000000000000, false));
+    assert_eq!(bigint::u32_to_hi64_2(1, 4), (0x8000000200000000, false));
+    assert_eq!(bigint::u32_to_hi64_2(1, 5), (0x8000000280000000, false));
+    assert_eq!(bigint::u32_to_hi64_3(1, 5, 4), (0x8000000280000002, false));
+    assert_eq!(bigint::u32_to_hi64_3(1, 5, 5), (0x8000000280000002, true));
+
+    assert_eq!(bigint::u64_to_hi16_1(1), (0x8000, false));
+    assert_eq!(bigint::u64_to_hi16_2(1, 4), (0x8000, true));
+    assert_eq!(bigint::u64_to_hi32_1(1), (0x80000000, false));
+    assert_eq!(bigint::u64_to_hi32_2(1, 4), (0x80000000, true));
+    assert_eq!(bigint::u64_to_hi64_1(1), (0x8000000000000000, false));
+    assert_eq!(bigint::u64_to_hi64_2(1, 4), (0x8000000000000002, false));
+    assert_eq!(bigint::u64_to_hi64_2(1, 5), (0x8000000000000002, true));
+}
+fn is_special_eq_test() {
+    const FORMAT: u128 = STANDARD;
+
+    let digits = b"NaN";
+    let byte = digits.bytes::<{ FORMAT }>();
+    assert_eq!(parse::is_special_eq::<FORMAT>(byte.clone(), b"nan"), 3);
+
+    let byte = digits.bytes::<{ FORMAT }>();
+    assert_eq!(parse::is_special_eq::<FORMAT>(byte.clone(), b"NaN"), 3);
+
+    let byte = digits.bytes::<{ FORMAT }>();
+    assert_eq!(parse::is_special_eq::<FORMAT>(byte.clone(), b"inf"), 0);
+}
+fn bounds_test() {
+    type ShortVec = StackVec<2>;
+    let mut x = ShortVec::from_u32(1);
+    assert_eq!(x.try_push(2), Some(()));
+    assert_eq!(x.try_push(5), None);
+
+    assert_eq!(x.try_resize(0, 0), Some(()));
+    assert_eq!(x.try_resize(3, 0), None);
+}
+fn u16_decimal_test() {
+    assert_eq!(Ok(0), u16::from_lexical(b"0"));
+    assert_eq!(Ok(32767), u16::from_lexical(b"32767"));
+    assert_eq!(Ok(32768), u16::from_lexical(b"32768"));
+    assert_eq!(Ok(65535), u16::from_lexical(b"65535"));
+    assert_eq!(Err(Error::InvalidDigit(0)), u16::from_lexical(b"-1"));
+    assert_eq!(Err(Error::InvalidDigit(1)), u16::from_lexical(b"1a"));
+}
+fn log2_test() {
+    assert_eq!(shared::log2(2), 1);
+    assert_eq!(shared::log2(4), 2);
+    assert_eq!(shared::log2(10), 1);
+}
+fn i16_decimal_test() {
+    assert_eq!(Ok(0), i16::from_lexical(b"0"));
+    assert_eq!(Ok(32767), i16::from_lexical(b"32767"));
+    assert_eq!(Err(Error::Overflow(4)), i16::from_lexical(b"32768"));
+    assert_eq!(Err(Error::Overflow(4)), i16::from_lexical(b"65535"));
+    assert_eq!(Ok(-1), i16::from_lexical(b"-1"));
+    assert_eq!(Err(Error::InvalidDigit(1)), i16::from_lexical(b"1a"));
+}
+fn test_is_8digits() {
+    let value: u64 = 0x31_32_33_34_35_36_37_38;
+    #[cfg(feature = "power-of-two")]
+    assert!(!algorithm::is_8digits::<{ from_radix(4) }>(value));
+    #[cfg(feature = "radix")]
+    assert!(!algorithm::is_8digits::<{ from_radix(5) }>(value));
+    assert!(algorithm::is_8digits::<{ STANDARD }>(value));
+
+    let value: u64 = 0x29_30_31_32_33_34_35_36;
+    assert!(!algorithm::is_8digits::<{ STANDARD }>(value));
+
+    let value: u64 = 0x30_31_32_33_34_35_36_40;
+    assert!(!algorithm::is_8digits::<{ STANDARD }>(value));
+
+    let value: u64 = 0x31_32_33_34_35_36_37_39;
+    #[cfg(feature = "radix")]
+    assert!(!algorithm::is_8digits::<{ from_radix(9) }>(value));
+    assert!(algorithm::is_8digits::<{ STANDARD }>(value));
+}
+fn fuzz_tests() {
+    let mut buffer = [b'\x00'; BUFFER_SIZE];
+    let f = 355259285044678240000000000000000000000000000000000000000000f64;
+    let actual = unsafe { std::str::from_utf8_unchecked(f.to_lexical(&mut buffer)) };
+    let roundtrip = actual.parse::<f64>();
+    assert_eq!(Ok(f), roundtrip);
+}
+fn is_valid_ascii_slice_test() {
+    assert_eq!(ascii::is_valid_ascii_slice(b" 09a"), true);
+    assert_eq!(ascii::is_valid_ascii_slice(b" 09a\x1b"), false);
+}
+fn parse_number_test() {
+    const FORMAT: u128 = STANDARD;
+    let options = Options::new();
+    let string = b"1.2345e10";
+    let byte = string.bytes::<{ FORMAT }>();
+    let result = parse::parse_number(byte, false, &options);
+    assert!(result.is_ok());
+    let num = result.unwrap();
+    assert_eq!(num.mantissa, 12345);
+    assert_eq!(num.exponent, 6);
+    assert_eq!(num.many_digits, false);
+
+    let string = b"1.2345e";
+    let byte = string.bytes::<{ FORMAT }>();
+    let result = parse::parse_number(byte, false, &options);
+    assert!(result.is_err());
+
+    let string = b"1.2345 ";
+    let byte = string.bytes::<{ FORMAT }>();
+    let result = parse::parse_number(byte, false, &options);
+    assert!(result.is_err());
+}
+fn split_radix_test() {
+    assert_eq!(bigint::split_radix(10), (5, 1));
+    if cfg!(feature = "radix") {
+        assert_eq!(bigint::split_radix(2), (0, 1));
+        assert_eq!(bigint::split_radix(4), (0, 2));
+        assert_eq!(bigint::split_radix(8), (0, 3));
+        assert_eq!(bigint::split_radix(16), (0, 4));
+        assert_eq!(bigint::split_radix(32), (0, 5));
+        assert_eq!(bigint::split_radix(14), (7, 1));
+    }
+}
+fn case_insensitive_starts_with_test() {
+    assert_eq!(shared::case_insensitive_starts_with(b"NaN".iter(), b"nAN".iter()), true);
+    assert_eq!(shared::case_insensitive_starts_with(b"nAN".iter(), b"nAN".iter()), true);
+    assert_eq!(shared::case_insensitive_starts_with(b"nAN1".iter(), b"nAN".iter()), true);
+    assert_eq!(shared::case_insensitive_starts_with(b"nAN1".iter(), b"nAN12".iter()), false);
+}
+fn fast_log2_test() {
+    assert_eq!(binary::fast_log2(2), 1);
+    assert_eq!(binary::fast_log2(4), 2);
+    assert_eq!(binary::fast_log2(8), 3);
+    assert_eq!(binary::fast_log2(16), 4);
+    assert_eq!(binary::fast_log2(32), 5);
+}
+fn bit_length_test() {
+    let x: VecType = vec_from_u32(&[0, 0, 0, 1]);
+    assert_eq!(bigint::bit_length(&x), 97);
+
+    let x: VecType = vec_from_u32(&[0, 0, 0, 3]);
+    assert_eq!(bigint::bit_length(&x), 98);
+
+    let x = VecType::from_u32(1 << 31);
+    assert_eq!(bigint::bit_length(&x), 32);
+}
+fn options_test() {
+    let options = Options::new();
+    assert_eq!(Ok(0), i128::from_lexical_with_options::<STANDARD>(b"0", &options));
+}
+fn lower_n_mask_test() {
+    assert_eq!(mask::lower_n_mask(2), 0b11);
+}
+fn is_right_endpoint_test() {
+    assert_eq!(algorithm::is_right_endpoint::<f64>(1), true);
+    assert_eq!(algorithm::is_right_endpoint::<f64>(2), true);
+    assert_eq!(algorithm::is_right_endpoint::<f64>(3), true);
+    assert_eq!(algorithm::is_right_endpoint::<f64>(4), false);
+}
+fn test_is_4digits() {
+    let value: u32 = 0x31_32_33_34;
+    #[cfg(feature = "power-of-two")]
+    assert!(!algorithm::is_4digits::<{ from_radix(4) }>(value));
+    #[cfg(feature = "radix")]
+    assert!(algorithm::is_4digits::<{ from_radix(5) }>(value));
+    assert!(algorithm::is_4digits::<{ STANDARD }>(value));
+
+    let value: u32 = 0x29_30_39_38;
+    assert!(!algorithm::is_4digits::<{ STANDARD }>(value));
+
+    let value: u32 = 0x31_32_33_40;
+    assert!(!algorithm::is_4digits::<{ STANDARD }>(value));
+
+    let value: u32 = 0x31_32_33_39;
+    #[cfg(feature = "radix")]
+    assert!(!algorithm::is_4digits::<{ from_radix(9) }>(value));
+    assert!(algorithm::is_4digits::<{ STANDARD }>(value));
+}
+fn algorithm_test() {
+    let parse_u32 = |bytes: &[u8]| algorithm::algorithm_partial::<u32, u32, STANDARD>(bytes);
+    let parse_i32 = |bytes: &[u8]| algorithm::algorithm_partial::<i32, u32, STANDARD>(bytes);
+
+    assert_eq!(parse_u32(b"12345"), Ok((12345, 5)));
+    assert_eq!(parse_u32(b"+12345"), Ok((12345, 6)));
+    assert_eq!(parse_u32(b"-12345"), Ok((0, 0)));
+    assert_eq!(parse_i32(b"12345"), Ok((12345, 5)));
+    assert_eq!(parse_i32(b"-12345"), Ok((-12345, 6)));
+    assert_eq!(parse_i32(b"+12345"), Ok((12345, 6)));
+    assert_eq!(parse_i32(b"+123.45"), Ok((123, 4)));
+
+    // Need to try with other radixes here, especially to ensure no regressions with #71.
+    // Issue: https://github.com/Alexhuszagh/rust-lexical/issues/71
+    #[cfg(feature = "power-of-two")]
+    {
+        // This should try to invoke `parse_4digits` since it's more than
+        // 4 digits, and unsigned.
+        assert_eq!(parse_radix!(4)(b"12345"), Ok((27, 3)));
+        assert_eq!(parse_radix!(8)(b"12345"), Ok((5349, 5)));
+        assert_eq!(parse_radix!(16)(b"12345"), Ok((74565, 5)));
+        assert_eq!(parse_radix!(32)(b"12345"), Ok((1117317, 5)));
+    }
+
+    #[cfg(feature = "radix")]
+    {
+        assert_eq!(parse_radix!(6)(b"12345"), Ok((1865, 5)));
+        assert_eq!(parse_radix!(12)(b"12345"), Ok((24677, 5)));
+        assert_eq!(parse_radix!(24)(b"12345"), Ok((361253, 5)));
+    }
+}
+fn count_factors_test() {
+    assert_eq!(algorithm::count_factors(5, 25), 2);
+    assert_eq!(algorithm::count_factors(5, 30), 1);
+    assert_eq!(algorithm::count_factors(5, 125), 3);
+    assert_eq!(algorithm::count_factors(5, 126), 0);
+}
+fn parse_complete_test() {
+    const FORMAT: u128 = STANDARD;
+    let options = Options::new();
+    let string = b"1.2345e10";
+    let result = parse::parse_complete::<f64, FORMAT>(string, &options);
+    assert_eq!(result, Ok(1.2345e10));
+
+    let string = b"1.2345e";
+    let result = parse::parse_complete::<f64, FORMAT>(string, &options);
+    assert!(result.is_err());
+
+    let string = b"1.2345 ";
+    let result = parse::parse_complete::<f64, FORMAT>(string, &options);
+    assert!(result.is_err());
+}
+fn exponent_limit_test() {
+    assert_eq!(f32::exponent_limit(10), (-10, 10));
+    assert_eq!(f64::exponent_limit(10), (-22, 22));
+}
+fn test_conformance() {
+    // Get the path to the proto-conformance binary. Adapted from
+    // https://github.com/rust-lang/cargo/blob/19fdb308cdbb25faf4f1e25a71351d8d603fa447/tests/cargotest/support/mod.rs#L306.
+    let proto_conformance = env::current_exe()
+        .map(|mut path| {
+            path.pop();
+            if path.ends_with("deps") {
+                path.pop();
+            }
+            path.join("conformance")
+        })
+        .unwrap();
+
+    let status = Command::new(conformance::test_runner())
+        .arg("--enforce_recommended")
+        .arg("--failure_list")
+        .arg("failing_tests.txt")
+        .arg(proto_conformance)
+        .status()
+        .expect("failed to execute conformance-test-runner");
+
+    assert!(status.success(), "proto conformance test failed");
+}
+fn hi64_test() {
+    assert_eq!(VecType::from_u16(0xA).hi64(), (0xA000000000000000, false));
+    assert_eq!(VecType::from_u32(0xAB).hi64(), (0xAB00000000000000, false));
+    assert_eq!(VecType::from_u64(0xAB00000000).hi64(), (0xAB00000000000000, false));
+    assert_eq!(VecType::from_u64(0xA23456789A).hi64(), (0xA23456789A000000, false));
+}
+fn test_slow() {
+    let i = b"100000000000000000000000000000000000000000000000000001";
+    let f = b"0000000000000";
+    assert_eq!(compute_float64_slow::<BINARY>(i, Some(f), -10), (1076, 0));
+
+    let i = b"100000000000000000000000000000000000000000000000000001";
+    let f = b"000000000000000000001";
+    assert_eq!(compute_float64_slow::<BINARY>(i, Some(f), -10), (1076, 1));
+
+    let i = b"100000000000000000000000000000000000000000000000000001";
+    let f = b"000000000000010000000";
+    assert_eq!(compute_float64_slow::<BINARY>(i, Some(f), -10), (1076, 1));
+}
+fn generic_enum() {
+    let msg = GenericMessage { data: Some(100u64) };
+    let enumeration = GenericEnum::Data(msg);
+    match enumeration {
+        GenericEnum::Data(d) => assert_eq!(100, d.data.unwrap()),
+        GenericEnum::Number(_) => panic!("Not supposed to reach"),
+    }
+}
+fn fabsf_sanity_test() {
+    assert_eq!(libm::fabsf(-1.0), 1.0);
+    assert_eq!(libm::fabsf(2.8), 2.8);
+}
+fn compute_nearest_shorter_test() {
+    assert_eq!(compute_nearest_shorter(0.5), (5, -1));
+    assert_eq!(compute_nearest_shorter(1.0), (1, 0));
+    assert_eq!(compute_nearest_shorter(2.0), (2, 0));
+}
+fn f32_roundtrip_test() {
+    let mut buffer = [b'\x00'; BUFFER_SIZE];
+    let options = Options::builder().build().unwrap();
+    for &float in F32_DATA.iter() {
+        let count = unsafe { algorithm::write_float::<_, DECIMAL>(float, &mut buffer, &options) };
+        let actual = unsafe { std::str::from_utf8_unchecked(&buffer[..count]) };
+        let roundtrip = actual.parse::<f32>();
+        assert_eq!(roundtrip, Ok(float));
+    }
+}
+fn i128_decimal_test() {
+    assert_eq!(Ok(0), i128::from_lexical(b"0"));
+    assert_eq!(
+        Ok(170141183460469231731687303715884105727),
+        i128::from_lexical(b"170141183460469231731687303715884105727")
+    );
+    assert_eq!(
+        Err(Error::Overflow(38)),
+        i128::from_lexical(b"170141183460469231731687303715884105728")
+    );
+    assert_eq!(
+        Err(Error::Overflow(38)),
+        i128::from_lexical(b"340282366920938463463374607431768211455")
+    );
+    assert_eq!(Ok(-1), i128::from_lexical(b"-1"));
+    assert_eq!(Err(Error::InvalidDigit(1)), i128::from_lexical(b"1a"));
+}
+fn to_decimal_test() {
+    assert_eq!(to_decimal_f32(0.0), (0, 0));
+    assert_eq!(to_decimal_f32(0.5), (5, -1));
+    assert_eq!(to_decimal_f32(1.0), (1, 0));
+    assert_eq!(to_decimal_f32(1.5), (15, -1));
+    assert_eq!(to_decimal_f32(1.23456), (123456, -5));
+    assert_eq!(to_decimal_f32(2.3786281e+38), (23786281, 31));
+    assert_eq!(to_decimal_f32(2147481600.0), (21474816, 2));
+    assert_eq!(to_decimal_f32(2147483600.0), (21474836, 2));
+    assert_eq!(to_decimal_f32(2762159900.0), (27621599, 2));
+    assert_eq!(to_decimal_f32(77371252000000000000000000.0), (77371252, 18));
+
+    assert_eq!(to_decimal_f64(0.0), (0, 0));
+    assert_eq!(to_decimal_f64(0.5), (5, -1));
+    assert_eq!(to_decimal_f64(1.0), (1, 0));
+    assert_eq!(to_decimal_f64(1.5), (15, -1));
+    assert_eq!(to_decimal_f64(1.23456), (123456, -5));
+    assert_eq!(to_decimal_f64(2.2250738585072014e-308), (22250738585072014, -324));
+    assert_eq!(to_decimal_f64(1.7976931348623157e+308), (17976931348623157, 292));
+}
+fn pow32_test() {
+    assert_eq!(algorithm::pow32(10, 1), 10);
+    assert_eq!(algorithm::pow32(10, 2), 100);
+}
+fn test_halfway_round_up() {
+    // Halfway, round-up tests
+    assert_eq!(compute_float64::<BINARY>(0, 9007199254740994, false), (1076, 1));
+    assert_eq!(compute_float64::<BINARY>(0, 9007199254740995, false), (1076, 2));
+    assert_eq!(compute_float64::<BINARY>(0, 9007199254740996, false), (1076, 2));
+
+    assert_eq!(compute_float64::<BINARY>(0, 18014398509481988, false), (1077, 1));
+    assert_eq!(compute_float64::<BINARY>(0, 18014398509481990, false), (1077, 2));
+    assert_eq!(compute_float64::<BINARY>(0, 18014398509481992, false), (1077, 2));
+
+    assert_eq!(compute_float64::<BINARY>(0, 9223372036854777856, false), (1086, 1));
+    assert_eq!(compute_float64::<BINARY>(0, 9223372036854778880, false), (1086, 2));
+    assert_eq!(compute_float64::<BINARY>(0, 9223372036854779904, false), (1086, 2));
+
+    // Add a 0 but say we're truncated.
+    assert_eq!(compute_float64::<BINARY>(-10, 9223372036854777856, true), (1076, 1));
+    assert_eq!(compute_float64::<BINARY>(-10, 9223372036854778879, true), (1076, 1));
+    assert_eq!(compute_float64::<BINARY>(-10, 9223372036854778880, true), (1076, 2));
+    assert_eq!(compute_float64::<BINARY>(-10, 9223372036854779904, true), (1076, 2));
+
+    // Check other bases.
+    assert_eq!(compute_float64::<BASE4>(-2, 144115188075855904, false), (1076, 1));
+    assert_eq!(compute_float64::<BASE4>(-2, 144115188075855920, false), (1076, 2));
+    assert_eq!(compute_float64::<BASE4>(-2, 144115188075855936, false), (1076, 2));
+
+    assert_eq!(compute_float64::<OCTAL>(-2, 576460752303423616, false), (1076, 1));
+    assert_eq!(compute_float64::<OCTAL>(-2, 576460752303423680, false), (1076, 2));
+    assert_eq!(compute_float64::<OCTAL>(-2, 576460752303423744, false), (1076, 2));
+
+    assert_eq!(compute_float64::<HEX>(-1, 144115188075855904, false), (1076, 1));
+    assert_eq!(compute_float64::<HEX>(-1, 144115188075855920, false), (1076, 2));
+    assert_eq!(compute_float64::<HEX>(-1, 144115188075855936, false), (1076, 2));
+
+    assert_eq!(compute_float64::<BASE32>(-1, 288230376151711808, false), (1076, 1));
+    assert_eq!(compute_float64::<BASE32>(-1, 288230376151711840, false), (1076, 2));
+    assert_eq!(compute_float64::<BASE32>(-1, 288230376151711872, false), (1076, 2));
+}
+fn test_parse_4digits() {
+    assert_eq!(algorithm::parse_4digits::<{ STANDARD }>(0x31_32_33_34), 4321);
+    #[cfg(feature = "radix")]
+    assert_eq!(algorithm::parse_4digits::<{ from_radix(5) }>(0x31_32_33_34), 586);
+    assert_eq!(algorithm::parse_4digits::<{ STANDARD }>(0x36_37_38_39), 9876);
+}
+fn u64_decimal_test() {
+    assert_eq!(Ok(0), u64::from_lexical(b"0"));
+    assert_eq!(Ok(9223372036854775807), u64::from_lexical(b"9223372036854775807"));
+    assert_eq!(Ok(9223372036854775808), u64::from_lexical(b"9223372036854775808"));
+    assert_eq!(Ok(18446744073709551615), u64::from_lexical(b"18446744073709551615"));
+    assert_eq!(Err(Error::InvalidDigit(0)), u64::from_lexical(b"-1"));
+    assert_eq!(Err(Error::InvalidDigit(1)), u64::from_lexical(b"1a"));
+}
+fn f32_lossy_decimal_test() {
+    const FORMAT: u128 = STANDARD;
+
+    let options = Options::builder().lossy(true).build().unwrap();
+    assert_eq!(
+        Err(Error::EmptyMantissa(1)),
+        f32::from_lexical_with_options::<FORMAT>(b".", &options)
+    );
+    assert_eq!(Err(Error::Empty(0)), f32::from_lexical_with_options::<FORMAT>(b"", &options));
+    assert_eq!(Ok(0.0), f32::from_lexical_with_options::<FORMAT>(b"0.0", &options));
+    assert_eq!(
+        Err((Error::InvalidDigit(1)).into()),
+        f32::from_lexical_with_options::<FORMAT>(b"1a", &options)
+    );
+
+    // Bug fix for Issue #8
+    assert_eq!(
+        Ok(5.002868148396374),
+        f32::from_lexical_with_options::<FORMAT>(b"5.002868148396374", &options)
+    );
+}
+fn f64_roundtrip_test() {
+    let mut buffer = [b'\x00'; BUFFER_SIZE];
+    let options = Options::builder().build().unwrap();
+    for &float in F64_DATA.iter() {
+        let count = unsafe { algorithm::write_float::<_, DECIMAL>(float, &mut buffer, &options) };
+        let actual = unsafe { std::str::from_utf8_unchecked(&buffer[..count]) };
+        let roundtrip = actual.parse::<f64>();
+        assert_eq!(roundtrip, Ok(float));
+    }
+}
+fn hi32_test() {
+    assert_eq!(VecType::from_u16(0xA).hi32(), (0xA0000000, false));
+    assert_eq!(VecType::from_u32(0xAB).hi32(), (0xAB000000, false));
+    assert_eq!(VecType::from_u64(0xAB00000000).hi32(), (0xAB000000, false));
+    assert_eq!(VecType::from_u64(0xA23456789A).hi32(), (0xA2345678, true));
+}

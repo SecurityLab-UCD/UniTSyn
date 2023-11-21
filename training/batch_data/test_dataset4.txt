@@ -1,0 +1,287 @@
+fn test_symlink_relative_path() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let dir = "test_symlink_existing_dir";
+    let file_a = "test_symlink_relative_a";
+    let link = "test_symlink_relative_link";
+    let multi_dir =
+        "test_symlink_existing_dir/../test_symlink_existing_dir/../test_symlink_existing_dir/../";
+    let p = PathBuf::from(multi_dir).join(file_a);
+    at.mkdir(dir);
+
+    // relative symlink
+    // Thanks to -r, all the ../ should be resolved to a single file
+    ucmd.args(&["-r", "-s", "-v", &p.to_string_lossy(), link])
+        .succeeds()
+        .stdout_only(format!("'{link}' -> '{file_a}'\n"));
+    assert!(at.is_symlink(link));
+    assert_eq!(at.resolve_link(link), file_a);
+
+    // Run the same command without -r to verify that we keep the full
+    // crazy path
+    let (at, mut ucmd) = at_and_ucmd!();
+    ucmd.args(&["-s", "-v", &p.to_string_lossy(), link])
+        .succeeds()
+        .stdout_only(format!("'{}' -> '{}'\n", link, &p.to_string_lossy()));
+    assert!(at.is_symlink(link));
+    assert_eq!(at.resolve_link(link), p.to_string_lossy());
+}
+fn test_du_soft_link() {
+    let ts = TestScenario::new(util_name!());
+    let at = &ts.fixtures;
+
+    at.symlink_file(SUB_FILE, SUB_LINK);
+
+    let result = ts.ucmd().arg(SUB_DIR_LINKS).succeeds();
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        let result_reference = unwrap_or_return!(expected_result(&ts, &[SUB_DIR_LINKS]));
+        if result_reference.succeeded() {
+            assert_eq!(result.stdout_str(), result_reference.stdout_str());
+            return;
+        }
+    }
+    _du_soft_link(result.stdout_str());
+}
+fn test_install_creating_leading_dirs_verbose() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+
+    let source = "create_leading_test_file";
+    let target = "dir1/no-dir2/no-dir3/test_file";
+
+    at.touch(source);
+    at.mkdir("dir1");
+
+    let creating_dir1 = regex::Regex::new("(?m)^install: creating directory.*dir1'$").unwrap();
+    let creating_nodir23 =
+        regex::Regex::new(r"(?m)^install: creating directory.*no-dir[23]'$").unwrap();
+
+    scene
+        .ucmd()
+        .arg("-Dv")
+        .arg(source)
+        .arg(at.plus(target))
+        .succeeds()
+        .stdout_matches(&creating_nodir23)
+        .stdout_does_not_match(&creating_dir1)
+        .no_stderr();
+
+    assert!(at.file_exists(target));
+}
+fn test_symlink_dangling_file() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file = "test_symlink_dangling_file";
+    let link = "test_symlink_dangling_file_link";
+
+    ucmd.args(&["-s", file, link]).succeeds().no_stderr();
+    assert!(!at.file_exists(file));
+    assert!(at.is_symlink(link));
+    assert_eq!(at.resolve_link(link), file);
+}
+fn test_du_no_permission() {
+    let ts = TestScenario::new(util_name!());
+    let at = &ts.fixtures;
+
+    at.mkdir_all(SUB_DIR_LINKS);
+
+    ts.ccmd("chmod").arg("-r").arg(SUB_DIR_LINKS).succeeds();
+
+    let result = ts.ucmd().arg(SUB_DIR_LINKS).fails();
+    result.stderr_contains("du: cannot read directory 'subdir/links': Permission denied");
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        let result_reference = unwrap_or_return!(expected_result(&ts, &[SUB_DIR_LINKS]));
+        if result_reference
+            .stderr_str()
+            .contains("du: cannot read directory 'subdir/links': Permission denied")
+        {
+            assert_eq!(result.stdout_str(), result_reference.stdout_str());
+            return;
+        }
+    }
+
+    _du_no_permission(result.stdout_str());
+}
+fn test_output_file_all_filesystems() {
+    // When run with no positional arguments, `df` lets "-" represent
+    // the "File" entry for each row.
+    let output = new_ucmd!()
+        .arg("--output=file")
+        .succeeds()
+        .stdout_move_str();
+    let mut lines = output.lines();
+    assert_eq!(lines.next().unwrap(), "File");
+    for line in lines {
+        assert_eq!(line, "-");
+    }
+}
+fn test_du_inodes() {
+    let ts = TestScenario::new(util_name!());
+
+    ts.ucmd()
+        .arg("--summarize")
+        .arg("--inodes")
+        .succeeds()
+        .stdout_only("11\t.\n");
+
+    let result = ts.ucmd().arg("--separate-dirs").arg("--inodes").succeeds();
+
+    #[cfg(target_os = "windows")]
+    result.stdout_contains("3\t.\\subdir\\links\n");
+    #[cfg(not(target_os = "windows"))]
+    result.stdout_contains("3\t./subdir/links\n");
+    result.stdout_contains("3\t.\n");
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        let result_reference =
+            unwrap_or_return!(expected_result(&ts, &["--separate-dirs", "--inodes"]));
+        assert_eq!(result.stdout_str(), result_reference.stdout_str());
+    }
+}
+fn test_kill_with_signal_prefixed_name_old_form() {
+    let mut target = Target::new();
+    new_ucmd!()
+        .arg("-SIGKILL")
+        .arg(format!("{}", target.pid()))
+        .succeeds();
+    assert_eq!(target.wait_for_signal(), Some(libc::SIGKILL));
+}
+fn test_link_existing_file() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file = "test_link_existing_file";
+    let link = "test_link_existing_file_link";
+
+    at.touch(file);
+    at.write(file, "foobar");
+    assert!(at.file_exists(file));
+
+    ucmd.args(&[file, link]).succeeds().no_stderr();
+    assert!(at.file_exists(file));
+    assert!(at.file_exists(link));
+    assert_eq!(at.read(file), at.read(link));
+}
+fn test_symlink_interactive() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+    let file = "test_symlink_interactive_file";
+    let link = "test_symlink_interactive_file_link";
+
+    at.touch(file);
+    at.touch(link);
+
+    scene
+        .ucmd()
+        .args(&["-i", "-s", file, link])
+        .pipe_in("n")
+        .fails()
+        .no_stdout();
+
+    assert!(at.file_exists(file));
+    assert!(!at.is_symlink(link));
+
+    scene
+        .ucmd()
+        .args(&["-i", "-s", file, link])
+        .pipe_in("Yesh") // spell-checker:disable-line
+        .succeeds()
+        .no_stdout();
+
+    assert!(at.file_exists(file));
+    assert!(at.is_symlink(link));
+    assert_eq!(at.resolve_link(link), file);
+}
+fn test_install_creating_leading_dirs_with_multiple_sources_and_target_dir() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+
+    let source1 = "source_file_1";
+    let source2 = "source_file_2";
+    let target_dir = "missing_target_dir";
+
+    at.touch(source1);
+    at.touch(source2);
+
+    // installing multiple files into a missing directory will fail, when -D is used w/o -t parameter
+    scene
+        .ucmd()
+        .arg("-D")
+        .arg(source1)
+        .arg(source2)
+        .arg(at.plus(target_dir))
+        .fails()
+        .stderr_contains("missing_target_dir' is not a directory");
+
+    assert!(!at.dir_exists(target_dir));
+
+    scene
+        .ucmd()
+        .arg("-D")
+        .arg(source1)
+        .arg(source2)
+        .arg("-t")
+        .arg(at.plus(target_dir))
+        .succeeds()
+        .no_stderr();
+
+    assert!(at.dir_exists(target_dir));
+}
+fn test_symlink_existing_file() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file = "test_symlink_existing_file";
+    let link = "test_symlink_existing_file_link";
+
+    at.touch(file);
+
+    ucmd.args(&["-s", file, link]).succeeds().no_stderr();
+
+    assert!(at.file_exists(file));
+    assert!(at.is_symlink(link));
+    assert_eq!(at.resolve_link(link), file);
+}
+fn test_install_nested_paths_copy_file() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file1 = "source_file";
+    let dir1 = "source_dir";
+    let dir2 = "target_dir";
+
+    at.mkdir(dir1);
+    at.mkdir(dir2);
+    at.touch(format!("{dir1}/{file1}"));
+
+    ucmd.arg(format!("{dir1}/{file1}"))
+        .arg(dir2)
+        .succeeds()
+        .no_stderr();
+    assert!(at.file_exists(format!("{dir2}/{file1}")));
+}
+fn test_install_target_file() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file1 = "source_file";
+    let file2 = "target_file";
+
+    at.touch(file1);
+    at.touch(file2);
+    ucmd.arg(file1).arg(file2).succeeds().no_stderr();
+
+    assert!(at.file_exists(file1));
+    assert!(at.file_exists(file2));
+}
+fn test_install_mode_symbolic() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let dir = "target_dir";
+    let file = "source_file";
+    let mode_arg = "--mode=o+wx";
+
+    at.touch(file);
+    at.mkdir(dir);
+    ucmd.arg(file).arg(dir).arg(mode_arg).succeeds().no_stderr();
+
+    let dest_file = &format!("{dir}/{file}");
+    assert!(at.file_exists(file));
+    assert!(at.file_exists(dest_file));
+    let permissions = at.metadata(dest_file).permissions();
+    assert_eq!(0o100_003_u32, PermissionsExt::mode(&permissions));
+}

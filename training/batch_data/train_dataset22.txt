@@ -1,0 +1,2160 @@
+fn parse_create_procedure() {
+    let sql = "CREATE OR ALTER PROCEDURE test (@foo INT, @bar VARCHAR(256)) AS BEGIN SELECT 1 END";
+
+    assert_eq!(
+        ms().verified_stmt(sql),
+        Statement::CreateProcedure {
+            or_alter: true,
+            body: vec![Statement::Query(Box::new(Query {
+                with: None,
+                limit: None,
+                limit_by: vec![],
+                offset: None,
+                fetch: None,
+                locks: vec![],
+                order_by: vec![],
+                body: Box::new(SetExpr::Select(Box::new(Select {
+                    distinct: None,
+                    top: None,
+                    projection: vec![SelectItem::UnnamedExpr(Expr::Value(number("1")))],
+                    into: None,
+                    from: vec![],
+                    lateral_views: vec![],
+                    selection: None,
+                    group_by: GroupByExpr::Expressions(vec![]),
+                    cluster_by: vec![],
+                    distribute_by: vec![],
+                    sort_by: vec![],
+                    having: None,
+                    named_window: vec![],
+                    qualify: None
+                })))
+            }))],
+            params: Some(vec![
+                ProcedureParam {
+                    name: Ident {
+                        value: "@foo".into(),
+                        quote_style: None
+                    },
+                    data_type: DataType::Int(None)
+                },
+                ProcedureParam {
+                    name: Ident {
+                        value: "@bar".into(),
+                        quote_style: None
+                    },
+                    data_type: DataType::Varchar(Some(CharacterLength {
+                        length: 256,
+                        unit: None
+                    }))
+                }
+            ]),
+            name: ObjectName(vec![Ident {
+                value: "test".into(),
+                quote_style: None
+            }])
+        }
+    )
+}
+fn test_new_xml_decl_standalone() {
+    let mut writer = Writer::new(Vec::new());
+    writer
+        .write_event(Decl(BytesDecl::new("1.2", None, Some("yo"))))
+        .expect("writing xml decl should succeed");
+
+    let result = writer.into_inner();
+    assert_eq!(
+        String::from_utf8(result).expect("utf-8 output"),
+        "<?xml version=\"1.2\" standalone=\"yo\"?>",
+        "writer output (LHS)"
+    );
+}
+fn code_too_large_without_panic() -> Result<()> {
+    const N: usize = 120000;
+
+    // Build a module with a function whose body will allocate too many
+    // temporaries for our current (Cranelift-based) compiler backend to
+    // handle. This test ensures that we propagate the failure upward
+    // and return it programmatically, rather than panic'ing. If we ever
+    // improve our compiler backend to actually handle such a large
+    // function body, we'll need to increase the limits here too!
+    let mut s = String::new();
+    s.push_str("(module\n");
+    s.push_str("(table 1 1 funcref)\n");
+    s.push_str("(func (export \"\") (result i32)\n");
+    s.push_str("i32.const 0\n");
+    for _ in 0..N {
+        s.push_str("table.get 0\n");
+        s.push_str("ref.is_null\n");
+    }
+    s.push_str("))\n");
+
+    let store = Store::<()>::default();
+    let result = Module::new(store.engine(), &s);
+    match result {
+        Err(e) => assert!(e
+            .to_string()
+            .starts_with("Compilation error: Code for function is too large")),
+        Ok(_) => panic!("Please adjust limits to make the module too large to compile!"),
+    }
+    Ok(())
+}
+fn test_basic() {
+    assert_eq!(0.0, s2f(b"0").unwrap());
+    assert_eq!(-0.0, s2f(b"-0").unwrap());
+    assert_eq!(1.0, s2f(b"1").unwrap());
+    assert_eq!(-1.0, s2f(b"-1").unwrap());
+    assert_eq!(123456792.0, s2f(b"123456789").unwrap());
+    assert_eq!(299792448.0, s2f(b"299792458").unwrap());
+}
+fn signatures_match() -> Result<()> {
+    let engine = Engine::default();
+    let mut linker = Linker::<()>::new(&engine);
+
+    linker.func_wrap("", "f1", || {})?;
+    linker.func_wrap("", "f2", || -> i32 { loop {} })?;
+    linker.func_wrap("", "f3", || -> i64 { loop {} })?;
+    linker.func_wrap("", "f4", || -> f32 { loop {} })?;
+    linker.func_wrap("", "f5", || -> f64 { loop {} })?;
+    linker.func_wrap(
+        "",
+        "f6",
+        |_: f32, _: f64, _: i32, _: i64, _: i32, _: Option<ExternRef>, _: Option<Func>| -> f64 {
+            loop {}
+        },
+    )?;
+
+    let mut store = Store::new(&engine, ());
+
+    let f = linker
+        .get(&mut store, "", "f1")
+        .unwrap()
+        .into_func()
+        .unwrap();
+    assert_eq!(f.ty(&store).params().collect::<Vec<_>>(), &[]);
+    assert_eq!(f.ty(&store).results().collect::<Vec<_>>(), &[]);
+
+    let f = linker
+        .get(&mut store, "", "f2")
+        .unwrap()
+        .into_func()
+        .unwrap();
+    assert_eq!(f.ty(&store).params().collect::<Vec<_>>(), &[]);
+    assert_eq!(f.ty(&store).results().collect::<Vec<_>>(), &[ValType::I32]);
+
+    let f = linker
+        .get(&mut store, "", "f3")
+        .unwrap()
+        .into_func()
+        .unwrap();
+    assert_eq!(f.ty(&store).params().collect::<Vec<_>>(), &[]);
+    assert_eq!(f.ty(&store).results().collect::<Vec<_>>(), &[ValType::I64]);
+
+    let f = linker
+        .get(&mut store, "", "f4")
+        .unwrap()
+        .into_func()
+        .unwrap();
+    assert_eq!(f.ty(&store).params().collect::<Vec<_>>(), &[]);
+    assert_eq!(f.ty(&store).results().collect::<Vec<_>>(), &[ValType::F32]);
+
+    let f = linker
+        .get(&mut store, "", "f5")
+        .unwrap()
+        .into_func()
+        .unwrap();
+    assert_eq!(f.ty(&store).params().collect::<Vec<_>>(), &[]);
+    assert_eq!(f.ty(&store).results().collect::<Vec<_>>(), &[ValType::F64]);
+
+    let f = linker
+        .get(&mut store, "", "f6")
+        .unwrap()
+        .into_func()
+        .unwrap();
+    assert_eq!(
+        f.ty(&store).params().collect::<Vec<_>>(),
+        &[
+            ValType::F32,
+            ValType::F64,
+            ValType::I32,
+            ValType::I64,
+            ValType::I32,
+            ValType::ExternRef,
+            ValType::FuncRef,
+        ]
+    );
+    assert_eq!(f.ty(&store).results().collect::<Vec<_>>(), &[ValType::F64]);
+
+    Ok(())
+}
+fn drop_on_owned_resource() -> Result<()> {
+    let engine = super::engine();
+    let c = Component::new(
+        &engine,
+        r#"
+            (component
+                (import "t" (type $t (sub resource)))
+                (import "[constructor]t" (func $ctor (result (own $t))))
+                (import "[method]t.foo" (func $foo (param "self" (borrow $t)) (result (list u8))))
+
+                (core func $ctor (canon lower (func $ctor)))
+                (core func $drop (canon resource.drop $t))
+
+                (core module $m1
+                    (import "" "drop" (func $drop (param i32)))
+                    (memory (export "memory") 1)
+                    (global $to-drop (export "to-drop") (mut i32) (i32.const 0))
+                    (func (export "realloc") (param i32 i32 i32 i32) (result i32)
+                        (call $drop (global.get $to-drop))
+                        unreachable)
+                )
+                (core instance $i1 (instantiate $m1
+                    (with "" (instance
+                        (export "drop" (func $drop))
+                    ))
+                ))
+
+                (core func $foo (canon lower (func $foo)
+                    (memory $i1 "memory")
+                    (realloc (func $i1 "realloc"))))
+
+                (core module $m2
+                    (import "" "ctor" (func $ctor (result i32)))
+                    (import "" "foo" (func $foo (param i32 i32)))
+                    (import "i1" "to-drop" (global $to-drop (mut i32)))
+
+                    (func (export "f")
+                        (local $r i32)
+                        (local.set $r (call $ctor))
+                        (global.set $to-drop (local.get $r))
+                        (call $foo
+                            (local.get $r)
+                            (i32.const 200))
+                    )
+                )
+                (core instance $i2 (instantiate $m2
+                    (with "" (instance
+                        (export "ctor" (func $ctor))
+                        (export "foo" (func $foo))
+                    ))
+                    (with "i1" (instance $i1))
+                ))
+                (func (export "f") (canon lift (core func $i2 "f")))
+            )
+        "#,
+    )?;
+
+    struct MyType;
+
+    let mut store = Store::new(&engine, ());
+    let mut linker = Linker::new(&engine);
+    linker.root().resource::<MyType>("t", |_, _| Ok(()))?;
+    linker.root().func_wrap("[constructor]t", |_cx, ()| {
+        Ok((Resource::<MyType>::new_own(300),))
+    })?;
+    linker
+        .root()
+        .func_wrap("[method]t.foo", |_cx, (r,): (Resource<MyType>,)| {
+            assert!(!r.owned());
+            Ok((vec![2u8],))
+        })?;
+    let i = linker.instantiate(&mut store, &c)?;
+    let f = i.get_typed_func::<(), ()>(&mut store, "f")?;
+
+    let err = f.call(&mut store, ()).unwrap_err();
+    assert!(
+        format!("{err:?}").contains("cannot remove owned resource while borrowed"),
+        "bad error: {err:?}"
+    );
+
+    Ok(())
+}
+fn test_ne() {
+    assert_ne!(version("0.0.0"), version("0.0.1"));
+    assert_ne!(version("0.0.0"), version("0.1.0"));
+    assert_ne!(version("0.0.0"), version("1.0.0"));
+    assert_ne!(version("1.2.3-alpha"), version("1.2.3-beta"));
+    assert_ne!(version("1.2.3+23"), version("1.2.3+42"));
+}
+fn test_eq() {
+    assert_eq!(version("1.2.3"), version("1.2.3"));
+    assert_eq!(version("1.2.3-alpha1"), version("1.2.3-alpha1"));
+    assert_eq!(version("1.2.3+build.42"), version("1.2.3+build.42"));
+    assert_eq!(version("1.2.3-alpha1+42"), version("1.2.3-alpha1+42"));
+}
+fn issue349() {
+    #[derive(Debug, Deserialize, Serialize, PartialEq)]
+    struct Entity {
+        id: Id,
+    }
+    #[derive(Debug, Deserialize, Serialize, PartialEq)]
+    struct Id {
+        #[serde(rename = "$value")]
+        content: Enum,
+    }
+    #[derive(Debug, Deserialize, Serialize, PartialEq)]
+    #[serde(rename_all = "kebab-case")]
+    enum Enum {
+        A(String),
+        B(String),
+    }
+
+    assert_eq!(
+        from_str::<Entity>("<entity><id><a>Id</a></id></entity>").unwrap(),
+        Entity {
+            id: Id {
+                content: Enum::A("Id".to_string()),
+            }
+        }
+    );
+}
+fn TinyVec_drain() {
+  let mut tv: TinyVec<[i32; 10]> = Default::default();
+  tv.push(1);
+  tv.push(2);
+  tv.push(3);
+
+  assert_eq!(Vec::from_iter(tv.clone().drain(..)), vec![1, 2, 3]);
+
+  assert_eq!(Vec::from_iter(tv.clone().drain(..2)), vec![1, 2]);
+  assert_eq!(Vec::from_iter(tv.clone().drain(..3)), vec![1, 2, 3]);
+
+  assert_eq!(Vec::from_iter(tv.clone().drain(..=1)), vec![1, 2]);
+  assert_eq!(Vec::from_iter(tv.clone().drain(..=2)), vec![1, 2, 3]);
+
+  assert_eq!(Vec::from_iter(tv.clone().drain(0..)), vec![1, 2, 3]);
+  assert_eq!(Vec::from_iter(tv.clone().drain(1..)), vec![2, 3]);
+
+  assert_eq!(Vec::from_iter(tv.clone().drain(0..2)), vec![1, 2]);
+  assert_eq!(Vec::from_iter(tv.clone().drain(0..3)), vec![1, 2, 3]);
+  assert_eq!(Vec::from_iter(tv.clone().drain(1..2)), vec![2]);
+  assert_eq!(Vec::from_iter(tv.clone().drain(1..3)), vec![2, 3]);
+
+  assert_eq!(Vec::from_iter(tv.clone().drain(0..=1)), vec![1, 2]);
+  assert_eq!(Vec::from_iter(tv.clone().drain(0..=2)), vec![1, 2, 3]);
+  assert_eq!(Vec::from_iter(tv.clone().drain(1..=1)), vec![2]);
+  assert_eq!(Vec::from_iter(tv.clone().drain(1..=2)), vec![2, 3]);
+}
+fn test_new_xml_decl_version() {
+    let mut writer = Writer::new(Vec::new());
+    writer
+        .write_event(Decl(BytesDecl::new("1.2", None, None)))
+        .expect("writing xml decl should succeed");
+
+    let result = writer.into_inner();
+    assert_eq!(
+        String::from_utf8(result).expect("utf-8 output"),
+        "<?xml version=\"1.2\"?>",
+        "writer output (LHS)"
+    );
+}
+fn reserved_name() {
+    // Name "xmlns-something" is reserved according to spec, because started with "xml"
+    let mut r =
+        NsReader::from_str(r#"<a xmlns-something="reserved attribute name" xmlns="www1"/>"#);
+    r.trim_text(true);
+
+    // <a />
+    match r.read_resolved_event() {
+        Ok((ns, Empty(_))) => assert_eq!(ns, Bound(Namespace(b"www1"))),
+        e => panic!(
+            "Expected empty element bound to namespace 'www1', got {:?}",
+            e
+        ),
+    }
+}
+fn parse_invalid_brackets() {
+    let sql = "SELECT STRUCT<INT64>>(NULL)";
+    assert_eq!(
+        bigquery().parse_sql_statements(sql).unwrap_err(),
+        ParserError::ParserError("unmatched > in STRUCT literal".to_string())
+    );
+
+    let sql = "SELECT STRUCT<STRUCT<INT64>>>(NULL)";
+    assert_eq!(
+        bigquery().parse_sql_statements(sql).unwrap_err(),
+        ParserError::ParserError("Expected (, found: >".to_string())
+    );
+
+    let sql = "CREATE TABLE table (x STRUCT<STRUCT<INT64>>>)";
+    assert_eq!(
+        bigquery().parse_sql_statements(sql).unwrap_err(),
+        ParserError::ParserError(
+            "Expected ',' or ')' after column definition, found: >".to_string()
+        )
+    );
+}
+fn test_invoke_func_via_table() -> Result<()> {
+    let mut store = Store::<()>::default();
+
+    let wat = r#"
+      (module
+        (func $f (result i64) (i64.const 42))
+
+        (table (export "table") 1 1 anyfunc)
+        (elem (i32.const 0) $f)
+      )
+    "#;
+    let module = Module::new(store.engine(), wat).context("> Error compiling module!")?;
+    let instance =
+        Instance::new(&mut store, &module, &[]).context("> Error instantiating module!")?;
+
+    let f = instance
+        .get_table(&mut store, "table")
+        .unwrap()
+        .get(&mut store, 0)
+        .unwrap()
+        .funcref()
+        .unwrap()
+        .unwrap()
+        .clone();
+    let mut results = [Val::I32(0)];
+    f.call(&mut store, &[], &mut results).unwrap();
+    assert_eq!(results[0].unwrap_i64(), 42);
+    Ok(())
+}
+fn test_overflow() {
+    assert_eq!(f64::INFINITY, s2d(b"2e308").unwrap());
+    assert_eq!(f64::INFINITY, s2d(b"1e309").unwrap());
+}
+fn test_decimal_length9() {
+    assert_eq!(1, decimal_length9(0));
+    assert_eq!(1, decimal_length9(1));
+    assert_eq!(1, decimal_length9(9));
+    assert_eq!(2, decimal_length9(10));
+    assert_eq!(2, decimal_length9(99));
+    assert_eq!(3, decimal_length9(100));
+    assert_eq!(3, decimal_length9(999));
+    assert_eq!(9, decimal_length9(999999999));
+}
+fn test_sync_host_func() {
+    let engine = Engine::default();
+    let mut linker = Linker::new(&engine);
+    atoms::add_to_linker(&mut linker, |cx| cx).unwrap();
+    let mut store = store(&engine);
+    let shim_mod = shim_module(&engine);
+    let shim_inst = linker.instantiate(&mut store, &shim_mod).unwrap();
+
+    let mut results = [Val::I32(0)];
+    shim_inst
+        .get_func(&mut store, "int_float_args_shim")
+        .unwrap()
+        .call(&mut store, &[0i32.into(), 123.45f32.into()], &mut results)
+        .unwrap();
+
+    assert_eq!(
+        results[0].unwrap_i32(),
+        types::Errno::Ok as i32,
+        "int_float_args errno"
+    );
+}
+fn test_bad_input() {
+    assert_eq!(Error::MalformedInput, s2d(b"x").unwrap_err());
+    assert_eq!(Error::MalformedInput, s2d(b"1..1").unwrap_err());
+    assert_eq!(Error::MalformedInput, s2d(b"..").unwrap_err());
+    assert_eq!(Error::MalformedInput, s2d(b"1..1").unwrap_err());
+    assert_eq!(Error::MalformedInput, s2d(b"1ee1").unwrap_err());
+    assert_eq!(Error::MalformedInput, s2d(b"1e.1").unwrap_err());
+    assert_eq!(Error::InputTooShort, s2d(b"").unwrap_err());
+    assert_eq!(Error::InputTooLong, s2d(b"123456789012345678").unwrap_err());
+    assert_eq!(Error::InputTooLong, s2d(b"1e12345").unwrap_err());
+}
+fn encode_error_size() {
+    #[cfg(any(feature = "std", feature = "alloc"))]
+    assert_eq!(std::mem::size_of::<bincode::error::EncodeError>(), 32);
+
+    #[cfg(not(any(feature = "std", feature = "alloc")))]
+    assert_eq!(std::mem::size_of::<bincode::error::EncodeError>(), 24);
+}
+fn ArrayVec_drain() {
+  let mut av: ArrayVec<[i32; 10]> = Default::default();
+  av.push(1);
+  av.push(2);
+  av.push(3);
+
+  assert_eq!(Vec::from_iter(av.clone().drain(..)), vec![1, 2, 3]);
+
+  assert_eq!(Vec::from_iter(av.clone().drain(..2)), vec![1, 2]);
+  assert_eq!(Vec::from_iter(av.clone().drain(..3)), vec![1, 2, 3]);
+
+  assert_eq!(Vec::from_iter(av.clone().drain(..=1)), vec![1, 2]);
+  assert_eq!(Vec::from_iter(av.clone().drain(..=2)), vec![1, 2, 3]);
+
+  assert_eq!(Vec::from_iter(av.clone().drain(0..)), vec![1, 2, 3]);
+  assert_eq!(Vec::from_iter(av.clone().drain(1..)), vec![2, 3]);
+
+  assert_eq!(Vec::from_iter(av.clone().drain(0..2)), vec![1, 2]);
+  assert_eq!(Vec::from_iter(av.clone().drain(0..3)), vec![1, 2, 3]);
+  assert_eq!(Vec::from_iter(av.clone().drain(1..2)), vec![2]);
+  assert_eq!(Vec::from_iter(av.clone().drain(1..3)), vec![2, 3]);
+
+  assert_eq!(Vec::from_iter(av.clone().drain(0..=1)), vec![1, 2]);
+  assert_eq!(Vec::from_iter(av.clone().drain(0..=2)), vec![1, 2, 3]);
+  assert_eq!(Vec::from_iter(av.clone().drain(1..=1)), vec![2]);
+  assert_eq!(Vec::from_iter(av.clone().drain(1..=2)), vec![2, 3]);
+}
+fn test_basic() {
+    check!(0.0);
+    check!(-0.0);
+    check!(1.0);
+    check!(-1.0);
+    assert_eq!(pretty(f32::NAN), "NaN");
+    assert_eq!(pretty(f32::INFINITY), "inf");
+    assert_eq!(pretty(f32::NEG_INFINITY), "-inf");
+}
+fn host_borrow_as_resource_any() -> Result<()> {
+    let engine = super::engine();
+    let c = Component::new(
+        &engine,
+        r#"
+            (component
+                (import "t" (type $t (sub resource)))
+                (import "f" (func $f (param "f" (borrow $t))))
+
+                (core func $f (canon lower (func $f)))
+
+                (core module $m
+                    (import "" "f" (func $f (param i32)))
+                    (func (export "f2") (param i32)
+                        (call $f (local.get 0))
+                    )
+                )
+                (core instance $i (instantiate $m
+                    (with "" (instance
+                        (export "f" (func $f))
+                    ))
+                ))
+
+                (func (export "f2") (param "x" (borrow $t))
+                    (canon lift (core func $i "f2")))
+            )
+        "#,
+    )?;
+
+    struct MyType;
+
+    let mut store = Store::new(&engine, ());
+
+    // First test the above component where the host properly drops the argument
+    {
+        let mut linker = Linker::new(&engine);
+        linker.root().resource::<MyType>("t", |_, _| Ok(()))?;
+        linker
+            .root()
+            .func_wrap("f", |mut cx, (r,): (ResourceAny,)| {
+                r.resource_drop(&mut cx)?;
+                Ok(())
+            })?;
+        let i = linker.instantiate(&mut store, &c)?;
+
+        let f = i.get_typed_func::<(&Resource<MyType>,), ()>(&mut store, "f2")?;
+
+        let resource = Resource::new_own(100);
+        f.call(&mut store, (&resource,))?;
+    }
+
+    // Then also test the case where the host forgets a drop
+    {
+        let mut linker = Linker::new(&engine);
+        linker.root().resource::<MyType>("t", |_, _| Ok(()))?;
+        linker.root().func_wrap("f", |_cx, (_r,): (ResourceAny,)| {
+            // ... no drop here
+            Ok(())
+        })?;
+        let i = linker.instantiate(&mut store, &c)?;
+
+        let f = i.get_typed_func::<(&Resource<MyType>,), ()>(&mut store, "f2")?;
+
+        let resource = Resource::new_own(100);
+        let err = f.call(&mut store, (&resource,)).unwrap_err();
+        assert!(
+            format!("{err:?}").contains("borrow handles still remain at the end of the call"),
+            "bad error: {err:?}"
+        );
+    }
+    Ok(())
+}
+fn TinyVec_splice() {
+  let mut tv: TinyVec<[i32; 10]> = Default::default();
+  tv.push(1);
+  tv.push(2);
+  tv.push(3);
+
+  // splice returns the same things as drain
+  assert_eq!(Vec::from_iter(tv.clone().splice(.., None)), vec![1, 2, 3]);
+
+  assert_eq!(Vec::from_iter(tv.clone().splice(..2, None)), vec![1, 2]);
+  assert_eq!(Vec::from_iter(tv.clone().splice(..3, None)), vec![1, 2, 3]);
+
+  assert_eq!(Vec::from_iter(tv.clone().splice(..=1, None)), vec![1, 2]);
+  assert_eq!(Vec::from_iter(tv.clone().splice(..=2, None)), vec![1, 2, 3]);
+
+  assert_eq!(Vec::from_iter(tv.clone().splice(0.., None)), vec![1, 2, 3]);
+  assert_eq!(Vec::from_iter(tv.clone().splice(1.., None)), vec![2, 3]);
+
+  assert_eq!(Vec::from_iter(tv.clone().splice(0..2, None)), vec![1, 2]);
+  assert_eq!(Vec::from_iter(tv.clone().splice(0..3, None)), vec![1, 2, 3]);
+  assert_eq!(Vec::from_iter(tv.clone().splice(1..2, None)), vec![2]);
+  assert_eq!(Vec::from_iter(tv.clone().splice(1..3, None)), vec![2, 3]);
+
+  assert_eq!(Vec::from_iter(tv.clone().splice(0..=1, None)), vec![1, 2]);
+  assert_eq!(Vec::from_iter(tv.clone().splice(0..=2, None)), vec![1, 2, 3]);
+  assert_eq!(Vec::from_iter(tv.clone().splice(1..=1, None)), vec![2]);
+  assert_eq!(Vec::from_iter(tv.clone().splice(1..=2, None)), vec![2, 3]);
+
+  // splice removes the same things as drain
+  let mut tv2 = tv.clone();
+  tv2.splice(.., None);
+  assert_eq!(tv2, tiny_vec![]);
+
+  let mut tv2 = tv.clone();
+  tv2.splice(..2, None);
+  assert_eq!(tv2, tiny_vec![3]);
+
+  let mut tv2 = tv.clone();
+  tv2.splice(..3, None);
+  assert_eq!(tv2, tiny_vec![]);
+
+  let mut tv2 = tv.clone();
+  tv2.splice(..=1, None);
+  assert_eq!(tv2, tiny_vec![3]);
+  let mut tv2 = tv.clone();
+  tv2.splice(..=2, None);
+  assert_eq!(tv2, tiny_vec![]);
+
+  let mut tv2 = tv.clone();
+  tv2.splice(0.., None);
+  assert_eq!(tv2, tiny_vec![]);
+  let mut tv2 = tv.clone();
+  tv2.splice(1.., None);
+  assert_eq!(tv2, tiny_vec![1]);
+
+  let mut tv2 = tv.clone();
+  tv2.splice(0..2, None);
+  assert_eq!(tv2, tiny_vec![3]);
+
+  let mut tv2 = tv.clone();
+  tv2.splice(0..3, None);
+  assert_eq!(tv2, tiny_vec![]);
+  let mut tv2 = tv.clone();
+  tv2.splice(1..2, None);
+  assert_eq!(tv2, tiny_vec![1, 3]);
+
+  let mut tv2 = tv.clone();
+  tv2.splice(1..3, None);
+  assert_eq!(tv2, tiny_vec![1]);
+
+  let mut tv2 = tv.clone();
+  tv2.splice(0..=1, None);
+  assert_eq!(tv2, tiny_vec![3]);
+
+  let mut tv2 = tv.clone();
+  tv2.splice(0..=2, None);
+  assert_eq!(tv2, tiny_vec![]);
+
+  let mut tv2 = tv.clone();
+  tv2.splice(1..=1, None);
+  assert_eq!(tv2, tiny_vec![1, 3]);
+
+  let mut tv2 = tv.clone();
+  tv2.splice(1..=2, None);
+  assert_eq!(tv2, tiny_vec![1]);
+
+  // splice adds the elements correctly
+  let mut tv2 = tv.clone();
+  tv2.splice(.., 4..=6);
+  assert_eq!(tv2, tiny_vec![4, 5, 6]);
+
+  let mut tv2 = tv.clone();
+  tv2.splice(..2, 4..=6);
+  assert_eq!(tv2, tiny_vec![4, 5, 6, 3]);
+
+  let mut tv2 = tv.clone();
+  tv2.splice(..3, 4..=6);
+  assert_eq!(tv2, tiny_vec![4, 5, 6]);
+
+  let mut tv2 = tv.clone();
+  tv2.splice(..=1, 4..=6);
+  assert_eq!(tv2, tiny_vec![4, 5, 6, 3]);
+
+  let mut tv2 = tv.clone();
+  tv2.splice(..=2, 4..=6);
+  assert_eq!(tv2, tiny_vec![4, 5, 6]);
+
+  let mut tv2 = tv.clone();
+  tv2.splice(0.., 4..=6);
+  assert_eq!(tv2, tiny_vec![4, 5, 6]);
+
+  let mut tv2 = tv.clone();
+  tv2.splice(1.., 4..=6);
+  assert_eq!(tv2, tiny_vec![1, 4, 5, 6]);
+
+  let mut tv2 = tv.clone();
+  tv2.splice(0..2, 4..=6);
+  assert_eq!(tv2, tiny_vec![4, 5, 6, 3]);
+
+  let mut tv2 = tv.clone();
+  tv2.splice(0..3, 4..=6);
+  assert_eq!(tv2, tiny_vec![4, 5, 6]);
+
+  let mut tv2 = tv.clone();
+  tv2.splice(1..2, 4..=6);
+  assert_eq!(tv2, tiny_vec![1, 4, 5, 6, 3]);
+
+  let mut tv2 = tv.clone();
+  tv2.splice(1..3, 4..=6);
+  assert_eq!(tv2, tiny_vec![1, 4, 5, 6]);
+
+  let mut tv2 = tv.clone();
+  tv2.splice(0..=1, 4..=6);
+  assert_eq!(tv2, tiny_vec![4, 5, 6, 3]);
+
+  let mut tv2 = tv.clone();
+  tv2.splice(0..=2, 4..=6);
+  assert_eq!(tv2, tiny_vec![4, 5, 6]);
+
+  let mut tv2 = tv.clone();
+  tv2.splice(1..=1, 4..=6);
+  assert_eq!(tv2, tiny_vec![1, 4, 5, 6, 3]);
+
+  let mut tv2 = tv.clone();
+  tv2.splice(1..=2, 4..=6);
+  assert_eq!(tv2, tiny_vec![1, 4, 5, 6]);
+
+  // splice adds the elements correctly when the replacement is smaller
+  let mut tv2 = tv.clone();
+  tv2.splice(.., Some(4));
+  assert_eq!(tv2, tiny_vec![4]);
+
+  let mut tv2 = tv.clone();
+  tv2.splice(..2, Some(4));
+  assert_eq!(tv2, tiny_vec![4, 3]);
+
+  let mut tv2 = tv.clone();
+  tv2.splice(1.., Some(4));
+  assert_eq!(tv2, tiny_vec![1, 4]);
+
+  let mut tv2 = tv.clone();
+  tv2.splice(1..=1, Some(4));
+  assert_eq!(tv2, tiny_vec![1, 4, 3]);
+}
+fn issue580() {
+    #[derive(Debug, Deserialize, PartialEq, Eq)]
+    struct Seq {
+        #[serde(rename = "$value")]
+        items: Vec<Wrapper>,
+    }
+
+    #[derive(Debug, Deserialize, PartialEq, Eq)]
+    struct Wrapper(#[serde(deserialize_with = "Item::parse")] Item);
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct Item;
+    impl Item {
+        fn parse<'de, D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            // We should consume something from the deserializer, otherwise this
+            // leads to infinity loop
+            IgnoredAny::deserialize(deserializer)?;
+            Ok(Item)
+        }
+    }
+
+    assert_eq!(
+        from_str::<Seq>(
+            r#"
+        <Seq>
+            <One/>
+            <Two/>
+        </Seq>"#
+        )
+        .unwrap(),
+        Seq {
+            items: vec![Wrapper(Item), Wrapper(Item)],
+        }
+    );
+}
+fn parse_not_precedence() {
+    // NOT has higher precedence than OR/AND, so the following must parse as (NOT true) OR true
+    let sql = "NOT true OR true";
+    assert_matches!(
+        verified_expr(sql),
+        Expr::BinaryOp {
+            op: BinaryOperator::Or,
+            ..
+        }
+    );
+
+    // But NOT has lower precedence than comparison operators, so the following parses as NOT (a IS NULL)
+    let sql = "NOT a IS NULL";
+    assert_matches!(
+        verified_expr(sql),
+        Expr::UnaryOp {
+            op: UnaryOperator::Not,
+            ..
+        }
+    );
+
+    // NOT has lower precedence than BETWEEN, so the following parses as NOT (1 NOT BETWEEN 1 AND 2)
+    let sql = "NOT 1 NOT BETWEEN 1 AND 2";
+    assert_eq!(
+        verified_expr(sql),
+        Expr::UnaryOp {
+            op: UnaryOperator::Not,
+            expr: Box::new(Expr::Between {
+                expr: Box::new(Expr::Value(number("1"))),
+                low: Box::new(Expr::Value(number("1"))),
+                high: Box::new(Expr::Value(number("2"))),
+                negated: true,
+            }),
+        },
+    );
+
+    // NOT has lower precedence than LIKE, so the following parses as NOT ('a' NOT LIKE 'b')
+    let sql = "NOT 'a' NOT LIKE 'b'";
+    assert_eq!(
+        verified_expr(sql),
+        Expr::UnaryOp {
+            op: UnaryOperator::Not,
+            expr: Box::new(Expr::Like {
+                expr: Box::new(Expr::Value(Value::SingleQuotedString("a".into()))),
+                negated: true,
+                pattern: Box::new(Expr::Value(Value::SingleQuotedString("b".into()))),
+                escape_char: None,
+            }),
+        },
+    );
+
+    // NOT has lower precedence than IN, so the following parses as NOT (a NOT IN 'a')
+    let sql = "NOT a NOT IN ('a')";
+    assert_eq!(
+        verified_expr(sql),
+        Expr::UnaryOp {
+            op: UnaryOperator::Not,
+            expr: Box::new(Expr::InList {
+                expr: Box::new(Expr::Identifier("a".into())),
+                list: vec![Expr::Value(Value::SingleQuotedString("a".into()))],
+                negated: true,
+            }),
+        },
+    );
+}
+fn pair_record_of_list_offset() {
+    assert_eq!(types::RecordOfList::offset_of_arr(), 0);
+}
+fn guest_different_host_same() -> Result<()> {
+    let engine = super::engine();
+    let c = Component::new(
+        &engine,
+        r#"
+            (component
+                (import "t1" (type $t1 (sub resource)))
+                (import "t2" (type $t2 (sub resource)))
+
+                (import "f" (func $f (param "a" (borrow $t1)) (param "b" (borrow $t2))))
+
+                (export $g1 "g1" (type $t1))
+                (export $g2 "g2" (type $t2))
+
+                (core func $f (canon lower (func $f)))
+                (core func $drop1 (canon resource.drop $t1))
+                (core func $drop2 (canon resource.drop $t2))
+
+                (core module $m
+                    (import "" "f" (func $f (param i32 i32)))
+                    (import "" "drop1" (func $drop1 (param i32)))
+                    (import "" "drop2" (func $drop2 (param i32)))
+
+                    (func (export "f") (param i32 i32)
+                        ;; separate tables both have initial index of 0
+                        (if (i32.ne (local.get 0) (i32.const 0)) (then (unreachable)))
+                        (if (i32.ne (local.get 1) (i32.const 0)) (then (unreachable)))
+
+                        ;; host should end up getting the same resource
+                        (call $f (local.get 0) (local.get 1))
+
+                        ;; drop our borrows
+                        (call $drop1 (local.get 0))
+                        (call $drop2 (local.get 0))
+                    )
+                )
+                (core instance $i (instantiate $m
+                    (with "" (instance
+                        (export "f" (func $f))
+                        (export "drop1" (func $drop1))
+                        (export "drop2" (func $drop2))
+                    ))
+                ))
+
+                (func (export "f2") (param "a" (borrow $g1)) (param "b" (borrow $g2))
+                    (canon lift (core func $i "f")))
+            )
+        "#,
+    )?;
+
+    struct MyType;
+
+    let mut store = Store::new(&engine, ());
+    let mut linker = Linker::new(&engine);
+    linker.root().resource::<MyType>("t1", |_, _| Ok(()))?;
+    linker.root().resource::<MyType>("t2", |_, _| Ok(()))?;
+    linker.root().func_wrap(
+        "f",
+        |_cx, (r1, r2): (Resource<MyType>, Resource<MyType>)| {
+            assert!(!r1.owned());
+            assert!(!r2.owned());
+            assert_eq!(r1.rep(), 100);
+            assert_eq!(r2.rep(), 100);
+            Ok(())
+        },
+    )?;
+    let i = linker.instantiate(&mut store, &c)?;
+    let f = i.get_typed_func::<(&Resource<MyType>, &Resource<MyType>), ()>(&mut store, "f2")?;
+
+    let t1 = i.get_resource(&mut store, "g1").unwrap();
+    let t2 = i.get_resource(&mut store, "g2").unwrap();
+    assert_eq!(t1, t2);
+    assert_eq!(t1, ResourceType::host::<MyType>());
+
+    let resource = Resource::new_own(100);
+    f.call(&mut store, (&resource, &resource))?;
+    f.post_return(&mut store)?;
+
+    Ok(())
+}
+fn test_system_time_out_of_range() {
+    let input = [0xfd, 0x90, 0x0c, 0xfd, 0xfd, 0x90, 0x0c, 0xfd, 0x90, 0x90];
+
+    let result: Result<(std::time::SystemTime, usize), _> =
+        bincode::decode_from_slice(&input, bincode::config::standard());
+
+    match result {
+        Ok(_) => panic!("Expected the decode to fail, but it succeeded"),
+        Err(DecodeError::InvalidSystemTime { duration }) => {
+            assert_eq!(
+                duration,
+                std::time::Duration::new(10447520527445462160, 144)
+            )
+        }
+        Err(e) => panic!("Expected DecodeError::InvalidSystemTime, got {e:?}"),
+    }
+}
+fn issue429() {
+    #[derive(Debug, Deserialize, Serialize, PartialEq)]
+    enum State {
+        A,
+        B,
+        C,
+    }
+
+    #[derive(Debug, Deserialize, Serialize, PartialEq)]
+    struct StateOuter {
+        #[serde(rename = "$text")]
+        state: State,
+    }
+
+    #[derive(Debug, Deserialize, Serialize, PartialEq)]
+    pub struct Root {
+        state: StateOuter,
+    }
+
+    assert_eq!(
+        from_str::<Root>("<root><state>B</state></root>").unwrap(),
+        Root {
+            state: StateOuter { state: State::B }
+        }
+    );
+
+    assert_eq!(
+        to_string(&Root {
+            state: StateOuter { state: State::B }
+        })
+        .unwrap(),
+        "<Root><state>B</state></Root>"
+    );
+}
+fn signatures_match() {
+    let mut store = Store::<()>::default();
+
+    let f = Func::wrap(&mut store, || {});
+    assert_eq!(f.ty(&store).params().collect::<Vec<_>>(), &[]);
+    assert_eq!(f.ty(&store).results().collect::<Vec<_>>(), &[]);
+
+    let f = Func::wrap(&mut store, || -> i32 { loop {} });
+    assert_eq!(f.ty(&store).params().collect::<Vec<_>>(), &[]);
+    assert_eq!(f.ty(&store).results().collect::<Vec<_>>(), &[ValType::I32]);
+
+    let f = Func::wrap(&mut store, || -> i64 { loop {} });
+    assert_eq!(f.ty(&store).params().collect::<Vec<_>>(), &[]);
+    assert_eq!(f.ty(&store).results().collect::<Vec<_>>(), &[ValType::I64]);
+
+    let f = Func::wrap(&mut store, || -> f32 { loop {} });
+    assert_eq!(f.ty(&store).params().collect::<Vec<_>>(), &[]);
+    assert_eq!(f.ty(&store).results().collect::<Vec<_>>(), &[ValType::F32]);
+
+    let f = Func::wrap(&mut store, || -> f64 { loop {} });
+    assert_eq!(f.ty(&store).params().collect::<Vec<_>>(), &[]);
+    assert_eq!(f.ty(&store).results().collect::<Vec<_>>(), &[ValType::F64]);
+
+    let f = Func::wrap(
+        &mut store,
+        |_: f32, _: f64, _: i32, _: i64, _: i32, _: Option<ExternRef>, _: Option<Func>| -> f64 {
+            loop {}
+        },
+    );
+    assert_eq!(
+        f.ty(&store).params().collect::<Vec<_>>(),
+        &[
+            ValType::F32,
+            ValType::F64,
+            ValType::I32,
+            ValType::I64,
+            ValType::I32,
+            ValType::ExternRef,
+            ValType::FuncRef,
+        ]
+    );
+    assert_eq!(f.ty(&store).results().collect::<Vec<_>>(), &[ValType::F64]);
+}
+fn render_images_identity() {
+    process_images("results_identity.txt", &TEST_SUITES, |path| {
+        let decoder = png::Decoder::new(File::open(&path)?);
+        let mut reader = decoder.read_info()?;
+        let mut img_data = vec![0; reader.output_buffer_size()];
+        let info = reader.next_frame(&mut img_data)?;
+        let bits =
+            ((info.width as usize * info.color_type.samples() * info.bit_depth as usize + 7) & !7)
+                * info.height as usize;
+        // First sanity check:
+        assert_eq!(
+            img_data.len() * 8,
+            bits,
+            "path: {} info: {:?} bits: {}",
+            path.display(),
+            info,
+            bits
+        );
+        let mut crc = Crc32::new();
+        crc.update(&img_data);
+        Ok(crc.finalize())
+    });
+}
+fn massive_64_bit_still_limited() -> Result<()> {
+    // Creating a 64-bit memory which exceeds the limits of the address space
+    // should still send a request to the `ResourceLimiter` to ensure that it
+    // gets at least some chance to see that oom was requested.
+    let mut config = Config::new();
+    config.wasm_memory64(true);
+    let engine = Engine::new(&config)?;
+
+    let mut store = Store::new(&engine, MyLimiter { hit: false });
+    store.limiter(|x| x);
+    let ty = MemoryType::new64(1 << 48, None);
+    assert!(Memory::new(&mut store, ty).is_err());
+    assert!(store.data().hit);
+
+    return Ok(());
+
+    struct MyLimiter {
+        hit: bool,
+    }
+
+    impl ResourceLimiter for MyLimiter {
+        fn memory_growing(
+            &mut self,
+            _current: usize,
+            _request: usize,
+            _max: Option<usize>,
+        ) -> Result<bool> {
+            self.hit = true;
+            Ok(true)
+        }
+        fn table_growing(
+            &mut self,
+            _current: u32,
+            _request: u32,
+            _max: Option<u32>,
+        ) -> Result<bool> {
+            unreachable!()
+        }
+    }
+}
+fn test_read_write_roundtrip_escape_text() -> Result<()> {
+    let input = r#"
+        <?xml version="1.0" encoding="UTF-8"?>
+        <section ns:label="header">
+            <section ns:label="empty element section" />
+            <section ns:label="start/end section"></section>
+            <section ns:label="with text">data &lt;escaped&gt;</section>
+            </section>
+    "#;
+
+    let mut reader = Reader::from_str(input);
+    let mut writer = Writer::new(Cursor::new(Vec::new()));
+    loop {
+        match reader.read_event()? {
+            Eof => break,
+            Text(e) => {
+                let t = e.unescape().unwrap();
+                assert!(writer.write_event(Text(BytesText::new(&t))).is_ok());
+            }
+            e => assert!(writer.write_event(e).is_ok()),
+        }
+    }
+
+    let result = writer.into_inner().into_inner();
+    assert_eq!(String::from_utf8(result).unwrap(), input);
+    Ok(())
+}
+fn test_writer_indent_cdata() -> Result<()> {
+    let txt = include_str!("../tests/documents/test_writer_indent_cdata.xml");
+    let mut reader = Reader::from_str(txt);
+    reader.trim_text(true);
+    let mut writer = Writer::new_with_indent(Cursor::new(Vec::new()), b' ', 4);
+    loop {
+        match reader.read_event()? {
+            Eof => break,
+            e => assert!(writer.write_event(e).is_ok()),
+        }
+    }
+
+    let result = writer.into_inner().into_inner();
+    assert_eq!(result, txt.as_bytes());
+
+    Ok(())
+}
+fn test_new_xml_decl_empty() {
+    let mut writer = Writer::new(Vec::new());
+    // An empty version should arguably be an error, but we don't expect anyone to actually supply
+    // an empty version.
+    writer
+        .write_event(Decl(BytesDecl::new("", Some(""), Some(""))))
+        .expect("writing xml decl should succeed");
+
+    let result = writer.into_inner();
+    assert_eq!(
+        String::from_utf8(result).expect("utf-8 output"),
+        "<?xml version=\"\" encoding=\"\" standalone=\"\"?>",
+        "writer output (LHS)"
+    );
+}
+fn test_lt() {
+    assert!(version("0.0.0") < version("1.2.3-alpha2"));
+    assert!(version("1.0.0") < version("1.2.3-alpha2"));
+    assert!(version("1.2.0") < version("1.2.3-alpha2"));
+    assert!(version("1.2.3-alpha1") < version("1.2.3"));
+    assert!(version("1.2.3-alpha1") < version("1.2.3-alpha2"));
+    assert!(!(version("1.2.3-alpha2") < version("1.2.3-alpha2")));
+    assert!(version("1.2.3+23") < version("1.2.3+42"));
+}
+fn test_new_xml_decl_full() {
+    let mut writer = Writer::new(Vec::new());
+    writer
+        .write_event(Decl(BytesDecl::new("1.2", Some("utf-X"), Some("yo"))))
+        .expect("writing xml decl should succeed");
+
+    let result = writer.into_inner();
+    assert_eq!(
+        String::from_utf8(result).expect("utf-8 output"),
+        "<?xml version=\"1.2\" encoding=\"utf-X\" standalone=\"yo\"?>",
+        "writer output (LHS)"
+    );
+}
+fn test_le() {
+    assert!(version("0.0.0") <= version("1.2.3-alpha2"));
+    assert!(version("1.0.0") <= version("1.2.3-alpha2"));
+    assert!(version("1.2.0") <= version("1.2.3-alpha2"));
+    assert!(version("1.2.3-alpha1") <= version("1.2.3-alpha2"));
+    assert!(version("1.2.3-alpha2") <= version("1.2.3-alpha2"));
+    assert!(version("1.2.3+23") <= version("1.2.3+42"));
+}
+fn decode_error_size() {
+    assert_eq!(std::mem::size_of::<bincode::error::DecodeError>(), 32);
+}
+fn link_twice_bad() -> Result<()> {
+    let mut store = Store::<()>::default();
+    let mut linker = Linker::<()>::new(store.engine());
+
+    // functions
+    linker.func_wrap("f", "", || {})?;
+    assert!(linker.func_wrap("f", "", || {}).is_err());
+    assert!(linker
+        .func_wrap("f", "", || -> Result<()> { loop {} })
+        .is_err());
+
+    // globals
+    let ty = GlobalType::new(ValType::I32, Mutability::Const);
+    let global = Global::new(&mut store, ty, Val::I32(0))?;
+    linker.define(&mut store, "g", "1", global.clone())?;
+    assert!(linker.define(&mut store, "g", "1", global.clone()).is_err());
+
+    let ty = GlobalType::new(ValType::I32, Mutability::Var);
+    let global = Global::new(&mut store, ty, Val::I32(0))?;
+    linker.define(&mut store, "g", "2", global.clone())?;
+    assert!(linker.define(&mut store, "g", "2", global.clone()).is_err());
+
+    let ty = GlobalType::new(ValType::I64, Mutability::Const);
+    let global = Global::new(&mut store, ty, Val::I64(0))?;
+    linker.define(&mut store, "g", "3", global.clone())?;
+    assert!(linker.define(&mut store, "g", "3", global.clone()).is_err());
+
+    // memories
+    let ty = MemoryType::new(1, None);
+    let memory = Memory::new(&mut store, ty)?;
+    linker.define(&mut store, "m", "", memory.clone())?;
+    assert!(linker.define(&mut store, "m", "", memory.clone()).is_err());
+    let ty = MemoryType::new(2, None);
+    let memory = Memory::new(&mut store, ty)?;
+    assert!(linker.define(&mut store, "m", "", memory.clone()).is_err());
+
+    // tables
+    let ty = TableType::new(ValType::FuncRef, 1, None);
+    let table = Table::new(&mut store, ty, Val::FuncRef(None))?;
+    linker.define(&mut store, "t", "", table.clone())?;
+    assert!(linker.define(&mut store, "t", "", table.clone()).is_err());
+    let ty = TableType::new(ValType::FuncRef, 2, None);
+    let table = Table::new(&mut store, ty, Val::FuncRef(None))?;
+    assert!(linker.define(&mut store, "t", "", table.clone()).is_err());
+    Ok(())
+}
+fn test_sync_host_func() {
+    let engine = Engine::default();
+    let mut linker = Linker::new(&engine);
+    integration::add_atoms_to_linker(&mut linker, |cx| cx).unwrap();
+    let mut store = store(&engine);
+    let shim_mod = shim_module(&engine);
+    let shim_inst = linker.instantiate(&mut store, &shim_mod).unwrap();
+
+    let mut results = [Val::I32(0)];
+    shim_inst
+        .get_func(&mut store, "int_float_args_shim")
+        .unwrap()
+        .call(&mut store, &[0i32.into(), 123.45f32.into()], &mut results)
+        .unwrap();
+
+    assert_eq!(
+        results[0].unwrap_i32(),
+        types::Errno::Ok as i32,
+        "int_float_args errno"
+    );
+}
+fn test_writer_borrow() -> Result<()> {
+    let txt = include_str!("../tests/documents/test_writer.xml").trim();
+    let mut reader = Reader::from_str(txt);
+    reader.trim_text(true);
+    let mut writer = Writer::new(Cursor::new(Vec::new()));
+    loop {
+        match reader.read_event()? {
+            Eof => break,
+            e => assert!(writer.write_event(&e).is_ok()), // either `e` or `&e`
+        }
+    }
+
+    let result = writer.into_inner().into_inner();
+    assert_eq!(result, txt.as_bytes());
+    Ok(())
+}
+fn test_new() {
+    fn test(identifier: Prerelease, expected: &str) {
+        assert_eq!(identifier.is_empty(), expected.is_empty());
+        assert_eq!(identifier.len(), expected.len());
+        assert_eq!(identifier.as_str(), expected);
+        assert_eq!(identifier, identifier);
+        assert_eq!(identifier, identifier.clone());
+    }
+
+    let ref mut string = String::new();
+    let limit = if cfg!(miri) { 40 } else { 280 }; // miri is slow
+    for _ in 0..limit {
+        test(prerelease(string), string);
+        string.push('1');
+    }
+
+    if !cfg!(miri) {
+        let ref string = string.repeat(20000);
+        test(prerelease(string), string);
+    }
+}
+fn test_new_xml_decl_encoding() {
+    let mut writer = Writer::new(Vec::new());
+    writer
+        .write_event(Decl(BytesDecl::new("1.2", Some("utf-X"), None)))
+        .expect("writing xml decl should succeed");
+
+    let result = writer.into_inner();
+    assert_eq!(
+        String::from_utf8(result).expect("utf-8 output"),
+        "<?xml version=\"1.2\" encoding=\"utf-X\"?>",
+        "writer output (LHS)"
+    );
+}
+fn alias_one() -> Result<()> {
+    let mut store = Store::<()>::default();
+    let mut linker = Linker::new(store.engine());
+    assert!(linker.alias("a", "b", "c", "d").is_err());
+    linker.func_wrap("a", "b", || {})?;
+    assert!(linker.alias("a", "b", "c", "d").is_ok());
+    assert!(linker.get(&mut store, "a", "b").is_some());
+    assert!(linker.get(&mut store, "c", "d").is_some());
+    Ok(())
+}
+fn render_images_alpha() {
+    process_images("results_alpha.txt", &TEST_SUITES, |path| {
+        let mut decoder = png::Decoder::new(File::open(&path)?);
+        decoder.set_transformations(png::Transformations::ALPHA);
+        let mut reader = decoder.read_info()?;
+        let mut img_data = vec![0; reader.output_buffer_size()];
+        let info = reader.next_frame(&mut img_data)?;
+        let bits =
+            ((info.width as usize * info.color_type.samples() * info.bit_depth as usize + 7) & !7)
+                * info.height as usize;
+        // First sanity check:
+        assert_eq!(
+            img_data.len() * 8,
+            bits,
+            "path: {} info: {:?} bits: {}",
+            path.display(),
+            info,
+            bits
+        );
+        let mut crc = Crc32::new();
+        crc.update(&img_data);
+        Ok(crc.finalize())
+    })
+}
+fn pair_different_ints_offsets() {
+    assert_eq!(types::PairDifferentInts::offset_of_first(), 0);
+    assert_eq!(types::PairDifferentInts::offset_of_second(), 8);
+    assert_eq!(types::PairDifferentInts::offset_of_third(), 10);
+    assert_eq!(types::PairDifferentInts::offset_of_fourth(), 12);
+}
+fn default_ns_shadowing_empty() {
+    let src = "<e xmlns='urn:example:o'><e att1='a' xmlns='urn:example:i' /></e>";
+
+    let mut r = NsReader::from_str(src);
+    r.trim_text(true);
+
+    // <outer xmlns='urn:example:o'>
+    {
+        match r.read_resolved_event() {
+            Ok((ns, Start(e))) => {
+                assert_eq!(ns, Bound(Namespace(b"urn:example:o")));
+                assert_eq!(e.name(), QName(b"e"));
+            }
+            e => panic!("Expected Start event (<outer>), got {:?}", e),
+        }
+    }
+
+    // <inner att1='a' xmlns='urn:example:i' />
+    {
+        let e = match r.read_resolved_event() {
+            Ok((ns, Empty(e))) => {
+                assert_eq!(ns, Bound(Namespace(b"urn:example:i")));
+                assert_eq!(e.name(), QName(b"e"));
+                e
+            }
+            e => panic!("Expecting Empty event, got {:?}", e),
+        };
+
+        let mut attrs = e
+            .attributes()
+            .map(|ar| ar.expect("Expecting attribute parsing to succeed."))
+            // we don't care about xmlns attributes for this test
+            .filter(|kv| kv.key.as_namespace_binding().is_none())
+            .map(|Attribute { key: name, value }| {
+                let (opt_ns, local_name) = r.resolve_attribute(name);
+                (opt_ns, local_name.into_inner(), value)
+            });
+        // the attribute should _not_ have a namespace name. The default namespace does not
+        // apply to attributes.
+        assert_eq!(
+            attrs.next(),
+            Some((Unbound, &b"att1"[..], Cow::Borrowed(&b"a"[..])))
+        );
+        assert_eq!(attrs.next(), None);
+    }
+
+    // </outer>
+    match r.read_resolved_event() {
+        Ok((ns, End(e))) => {
+            assert_eq!(ns, Bound(Namespace(b"urn:example:o")));
+            assert_eq!(e.name(), QName(b"e"));
+        }
+        e => panic!("Expected End event (<outer>), got {:?}", e),
+    }
+}
+fn wrong_import_numbers() -> Result<()> {
+    let mut store = Store::<()>::default();
+    let module = Module::new(store.engine(), r#"(module (import "" "" (func)))"#)?;
+
+    assert!(Instance::new(&mut store, &module, &[]).is_err());
+    let func = Func::wrap(&mut store, || {});
+    assert!(Instance::new(&mut store, &module, &[func.clone().into(), func.into()]).is_err());
+    Ok(())
+}
+fn test_eq() {
+    assert_eq!(prerelease("-"), prerelease("-"));
+    assert_ne!(prerelease("a"), prerelease("aa"));
+    assert_ne!(prerelease("aa"), prerelease("a"));
+    assert_ne!(prerelease("aaaaaaaaa"), prerelease("a"));
+    assert_ne!(prerelease("a"), prerelease("aaaaaaaaa"));
+    assert_ne!(prerelease("aaaaaaaaa"), prerelease("bbbbbbbbb"));
+    assert_ne!(build_metadata("1"), build_metadata("001"));
+}
+fn test_std_commons() {
+    the_same(CString::new("Hello world").unwrap());
+    the_same(PathBuf::from("C:/Program Files/Foo"));
+    the_same(Ipv4Addr::LOCALHOST);
+    the_same(Ipv6Addr::LOCALHOST);
+    the_same(IpAddr::V4(Ipv4Addr::LOCALHOST));
+    the_same(IpAddr::V6(Ipv6Addr::LOCALHOST));
+    the_same(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 12345));
+    the_same(SocketAddrV6::new(Ipv6Addr::LOCALHOST, 12345, 0, 0));
+    the_same(SocketAddr::V4(SocketAddrV4::new(
+        Ipv4Addr::LOCALHOST,
+        12345,
+    )));
+    the_same(SocketAddr::V6(SocketAddrV6::new(
+        Ipv6Addr::LOCALHOST,
+        12345,
+        0,
+        0,
+    )));
+    the_same_with_comparer(Mutex::new("Hello world".to_string()), |a, b| {
+        *a.lock().unwrap() == *b.lock().unwrap()
+    });
+    the_same_with_comparer(RwLock::new("Hello world".to_string()), |a, b| {
+        *a.read().unwrap() == *b.read().unwrap()
+    });
+
+    let mut map = std::collections::HashMap::new();
+    map.insert("Hello".to_owned(), "world".to_owned());
+    map.insert("How".to_owned(), "are".to_owned());
+    map.insert("you".to_owned(), "doing?".to_owned());
+    the_same(map);
+
+    let mut set = std::collections::HashSet::new();
+    set.insert("Hello".to_string());
+    set.insert("World".to_string());
+    the_same(set);
+
+    // HashMap and HashSet with custom hash algorithm
+    type MyBuildHasher = std::hash::BuildHasherDefault<ExampleCustomHasher>;
+    let mut custom_map: std::collections::HashMap<String, String, MyBuildHasher> =
+        Default::default();
+    custom_map.insert("Hello".to_owned(), "world".to_owned());
+    custom_map.insert("How".to_owned(), "are".to_owned());
+    custom_map.insert("you".to_owned(), "doing?".to_owned());
+    the_same(custom_map);
+
+    let mut custom_set: std::collections::HashSet<String, MyBuildHasher> = Default::default();
+    custom_set.insert("Hello".to_string());
+    custom_set.insert("World".to_string());
+    the_same(custom_set);
+
+    // Borrowed values
+    let config = bincode::config::standard();
+    let mut buffer = [0u8; 1024];
+
+    // &CStr
+    let cstr = CStr::from_bytes_with_nul(b"Hello world\0").unwrap();
+    let len = bincode::encode_into_slice(cstr, &mut buffer, config).unwrap();
+    let (decoded, len): (CString, usize) =
+        bincode::decode_from_slice(&buffer[..len], config).unwrap();
+    assert_eq!(cstr, decoded.as_c_str());
+    assert_eq!(len, 12);
+
+    // Path
+    let path = Path::new("C:/Program Files/Foo");
+    let len = bincode::encode_into_slice(path, &mut buffer, config).unwrap();
+    let (decoded, len): (&Path, usize) =
+        bincode::borrow_decode_from_slice(&buffer[..len], config).unwrap();
+    assert_eq!(path, decoded);
+    assert_eq!(len, 21);
+}
+fn old_cli_warn_if_ambiguous_flags() -> Result<()> {
+    // This is accepted in the old CLI parser and the new but it's interpreted
+    // differently so a warning should be printed.
+    let output = get_wasmtime_command()?
+        .args(&["tests/all/cli_tests/simple.wat", "--invoke", "get_f32"])
+        .output()?;
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "100\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "\
+warning: this CLI invocation of Wasmtime will be parsed differently in future
+         Wasmtime versions -- see this online issue for more information:
+         https://github.com/bytecodealliance/wasmtime/issues/7384
+
+         Wasmtime will now execute with the old (<= Wasmtime 13) CLI parsing,
+         however this behavior can also be temporarily configured with an
+         environment variable:
+
+         - WASMTIME_NEW_CLI=0 to indicate old semantics are desired and silence this warning, or
+         - WASMTIME_NEW_CLI=1 to indicate new semantics are desired and use the latest behavior
+warning: using `--invoke` with a function that returns values is experimental and may break in the future
+"
+    );
+
+    // Test disabling the warning
+    let output = get_wasmtime_command()?
+        .args(&["tests/all/cli_tests/simple.wat", "--invoke", "get_f32"])
+        .env("WASMTIME_NEW_CLI", "0")
+        .output()?;
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "100\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "\
+warning: using `--invoke` with a function that returns values is experimental and may break in the future
+"
+    );
+
+    // Test forcing the new behavior where nothing happens because the file is
+    // invoked with `--invoke` as its own argument.
+    let output = get_wasmtime_command()?
+        .args(&["tests/all/cli_tests/simple.wat", "--invoke", "get_f32"])
+        .env("WASMTIME_NEW_CLI", "1")
+        .output()?;
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "");
+    assert_eq!(String::from_utf8_lossy(&output.stderr), "");
+
+    // This is unambiguous
+    let output = get_wasmtime_command()?
+        .args(&["--invoke", "get_f32", "tests/all/cli_tests/simple.wat"])
+        .output()?;
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "100\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "\
+warning: using `--invoke` with a function that returns values is experimental and may break in the future
+"
+    );
+
+    // This fails to parse in the old but succeeds in the new, so it should run
+    // under the new semantics with no warning.
+    let output = get_wasmtime_command()?
+        .args(&["run", "tests/all/cli_tests/print-arguments.wat", "--arg"])
+        .output()?;
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "print-arguments.wat\n--arg\n"
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stderr), "");
+
+    // Old behavior can be forced however
+    let output = get_wasmtime_command()?
+        .args(&["run", "tests/all/cli_tests/print-arguments.wat", "--arg"])
+        .env("WASMTIME_NEW_CLI", "0")
+        .output()?;
+    assert!(!output.status.success());
+
+    // This works in both the old and the new, so no warnings
+    let output = get_wasmtime_command()?
+        .args(&["run", "tests/all/cli_tests/print-arguments.wat", "arg"])
+        .output()?;
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "print-arguments.wat\narg\n"
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stderr), "");
+
+    // This works in both the old and the new, so no warnings
+    let output = get_wasmtime_command()?
+        .args(&[
+            "run",
+            "--",
+            "tests/all/cli_tests/print-arguments.wat",
+            "--arg",
+        ])
+        .output()?;
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "print-arguments.wat\n--arg\n"
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stderr), "");
+
+    // Old flags still work, but with a warning
+    let output = get_wasmtime_command()?
+        .args(&[
+            "run",
+            "--max-wasm-stack",
+            "1000000",
+            "tests/all/cli_tests/print-arguments.wat",
+        ])
+        .output()?;
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "print-arguments.wat\n"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "\
+warning: this CLI invocation of Wasmtime is going to break in the future -- for
+         more information see this issue online:
+         https://github.com/bytecodealliance/wasmtime/issues/7384
+
+         Wasmtime will now execute with the old (<= Wasmtime 13) CLI parsing,
+         however this behavior can also be temporarily configured with an
+         environment variable:
+
+         - WASMTIME_NEW_CLI=0 to indicate old semantics are desired and silence this warning, or
+         - WASMTIME_NEW_CLI=1 to indicate new semantics are desired and see the error
+"
+    );
+
+    // Old flags warning is suppressible.
+    let output = get_wasmtime_command()?
+        .args(&[
+            "run",
+            "--max-wasm-stack",
+            "1000000",
+            "tests/all/cli_tests/print-arguments.wat",
+        ])
+        .env("WASMTIME_NEW_CLI", "0")
+        .output()?;
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "print-arguments.wat\n"
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stderr), "");
+
+    Ok(())
+}
+fn issue567() {
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct Root {
+        #[serde(rename = "$value")]
+        items: Vec<Enum>,
+    }
+
+    #[derive(Debug, Deserialize, PartialEq)]
+    enum Enum {
+        List(Vec<()>),
+    }
+
+    assert_eq!(
+        from_str::<Root>("<root><List/></root>").unwrap(),
+        Root {
+            items: vec![Enum::List(vec![])],
+        }
+    );
+}
+fn test_min_max() {
+    assert_eq!(1e-45, s2f(b"1e-45").unwrap());
+    assert_eq!(f32::MIN_POSITIVE, s2f(b"1.1754944e-38").unwrap());
+    assert_eq!(f32::MAX, s2f(b"3.4028235e+38").unwrap());
+}
+fn passthrough_wrong_type() -> Result<()> {
+    let engine = super::engine();
+    let c = Component::new(
+        &engine,
+        r#"
+            (component
+                (import "t" (type $t (sub resource)))
+                (import "f" (func $f (param "a" (borrow $t)) (result (own $t))))
+
+                (core func $f (canon lower (func $f)))
+
+                (core module $m
+                    (import "" "f" (func $f (param i32) (result i32)))
+                    (func (export "f2") (param i32)
+                        (drop (call $f (local.get 0)))
+                    )
+                )
+                (core instance $i (instantiate $m
+                    (with "" (instance
+                        (export "f" (func $f))
+                    ))
+                ))
+
+                (func (export "f2") (param "x" (borrow $t))
+                    (canon lift (core func $i "f2")))
+            )
+        "#,
+    )?;
+
+    struct MyType;
+
+    let mut store = Store::new(&engine, ());
+    let mut linker = Linker::new(&engine);
+    linker.root().resource::<MyType>("t", |_, _| Ok(()))?;
+    linker
+        .root()
+        .func_wrap("f", |_cx, (r,): (Resource<MyType>,)| Ok((r,)))?;
+    let i = linker.instantiate(&mut store, &c)?;
+
+    let f = i.get_typed_func::<(&Resource<MyType>,), ()>(&mut store, "f2")?;
+
+    let resource = Resource::new_own(100);
+    let err = f.call(&mut store, (&resource,)).unwrap_err();
+    assert!(
+        format!("{err:?}").contains("cannot lower a `borrow` resource into an `own`"),
+        "bad error: {err:?}"
+    );
+    Ok(())
+}
+fn test_read_write_roundtrip_results_in_identity() -> Result<()> {
+    let input = r#"
+        <?xml version="1.0" encoding="UTF-8"?>
+        <section ns:label="header">
+            <section ns:label="empty element section" />
+            <section ns:label="start/end section"></section>
+            <section ns:label="with text">data</section>
+            </section>
+    "#;
+
+    let mut reader = Reader::from_str(input);
+    let mut writer = Writer::new(Cursor::new(Vec::new()));
+    loop {
+        match reader.read_event()? {
+            Eof => break,
+            e => assert!(writer.write_event(e).is_ok()),
+        }
+    }
+
+    let result = writer.into_inner().into_inner();
+    assert_eq!(String::from_utf8(result).unwrap(), input);
+    Ok(())
+}
+fn test_log10_pow2() {
+    assert_eq!(0, log10_pow2(0));
+    assert_eq!(0, log10_pow2(1));
+    assert_eq!(0, log10_pow2(2));
+    assert_eq!(0, log10_pow2(3));
+    assert_eq!(1, log10_pow2(4));
+    assert_eq!(496, log10_pow2(1650));
+}
+fn pass_moved_resource() -> Result<()> {
+    let engine = super::engine();
+    let c = Component::new(
+        &engine,
+        r#"
+            (component
+                (import "t" (type $t (sub resource)))
+                (core module $m
+                    (func (export "f") (param i32 i32))
+                )
+                (core instance $i (instantiate $m))
+
+                (func (export "f") (param "x" (own $t)) (param "y" (borrow $t))
+                    (canon lift (core func $i "f")))
+            )
+        "#,
+    )?;
+
+    struct MyType;
+
+    let mut store = Store::new(&engine, ());
+    let mut linker = Linker::new(&engine);
+    linker.root().resource::<MyType>("t", |_, _| Ok(()))?;
+    let i = linker.instantiate(&mut store, &c)?;
+
+    let f = i.get_typed_func::<(&Resource<MyType>, &Resource<MyType>), ()>(&mut store, "f")?;
+
+    let resource = Resource::new_own(100);
+    let err = f.call(&mut store, (&resource, &resource)).unwrap_err();
+    assert!(
+        format!("{err:?}").contains("host resource already consumed"),
+        "bad error: {err:?}"
+    );
+    Ok(())
+}
+fn test_basic() {
+    check!(0.0);
+    check!(-0.0);
+    check!(1.0);
+    check!(-1.0);
+    assert_eq!(pretty(f64::NAN), "NaN");
+    assert_eq!(pretty(f64::INFINITY), "inf");
+    assert_eq!(pretty(f64::NEG_INFINITY), "-inf");
+}
+fn bad_tables() {
+    let mut store = Store::<()>::default();
+
+    // mismatched initializer
+    let ty = TableType::new(ValType::FuncRef, 0, Some(1));
+    assert!(Table::new(&mut store, ty.clone(), Val::I32(0)).is_err());
+
+    // get out of bounds
+    let ty = TableType::new(ValType::FuncRef, 0, Some(1));
+    let t = Table::new(&mut store, ty.clone(), Val::FuncRef(None)).unwrap();
+    assert!(t.get(&mut store, 0).is_none());
+    assert!(t.get(&mut store, u32::max_value()).is_none());
+
+    // set out of bounds or wrong type
+    let ty = TableType::new(ValType::FuncRef, 1, Some(1));
+    let t = Table::new(&mut store, ty.clone(), Val::FuncRef(None)).unwrap();
+    assert!(t.set(&mut store, 0, Val::I32(0)).is_err());
+    assert!(t.set(&mut store, 0, Val::FuncRef(None)).is_ok());
+    assert!(t.set(&mut store, 1, Val::FuncRef(None)).is_err());
+
+    // grow beyond max
+    let ty = TableType::new(ValType::FuncRef, 1, Some(1));
+    let t = Table::new(&mut store, ty.clone(), Val::FuncRef(None)).unwrap();
+    assert!(t.grow(&mut store, 0, Val::FuncRef(None)).is_ok());
+    assert!(t.grow(&mut store, 1, Val::FuncRef(None)).is_err());
+    assert_eq!(t.size(&store), 1);
+
+    // grow wrong type
+    let ty = TableType::new(ValType::FuncRef, 1, Some(2));
+    let t = Table::new(&mut store, ty.clone(), Val::FuncRef(None)).unwrap();
+    assert!(t.grow(&mut store, 1, Val::I32(0)).is_err());
+    assert_eq!(t.size(&store), 1);
+}
+fn pass_cross_store_arg() -> anyhow::Result<()> {
+    let mut config = Config::new();
+    config.wasm_reference_types(true);
+    let engine = Engine::new(&config)?;
+
+    let mut store1 = Store::new(&engine, ());
+    let mut store2 = Store::new(&engine, ());
+
+    let store1_func = Func::wrap(&mut store1, |_: Option<Func>| {});
+    let store2_func = Func::wrap(&mut store2, || {});
+
+    // Using regular `.call` fails with cross-Store arguments.
+    assert!(store1_func
+        .call(
+            &mut store1,
+            &[Val::FuncRef(Some(store2_func.clone()))],
+            &mut []
+        )
+        .is_err());
+
+    // And using `.get` followed by a function call also fails with cross-Store
+    // arguments.
+    let f = store1_func.typed::<Option<Func>, ()>(&store1)?;
+    let result = f.call(&mut store1, Some(store2_func));
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("cross-`Store`"));
+
+    Ok(())
+}
+fn pair_ints_offsets() {
+    assert_eq!(types::PairInts::offset_of_first(), 0);
+    assert_eq!(types::PairInts::offset_of_second(), 4);
+}
+fn bad_globals() {
+    let mut store = Store::<()>::default();
+    let ty = GlobalType::new(ValType::I32, Mutability::Var);
+    assert!(Global::new(&mut store, ty.clone(), Val::I64(0)).is_err());
+    assert!(Global::new(&mut store, ty.clone(), Val::F32(0)).is_err());
+    assert!(Global::new(&mut store, ty.clone(), Val::F64(0)).is_err());
+
+    let ty = GlobalType::new(ValType::I32, Mutability::Const);
+    let g = Global::new(&mut store, ty.clone(), Val::I32(0)).unwrap();
+    assert!(g.set(&mut store, Val::I32(1)).is_err());
+
+    let ty = GlobalType::new(ValType::I32, Mutability::Var);
+    let g = Global::new(&mut store, ty.clone(), Val::I32(0)).unwrap();
+    assert!(g.set(&mut store, Val::I64(0)).is_err());
+}
+fn test_async_host_func() {
+    let engine = Engine::default();
+    let mut linker = Linker::new(&engine);
+    atoms::add_to_linker(&mut linker, |cx| cx).unwrap();
+    let mut store = store(&engine);
+
+    let shim_mod = shim_module(&engine);
+    let shim_inst = linker.instantiate(&mut store, &shim_mod).unwrap();
+
+    let input: i32 = 123;
+    let result_location: i32 = 0;
+
+    let mut results = [Val::I32(0)];
+    shim_inst
+        .get_func(&mut store, "double_int_return_float_shim")
+        .unwrap()
+        .call(
+            &mut store,
+            &[input.into(), result_location.into()],
+            &mut results,
+        )
+        .unwrap();
+
+    assert_eq!(
+        results[0].unwrap_i32(),
+        types::Errno::Ok as i32,
+        "double_int_return_float errno"
+    );
+
+    // The actual result is in memory:
+    let mem = shim_inst.get_memory(&mut store, "memory").unwrap();
+    let mut result_bytes: [u8; 4] = [0, 0, 0, 0];
+    mem.read(&store, result_location as usize, &mut result_bytes)
+        .unwrap();
+    let result = f32::from_le_bytes(result_bytes);
+    assert_eq!((input * 2) as f32, result);
+}
+fn test_ceil_log2_pow5() {
+    assert_eq!(1, ceil_log2_pow5(0));
+    assert_eq!(3, ceil_log2_pow5(1));
+    assert_eq!(5, ceil_log2_pow5(2));
+    assert_eq!(7, ceil_log2_pow5(3));
+    assert_eq!(10, ceil_log2_pow5(4));
+    assert_eq!(8192, ceil_log2_pow5(3528));
+}
+pub fn test_wildcard() {
+    let err = req_err("");
+    assert_to_string(
+        err,
+        "unexpected end of input while parsing major version number",
+    );
+
+    let ref r = req("*");
+    assert_match_all(r, &["0.9.1", "2.9.0", "0.0.9", "1.0.1", "1.1.1"]);
+    assert_match_none(r, &["1.0.0-pre"]);
+
+    for s in &["x", "X"] {
+        assert_eq!(*r, req(s));
+    }
+
+    let ref r = req("1.*");
+    assert_match_all(r, &["1.2.0", "1.2.1", "1.1.1", "1.3.0"]);
+    assert_match_none(r, &["0.0.9", "1.2.0-pre"]);
+
+    for s in &["1.x", "1.X", "1.*.*"] {
+        assert_eq!(*r, req(s));
+    }
+
+    let ref r = req("1.2.*");
+    assert_match_all(r, &["1.2.0", "1.2.2", "1.2.4"]);
+    assert_match_none(r, &["1.9.0", "1.0.9", "2.0.1", "0.1.3", "1.2.2-pre"]);
+
+    for s in &["1.2.x", "1.2.X"] {
+        assert_eq!(*r, req(s));
+    }
+}
+fn test_something() {
+    let data = [];
+    if let Ok((leftover, stanza)) = read::age_stanza(data) {
+        let mut buf = Vec::with_capacity(data.len());
+        gen(
+            write::age_stanza(stanza.tag, &stanza.args, &stanza.body()),
+            &mut buf,
+        )
+        .expect("can write to Vec");
+        assert_eq!(buf, &data[0..data.len() - leftover.len()]);
+    }
+}
+fn ArrayVec_splice() {
+  let mut av: ArrayVec<[i32; 10]> = Default::default();
+  av.push(1);
+  av.push(2);
+  av.push(3);
+
+  // splice returns the same things as drain
+  assert_eq!(Vec::from_iter(av.clone().splice(.., None)), vec![1, 2, 3]);
+
+  assert_eq!(Vec::from_iter(av.clone().splice(..2, None)), vec![1, 2]);
+  assert_eq!(Vec::from_iter(av.clone().splice(..3, None)), vec![1, 2, 3]);
+
+  assert_eq!(Vec::from_iter(av.clone().splice(..=1, None)), vec![1, 2]);
+  assert_eq!(Vec::from_iter(av.clone().splice(..=2, None)), vec![1, 2, 3]);
+
+  assert_eq!(Vec::from_iter(av.clone().splice(0.., None)), vec![1, 2, 3]);
+  assert_eq!(Vec::from_iter(av.clone().splice(1.., None)), vec![2, 3]);
+
+  assert_eq!(Vec::from_iter(av.clone().splice(0..2, None)), vec![1, 2]);
+  assert_eq!(Vec::from_iter(av.clone().splice(0..3, None)), vec![1, 2, 3]);
+  assert_eq!(Vec::from_iter(av.clone().splice(1..2, None)), vec![2]);
+  assert_eq!(Vec::from_iter(av.clone().splice(1..3, None)), vec![2, 3]);
+
+  assert_eq!(Vec::from_iter(av.clone().splice(0..=1, None)), vec![1, 2]);
+  assert_eq!(Vec::from_iter(av.clone().splice(0..=2, None)), vec![1, 2, 3]);
+  assert_eq!(Vec::from_iter(av.clone().splice(1..=1, None)), vec![2]);
+  assert_eq!(Vec::from_iter(av.clone().splice(1..=2, None)), vec![2, 3]);
+
+  // splice removes the same things as drain
+  let mut av2 = av.clone();
+  av2.splice(.., None);
+  assert_eq!(av2, array_vec![]);
+
+  let mut av2 = av.clone();
+  av2.splice(..2, None);
+  assert_eq!(av2, array_vec![3]);
+
+  let mut av2 = av.clone();
+  av2.splice(..3, None);
+  assert_eq!(av2, array_vec![]);
+
+  let mut av2 = av.clone();
+  av2.splice(..=1, None);
+  assert_eq!(av2, array_vec![3]);
+  let mut av2 = av.clone();
+  av2.splice(..=2, None);
+  assert_eq!(av2, array_vec![]);
+
+  let mut av2 = av.clone();
+  av2.splice(0.., None);
+  assert_eq!(av2, array_vec![]);
+  let mut av2 = av.clone();
+  av2.splice(1.., None);
+  assert_eq!(av2, array_vec![1]);
+
+  let mut av2 = av.clone();
+  av2.splice(0..2, None);
+  assert_eq!(av2, array_vec![3]);
+
+  let mut av2 = av.clone();
+  av2.splice(0..3, None);
+  assert_eq!(av2, array_vec![]);
+  let mut av2 = av.clone();
+  av2.splice(1..2, None);
+  assert_eq!(av2, array_vec![1, 3]);
+
+  let mut av2 = av.clone();
+  av2.splice(1..3, None);
+  assert_eq!(av2, array_vec![1]);
+
+  let mut av2 = av.clone();
+  av2.splice(0..=1, None);
+  assert_eq!(av2, array_vec![3]);
+
+  let mut av2 = av.clone();
+  av2.splice(0..=2, None);
+  assert_eq!(av2, array_vec![]);
+
+  let mut av2 = av.clone();
+  av2.splice(1..=1, None);
+  assert_eq!(av2, array_vec![1, 3]);
+
+  let mut av2 = av.clone();
+  av2.splice(1..=2, None);
+  assert_eq!(av2, array_vec![1]);
+
+  // splice adds the elements correctly
+  let mut av2 = av.clone();
+  av2.splice(.., 4..=6);
+  assert_eq!(av2, array_vec![4, 5, 6]);
+
+  let mut av2 = av.clone();
+  av2.splice(..2, 4..=6);
+  assert_eq!(av2, array_vec![4, 5, 6, 3]);
+
+  let mut av2 = av.clone();
+  av2.splice(..3, 4..=6);
+  assert_eq!(av2, array_vec![4, 5, 6]);
+
+  let mut av2 = av.clone();
+  av2.splice(..=1, 4..=6);
+  assert_eq!(av2, array_vec![4, 5, 6, 3]);
+
+  let mut av2 = av.clone();
+  av2.splice(..=2, 4..=6);
+  assert_eq!(av2, array_vec![4, 5, 6]);
+
+  let mut av2 = av.clone();
+  av2.splice(0.., 4..=6);
+  assert_eq!(av2, array_vec![4, 5, 6]);
+
+  let mut av2 = av.clone();
+  av2.splice(1.., 4..=6);
+  assert_eq!(av2, array_vec![1, 4, 5, 6]);
+
+  let mut av2 = av.clone();
+  av2.splice(0..2, 4..=6);
+  assert_eq!(av2, array_vec![4, 5, 6, 3]);
+
+  let mut av2 = av.clone();
+  av2.splice(0..3, 4..=6);
+  assert_eq!(av2, array_vec![4, 5, 6]);
+
+  let mut av2 = av.clone();
+  av2.splice(1..2, 4..=6);
+  assert_eq!(av2, array_vec![1, 4, 5, 6, 3]);
+
+  let mut av2 = av.clone();
+  av2.splice(1..3, 4..=6);
+  assert_eq!(av2, array_vec![1, 4, 5, 6]);
+
+  let mut av2 = av.clone();
+  av2.splice(0..=1, 4..=6);
+  assert_eq!(av2, array_vec![4, 5, 6, 3]);
+
+  let mut av2 = av.clone();
+  av2.splice(0..=2, 4..=6);
+  assert_eq!(av2, array_vec![4, 5, 6]);
+
+  let mut av2 = av.clone();
+  av2.splice(1..=1, 4..=6);
+  assert_eq!(av2, array_vec![1, 4, 5, 6, 3]);
+
+  let mut av2 = av.clone();
+  av2.splice(1..=2, 4..=6);
+  assert_eq!(av2, array_vec![1, 4, 5, 6]);
+
+  // splice adds the elements correctly when the replacement is smaller
+  let mut av2 = av.clone();
+  av2.splice(.., Some(4));
+  assert_eq!(av2, array_vec![4]);
+
+  let mut av2 = av.clone();
+  av2.splice(..2, Some(4));
+  assert_eq!(av2, array_vec![4, 3]);
+
+  let mut av2 = av.clone();
+  av2.splice(1.., Some(4));
+  assert_eq!(av2, array_vec![1, 4]);
+
+  let mut av2 = av.clone();
+  av2.splice(1..=1, Some(4));
+  assert_eq!(av2, array_vec![1, 4, 3]);
+}
+fn wrong_store() -> anyhow::Result<()> {
+    let dropped = Arc::new(AtomicBool::new(false));
+    {
+        let mut store1 = Store::<()>::default();
+        let mut store2 = Store::<()>::default();
+
+        let set = SetOnDrop(dropped.clone());
+        let f1 = Func::wrap(&mut store1, move || {
+            let _ = &set;
+        });
+        let f2 = Func::wrap(&mut store2, move || Some(f1.clone()));
+        assert!(f2.call(&mut store2, &[], &mut []).is_err());
+    }
+    assert!(dropped.load(SeqCst));
+
+    return Ok(());
+
+    struct SetOnDrop(Arc<AtomicBool>);
+
+    impl Drop for SetOnDrop {
+        fn drop(&mut self) {
+            self.0.store(true, SeqCst);
+        }
+    }
+}
+fn test_escaped_content() {
+    let mut r = Reader::from_str("<a>&lt;test&gt;</a>");
+    r.trim_text(true);
+    next_eq!(r, Start, b"a");
+    match r.read_event() {
+        Ok(Text(e)) => {
+            assert_eq!(
+                &*e,
+                b"&lt;test&gt;",
+                "content unexpected: expecting '&lt;test&gt;', got '{:?}'",
+                from_utf8(&e)
+            );
+            match e.unescape() {
+                Ok(c) => assert_eq!(c, "<test>"),
+                Err(e) => panic!(
+                    "cannot escape content at position {}: {:?}",
+                    r.buffer_position(),
+                    e
+                ),
+            }
+        }
+        Ok(e) => panic!("Expecting text event, got {:?}", e),
+        Err(e) => panic!(
+            "Cannot get next event at position {}: {:?}",
+            r.buffer_position(),
+            e
+        ),
+    }
+    next_eq!(r, End, b"a");
+}

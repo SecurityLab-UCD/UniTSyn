@@ -1,0 +1,234 @@
+fn name() {
+  assert_eq!(
+    CommandBuilder::new("parse a").run_and_deserialize_output::<Output>(),
+    Output {
+      object: Object::Integer(2099999997689999),
+    }
+  );
+}
+fn command_not_found() {
+  let tmp = tempdir();
+
+  fs::write(tmp.path().join("justfile"), "").unwrap();
+
+  let output = Command::new(executable_path("just"))
+    .args(["--command", "asdfasdfasdfasdfadfsadsfadsf", "bar"])
+    .output()
+    .unwrap();
+
+  assert!(str::from_utf8(&output.stderr)
+    .unwrap()
+    .starts_with("error: Failed to invoke `asdfasdfasdfasdfadfsadsfadsf` `bar`:"));
+
+  assert!(!output.status.success());
+}
+fn lower_n_mask_test() {
+    assert_eq!(lower_n_mask(0u64), 0b0);
+    assert_eq!(lower_n_mask(1u64), 0b1);
+    assert_eq!(lower_n_mask(2u64), 0b11);
+    assert_eq!(lower_n_mask(10u64), 0b1111111111);
+    assert_eq!(lower_n_mask(32u64), 0b11111111111111111111111111111111);
+}
+fn server_complete_io_for_handshake_eof() {
+    let (_, mut server) = make_pair(KeyType::Rsa);
+    let mut input = io::Cursor::new(Vec::new());
+
+    assert!(server.is_handshaking());
+    let err = server
+        .complete_io(&mut input)
+        .unwrap_err();
+    assert_eq!(io::ErrorKind::UnexpectedEof, err.kind());
+}
+fn current_dir() {
+  let tmp = tempdir();
+
+  let output = Command::new(executable_path("just"))
+    .current_dir(tmp.path())
+    .arg("--init")
+    .output()
+    .unwrap();
+
+  assert!(output.status.success());
+
+  assert_eq!(
+    fs::read_to_string(tmp.path().join("justfile")).unwrap(),
+    EXPECTED
+  );
+}
+fn valid_version_is_release() {
+  assert_eq!(
+    stdout("refs/tags/0.0.0"),
+    "::set-output name=value::release\n"
+  );
+}
+fn write_error() {
+  let tempdir = temptree! {
+    justfile: "x    :=    'hello'   ",
+  };
+
+  let test = Test::with_tempdir(tempdir)
+    .no_justfile()
+    .args(["--fmt", "--unstable"])
+    .status(EXIT_FAILURE)
+    .stderr_regex(if cfg!(windows) {
+      r"error: Failed to write justfile to `.*`: Access is denied. \(os error 5\)\n"
+    } else {
+      r"error: Failed to write justfile to `.*`: Permission denied \(os error 13\)\n"
+    });
+
+  let justfile_path = test.justfile_path();
+
+  ("chmod", "400", &justfile_path).run();
+
+  let _tempdir = test.run();
+
+  assert_eq!(
+    fs::read_to_string(&justfile_path).unwrap(),
+    "x    :=    'hello'   "
+  );
+}
+fn client_respects_buffer_limit_pre_handshake_with_vectored_write() {
+    let (mut client, mut server) = make_pair(KeyType::Rsa);
+
+    client.set_buffer_limit(Some(32));
+
+    assert_eq!(
+        client
+            .writer()
+            .write_vectored(&[
+                IoSlice::new(b"01234567890123456789"),
+                IoSlice::new(b"01234567890123456789")
+            ])
+            .unwrap(),
+        32
+    );
+
+    do_handshake(&mut client, &mut server);
+    transfer(&mut client, &mut server);
+    server.process_new_packets().unwrap();
+
+    check_read(&mut server.reader(), b"01234567890123456789012345678901");
+}
+fn client_complete_io_for_handshake() {
+    let (mut client, mut server) = make_pair(KeyType::Rsa);
+
+    assert!(client.is_handshaking());
+    let (rdlen, wrlen) = client
+        .complete_io(&mut OtherSession::new(&mut server))
+        .unwrap();
+    assert!(rdlen > 0 && wrlen > 0);
+    assert!(!client.is_handshaking());
+    assert!(!client.wants_write());
+}
+fn exercise_key_log_file_for_server() {
+    serialized(|| {
+        let mut server_config = make_server_config(KeyType::Rsa);
+
+        env::set_var("SSLKEYLOGFILE", "./sslkeylogfile.txt");
+        server_config.key_log = Arc::new(rustls::KeyLogFile::new());
+
+        let server_config = Arc::new(server_config);
+
+        for version in rustls::ALL_VERSIONS {
+            let client_config = make_client_config_with_versions(KeyType::Rsa, &[version]);
+            let (mut client, mut server) =
+                make_pair_for_arc_configs(&Arc::new(client_config), &server_config);
+
+            assert_eq!(5, client.writer().write(b"hello").unwrap());
+
+            do_handshake(&mut client, &mut server);
+            transfer(&mut client, &mut server);
+            server.process_new_packets().unwrap();
+        }
+    })
+}
+fn nth_bit_test() {
+    assert_eq!(nth_bit(0u64), 0b1);
+    assert_eq!(nth_bit(1u64), 0b10);
+    assert_eq!(nth_bit(2u64), 0b100);
+    assert_eq!(nth_bit(10u64), 0b10000000000);
+    assert_eq!(nth_bit(31u64), 0b10000000000000000000000000000000);
+}
+fn server_complete_io_for_handshake() {
+    for kt in ALL_KEY_TYPES.iter() {
+        let (mut client, mut server) = make_pair(*kt);
+
+        assert!(server.is_handshaking());
+        let (rdlen, wrlen) = server
+            .complete_io(&mut OtherSession::new(&mut client))
+            .unwrap();
+        assert!(rdlen > 0 && wrlen > 0);
+        assert!(!server.is_handshaking());
+        assert!(!server.wants_write());
+    }
+}
+fn iadd_small_test() {
+    // Overflow check (single)
+    // This should set all the internal data values to 0, the top
+    // value to (1<<31), and the bottom value to (4>>1).
+    // This is because the max_value + 1 leads to all 0s, we set the
+    // topmost bit to 1.
+    let mut x = Bigint {
+        data: from_u32(&[4294967295]),
+    };
+    x.iadd_small(5);
+    assert_eq!(x.data, from_u32(&[4, 1]));
+
+    // No overflow, single value
+    let mut x = Bigint {
+        data: from_u32(&[5]),
+    };
+    x.iadd_small(7);
+    assert_eq!(x.data, from_u32(&[12]));
+
+    // Single carry, internal overflow
+    let mut x = Bigint::from_u64(0x80000000FFFFFFFF);
+    x.iadd_small(7);
+    assert_eq!(x.data, from_u32(&[6, 0x80000001]));
+
+    // Double carry, overflow
+    let mut x = Bigint::from_u64(0xFFFFFFFFFFFFFFFF);
+    x.iadd_small(7);
+    assert_eq!(x.data, from_u32(&[6, 0, 1]));
+}
+fn test_serialize_unsized_value_to_raw_value() {
+    assert_eq!(
+        serde_json::value::to_raw_value("foobar").unwrap().get(),
+        r#""foobar""#,
+    );
+}
+fn test_raw_value_in_map_key() {
+    #[derive(RefCast)]
+    #[repr(transparent)]
+    struct RawMapKey(RawValue);
+
+    impl<'de> Deserialize<'de> for &'de RawMapKey {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            let raw_value = <&RawValue>::deserialize(deserializer)?;
+            Ok(RawMapKey::ref_cast(raw_value))
+        }
+    }
+
+    impl PartialEq for RawMapKey {
+        fn eq(&self, other: &Self) -> bool {
+            self.0.get() == other.0.get()
+        }
+    }
+
+    impl Eq for RawMapKey {}
+
+    impl Hash for RawMapKey {
+        fn hash<H: Hasher>(&self, hasher: &mut H) {
+            self.0.get().hash(hasher);
+        }
+    }
+
+    let map_from_str: HashMap<&RawMapKey, &RawValue> =
+        serde_json::from_str(r#" {"\\k":"\\v"} "#).unwrap();
+    let (map_k, map_v) = map_from_str.into_iter().next().unwrap();
+    assert_eq!("\"\\\\k\"", map_k.0.get());
+    assert_eq!("\"\\\\v\"", map_v.get());
+}

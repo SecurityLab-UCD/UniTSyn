@@ -1,0 +1,602 @@
+fn filter_on_array_literal_works() {
+    let mut context = Context::new();
+    let i: Option<usize> = None;
+    context.insert("existing", "hello");
+    context.insert("null", &i);
+
+    let inputs = vec![
+        (r#"{{ [1, 2, 3] | length }}"#, "3"),
+        (r#"{% set a = [1, 2, 3] | length %}{{ a }}"#, "3"),
+        (r#"{% for a in [1, 2, 3] | slice(start=1) %}{{ a }}{% endfor %}"#, "23"),
+    ];
+
+    for (input, expected) in inputs {
+        println!("{:?} -> {:?}", input, expected);
+        assert_eq!(render_template(input, &context).unwrap(), expected);
+    }
+}
+fn test_create_multi() {
+    let io_loop = Runtime::new().unwrap();
+    let ((mut client, bg), origin) = io_loop.block_on(create_sig0_ready_client());
+    hickory_proto::spawn_bg(&io_loop, bg);
+
+    // create a record
+    let mut record = Record::with(
+        Name::from_str("new.example.com").unwrap(),
+        RecordType::A,
+        Duration::minutes(5).whole_seconds() as u32,
+    );
+    record.set_data(Some(RData::A(A::new(100, 10, 100, 10))));
+    let record = record;
+
+    let mut record2 = record.clone();
+    record2.set_data(Some(RData::A(A::new(100, 10, 100, 11))));
+    let record2 = record2;
+
+    let mut rrset = RecordSet::from(record.clone());
+    rrset.insert(record2.clone(), 0);
+    let rrset = rrset;
+
+    let result = io_loop
+        .block_on(client.create(rrset.clone(), origin.clone()))
+        .expect("create failed");
+    assert_eq!(result.response_code(), ResponseCode::NoError);
+    let result = io_loop
+        .block_on(client.query(
+            record.name().clone(),
+            record.dns_class(),
+            record.record_type(),
+        ))
+        .expect("query failed");
+    assert_eq!(result.response_code(), ResponseCode::NoError);
+    assert_eq!(result.answers().len(), 2);
+
+    assert!(result.answers().iter().any(|rr| *rr == record));
+    assert!(result.answers().iter().any(|rr| *rr == record2));
+
+    // trying to create again should error
+    // TODO: it would be cool to make this
+    let result = io_loop
+        .block_on(client.create(rrset, origin.clone()))
+        .expect("create failed");
+    assert_eq!(result.response_code(), ResponseCode::YXRRSet);
+
+    // will fail if already set and not the same value.
+    let mut record = record;
+    record.set_data(Some(RData::A(A::new(101, 11, 101, 12))));
+
+    let result = io_loop
+        .block_on(client.create(record, origin))
+        .expect("create failed");
+    assert_eq!(result.response_code(), ResponseCode::YXRRSet);
+}
+fn test_lookup_ipv4_like() {
+    let authority = create_ip_like_example();
+    let mut catalog = Catalog::new();
+    catalog.upsert(authority.origin().clone(), Box::new(Arc::new(authority)));
+
+    let io_loop = Runtime::new().unwrap();
+    let (stream, sender) = TestClientStream::new(Arc::new(StdMutex::new(catalog)));
+    let dns_conn = DnsMultiplexer::new(stream, sender, NoopMessageFinalizer::new());
+
+    let client = DnsExchange::connect::<_, _, TokioTime>(dns_conn);
+    let (client, bg) = io_loop.block_on(client).expect("client connect failed");
+    hickory_proto::spawn_bg(&io_loop, bg);
+
+    let lookup = LookupIpFuture::lookup(
+        vec![Name::from_str("1.2.3.4.example.com.").unwrap()],
+        LookupIpStrategy::default(),
+        CachingClient::new(0, client, false),
+        Default::default(),
+        Some(Arc::new(Hosts::default())),
+        Some(RData::A(A::new(1, 2, 3, 4))),
+    );
+    let lookup = io_loop.block_on(lookup).unwrap();
+
+    assert_eq!(
+        lookup.iter().next().unwrap(),
+        Ipv4Addr::new(198, 51, 100, 35)
+    );
+}
+fn escaping_happens_at_the_end() {
+    let inputs = vec![
+        #[cfg(feature = "builtins")]
+        ("{{ url | urlencode | safe }}", "https%3A//www.example.org/apples-%26-oranges/"),
+        ("{{ '<html>' }}", "&lt;html&gt;"),
+        ("{{ '<html>' | safe }}", "<html>"),
+        ("{{ 'hello' | safe | replace(from='h', to='&') }}", "&amp;ello"),
+        ("{{ 'hello' | replace(from='h', to='&') | safe }}", "&ello"),
+    ];
+
+    for (input, expected) in inputs {
+        let mut context = Context::new();
+        context.insert("url", "https://www.example.org/apples-&-oranges/");
+        assert_eq!(render_template(input, &context).unwrap(), expected);
+    }
+}
+async fn test_catalog_lookup_soa() {
+    let example = create_example();
+    let test = create_test();
+    let origin = example.origin().clone();
+    let test_origin = test.origin().clone();
+
+    let mut catalog: Catalog = Catalog::new();
+    catalog.upsert(origin.clone(), Box::new(Arc::new(example)));
+    catalog.upsert(test_origin, Box::new(Arc::new(test)));
+
+    let mut question: Message = Message::new();
+
+    let mut query: Query = Query::new();
+    query.set_name(origin.into());
+    query.set_query_type(RecordType::SOA);
+
+    question.add_query(query);
+
+    // temp request
+    let question_bytes = question.to_bytes().unwrap();
+    let question_req = MessageRequest::from_bytes(&question_bytes).unwrap();
+    let question_req = Request::new(question_req, ([127, 0, 0, 1], 5553).into(), Protocol::Udp);
+
+    let response_handler = TestResponseHandler::new();
+    catalog
+        .lookup(&question_req, None, response_handler.clone())
+        .await;
+    let result = response_handler.into_message().await;
+
+    assert_eq!(result.response_code(), ResponseCode::NoError);
+    assert_eq!(result.message_type(), MessageType::Response);
+    assert!(result.header().authoritative());
+
+    let answers: &[Record] = result.answers();
+
+    assert!(!answers.is_empty());
+    assert_eq!(answers.first().unwrap().record_type(), RecordType::SOA);
+    assert_eq!(
+        answers.first().unwrap().data().unwrap(),
+        &RData::SOA(SOA::new(
+            Name::parse("sns.dns.icann.org.", None).unwrap(),
+            Name::parse("noc.dns.icann.org.", None).unwrap(),
+            2015082403,
+            7200,
+            3600,
+            1209600,
+            3600,
+        ))
+    );
+
+    // assert SOA requests get NS records
+    let mut ns: Vec<Record> = result.name_servers().to_vec();
+    ns.sort();
+
+    assert_eq!(ns.len(), 2);
+    assert_eq!(ns.first().unwrap().record_type(), RecordType::NS);
+    assert_eq!(
+        ns.first().unwrap().data().unwrap(),
+        &RData::NS(NS(Name::parse("a.iana-servers.net.", None).unwrap()))
+    );
+    assert_eq!(ns.last().unwrap().record_type(), RecordType::NS);
+    assert_eq!(
+        ns.last().unwrap().data().unwrap(),
+        &RData::NS(NS(Name::parse("b.iana-servers.net.", None).unwrap()))
+    );
+}
+fn test_server_form_error_on_multiple_queries() {
+    let runtime = Runtime::new().expect("failed to create Tokio Runtime");
+    let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 0));
+    let udp_socket = runtime.block_on(UdpSocket::bind(&addr)).unwrap();
+
+    let ipaddr = udp_socket.local_addr().unwrap();
+    println!("udp_socket on port: {ipaddr}");
+    let server_continue = Arc::new(AtomicBool::new(true));
+    let server_continue2 = server_continue.clone();
+
+    let server_thread = thread::Builder::new()
+        .name("test_server:udp:server".to_string())
+        .spawn(move || server_thread_udp(runtime, udp_socket, server_continue2))
+        .unwrap();
+
+    let conn = UdpClientConnection::new(ipaddr).unwrap();
+    let client = SyncClient::new(conn);
+
+    // build the message
+    let query_a = Query::query(Name::from_str("www.example.com.").unwrap(), RecordType::A);
+    let query_aaaa = Query::query(
+        Name::from_str("www.example.com.").unwrap(),
+        RecordType::AAAA,
+    );
+    let mut message: Message = Message::new();
+    message
+        .add_query(query_a)
+        .add_query(query_aaaa)
+        .set_message_type(MessageType::Query)
+        .set_op_code(OpCode::Query)
+        .set_recursion_desired(true);
+
+    let mut client_result = client.send(message);
+
+    assert_eq!(client_result.len(), 1);
+    let client_result = client_result
+        .pop()
+        .expect("there should be one response")
+        .expect("should have been a successful network request");
+
+    assert_eq!(client_result.response_code(), ResponseCode::FormErr);
+
+    server_continue.store(false, Ordering::Relaxed);
+    server_thread.join().unwrap();
+}
+fn test_new_journal() {
+    let conn = Connection::open_in_memory().expect("could not create in memory DB");
+    assert_eq!(
+        Journal::new(conn).expect("new Journal").schema_version(),
+        -1
+    );
+}
+fn render_variable_block_ident() {
+    let mut context = Context::new();
+    context.insert("name", &"john");
+    context.insert("malicious", &"<html>");
+    context.insert("a", &2);
+    context.insert("b", &3);
+    context.insert("numbers", &vec![1, 2, 3]);
+    context.insert("tuple_list", &vec![(1, 2, 3), (1, 2, 3)]);
+    context.insert("review", &Review::new());
+    context.insert("with_newline", &"Animal Alphabets\nB is for Bee-Eater");
+
+    let inputs = vec![
+        ("{{ name }}", "john"),
+        ("{{ malicious }}", "&lt;html&gt;"),
+        ("{{ \"<html>\" }}", "&lt;html&gt;"),
+        ("{{ \" html \" | upper | trim }}", "HTML"),
+        ("{{ 'html' }}", "html"),
+        ("{{ `html` }}", "html"),
+        // https://github.com/Keats/tera/issues/273
+        (
+            r#"{{ 'hangar new "Will Smoth <will_s@example.com>"' | safe }}"#,
+            r#"hangar new "Will Smoth <will_s@example.com>""#,
+        ),
+        ("{{ malicious | safe }}", "<html>"),
+        ("{{ malicious | upper }}", "&lt;HTML&gt;"),
+        ("{{ malicious | upper | safe }}", "<HTML>"),
+        ("{{ malicious | safe | upper }}", "&lt;HTML&gt;"),
+        ("{{ review | length }}", "2"),
+        ("{{ review.paragraphs.1 }}", "B"),
+        ("{{ numbers }}", "[1, 2, 3]"),
+        ("{{ numbers.0 }}", "1"),
+        ("{{ tuple_list.1.1 }}", "2"),
+        ("{{ name and true }}", "true"),
+        ("{{ name | length }}", "4"),
+        ("{{ name is defined }}", "true"),
+        ("{{ not name is defined }}", "false"),
+        ("{{ name is not defined }}", "false"),
+        ("{{ not name is not defined }}", "true"),
+        ("{{ a is odd }}", "false"),
+        ("{{ a is odd or b is odd  }}", "true"),
+        ("{{ range(start=1, end=4) }}", "[1, 2, 3]"),
+        ("{{ a + b }}", "5"),
+        ("{{ a + 1.5 }}", "3.5"),
+        ("{{ 1 + 1 + 1 }}", "3"),
+        ("{{ 2 - 2 - 1 }}", "-1"),
+        ("{{ 1 - 1 + 1 }}", "1"),
+        ("{{ 1 + get_number() }}", "11"),
+        ("{{ get_number() + 1 }}", "11"),
+        ("{{ (1.9 + a) | round }}", "4"),
+        ("{{ 1.9 + a | round }}", "4"),
+        ("{{ numbers | length - 1 }}", "2"),
+        ("{{ 1.9 + a | round - 1 }}", "3"),
+        ("{{ 1.9 + a | round - 1.8 + a | round }}", "0"),
+        ("{{ 1.9 + a | round - 1.8 + a | round - 1 }}", "-1"),
+        ("{{ 4 + 40 / (2 + 8) / 4 }}", "5"),
+        ("{{ ( ( 2 ) + ( 2 ) ) }}", "4"),
+        ("{{ ( ( 4 / 1 ) + ( 2 / 1 ) ) }}", "6"),
+        ("{{ ( ( 4 + 2 ) / ( 2 + 1 ) ) }}", "2"),
+        // https://github.com/Keats/tera/issues/435
+        (
+            "{{ with_newline | replace(from='\n', to='<br>') | safe }}",
+            "Animal Alphabets<br>B is for Bee-Eater",
+        ),
+    ];
+
+    for (input, expected) in inputs {
+        println!("{:?} -> {:?}", input, expected);
+        assert_eq!(render_template(input, &context).unwrap(), expected);
+    }
+}
+fn test_mock_lookup() {
+    let resp_query = Query::query(Name::from_str("www.example.com.").unwrap(), RecordType::A);
+    let v4_record = v4_record(
+        Name::from_str("www.example.com.").unwrap(),
+        Ipv4Addr::new(93, 184, 216, 34),
+    );
+    let message = message(resp_query, vec![v4_record], vec![], vec![]);
+    let client: MockClientHandle<_, ResolveError> =
+        MockClientHandle::mock(vec![Ok(DnsResponse::from_message(message).unwrap())]);
+
+    let lookup = LookupFuture::lookup(
+        vec![Name::from_str("www.example.com.").unwrap()],
+        RecordType::A,
+        Default::default(),
+        CachingClient::new(0, client, false),
+    );
+
+    let io_loop = Runtime::new().unwrap();
+    let lookup = io_loop.block_on(lookup).unwrap();
+
+    assert_eq!(
+        *lookup.iter().next().unwrap(),
+        RData::A(A::new(93, 184, 216, 34))
+    );
+}
+fn test_append_multi() {
+    let io_loop = Runtime::new().unwrap();
+    let ((mut client, bg), origin) = io_loop.block_on(create_sig0_ready_client());
+    hickory_proto::spawn_bg(&io_loop, bg);
+
+    // append a record
+    let mut record = Record::with(
+        Name::from_str("new.example.com").unwrap(),
+        RecordType::A,
+        Duration::minutes(5).whole_seconds() as u32,
+    );
+    record.set_data(Some(RData::A(A::new(100, 10, 100, 10))));
+
+    // first check the must_exist option
+    let result = io_loop
+        .block_on(client.append(record.clone(), origin.clone(), true))
+        .expect("append failed");
+    assert_eq!(result.response_code(), ResponseCode::NXRRSet);
+
+    // next append to a non-existent RRset
+    let result = io_loop
+        .block_on(client.append(record.clone(), origin.clone(), false))
+        .expect("append failed");
+    assert_eq!(result.response_code(), ResponseCode::NoError);
+
+    // verify record contents
+    let result = io_loop
+        .block_on(client.query(
+            record.name().clone(),
+            record.dns_class(),
+            record.record_type(),
+        ))
+        .expect("query failed");
+    assert_eq!(result.response_code(), ResponseCode::NoError);
+    assert_eq!(result.answers().len(), 1);
+    assert_eq!(result.answers()[0], record);
+
+    // will fail if already set and not the same value.
+    let mut record2 = record.clone();
+    record2.set_data(Some(RData::A(A::new(101, 11, 101, 11))));
+    let mut record3 = record.clone();
+    record3.set_data(Some(RData::A(A::new(101, 11, 101, 12))));
+
+    // build the append set
+    let mut rrset = RecordSet::from(record2.clone());
+    rrset.insert(record3.clone(), 0);
+
+    let result = io_loop
+        .block_on(client.append(rrset, origin.clone(), true))
+        .expect("create failed");
+    assert_eq!(result.response_code(), ResponseCode::NoError);
+
+    let result = io_loop
+        .block_on(client.query(
+            record.name().clone(),
+            record.dns_class(),
+            record.record_type(),
+        ))
+        .expect("query failed");
+    assert_eq!(result.response_code(), ResponseCode::NoError);
+    assert_eq!(result.answers().len(), 3);
+
+    assert!(result.answers().iter().any(|rr| *rr == record));
+    assert!(result.answers().iter().any(|rr| *rr == record2));
+    assert!(result.answers().iter().any(|rr| *rr == record3));
+
+    // show that appending the same thing again is ok, but doesn't add any records
+    // TODO: technically this is a test for the Server, not client...
+    let result = io_loop
+        .block_on(client.append(record.clone(), origin, true))
+        .expect("create failed");
+    assert_eq!(result.response_code(), ResponseCode::NoError);
+
+    let result = io_loop
+        .block_on(client.query(
+            record.name().clone(),
+            record.dns_class(),
+            record.record_type(),
+        ))
+        .expect("query failed");
+    assert_eq!(result.response_code(), ResponseCode::NoError);
+    assert_eq!(result.answers().len(), 3);
+}
+fn test_datagram_fails_to_stream() {
+    // Lookup to UDP should fail, and then the query should be retried on TCP because
+    // `try_tcp_on_error` is set to true.
+
+    let query = Query::query(Name::from_str("www.example.com.").unwrap(), RecordType::A);
+
+    let tcp_record = v4_record(query.name().clone(), Ipv4Addr::new(127, 0, 0, 2));
+    let udp_message: Result<DnsResponse, _> = Err(ResolveError::from("Forced Testing Error"));
+
+    let tcp_message = message(query.clone(), vec![tcp_record.clone()], vec![], vec![]);
+
+    let udp_nameserver = mock_nameserver(vec![udp_message], Default::default());
+    let tcp_nameserver = mock_nameserver(
+        vec![Ok(DnsResponse::from_message(tcp_message).unwrap())],
+        Default::default(),
+    );
+
+    let mut options = ResolverOpts::default();
+    options.try_tcp_on_error = true;
+    let pool = mock_nameserver_pool(vec![udp_nameserver], vec![tcp_nameserver], None, options);
+
+    let request = message(query, vec![], vec![], vec![]);
+    let future = pool.send(request).first_answer();
+    let response = block_on(future).unwrap();
+    assert_eq!(response.answers()[0], tcp_record);
+}
+fn add_set_values_in_context() {
+    let mut context = Context::new();
+    context.insert("my_var", &"hey");
+    context.insert("malicious", &"<html>");
+    context.insert("admin", &true);
+    context.insert("num", &1);
+
+    let inputs = vec![
+        ("{% set i = 1 %}{{ i }}", "1"),
+        ("{% set i = 1 + 2 %}{{ i }}", "3"),
+        (r#"{% set i = "hey" %}{{ i }}"#, "hey"),
+        (r#"{% set i = "<html>" %}{{ i | safe }}"#, "<html>"),
+        (r#"{% set i = "<html>" %}{{ i }}"#, "&lt;html&gt;"),
+        ("{% set i = my_var %}{{ i }}", "hey"),
+        ("{% set i = malicious %}{{ i | safe }}", "<html>"),
+        ("{% set i = malicious %}{{ i }}", "&lt;html&gt;"),
+        ("{% set i = my_var | upper %}{{ i }}", "HEY"),
+        ("{% set i = range(end=3) %}{{ i }}", "[0, 1, 2]"),
+        ("{% set i = admin or true %}{{ i }}", "true"),
+        ("{% set i = admin and num > 0 %}{{ i }}", "true"),
+        ("{% set i = 0 / 0 %}{{ i }}", "NaN"),
+        ("{% set i = [1,2] %}{{ i }}", "[1, 2]"),
+    ];
+
+    for (input, expected) in inputs {
+        println!("{:?} -> {:?}", input, expected);
+        assert_eq!(render_template(input, &context).unwrap(), expected);
+    }
+}
+fn default_options() {
+    assert_cmd_snapshot!(Command::new(get_cargo_bin(BIN_NAME))
+        .args(["format", "--isolated", "--stdin-filename", "test.py"])
+        .arg("-")
+        .pass_stdin(r#"
+def foo(arg1, arg2,):
+    print('Should\'t change quotes')
+
+
+if condition:
+
+    print('Hy "Micha"') # Should not change quotes
+
+"#), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+    def foo(
+        arg1,
+        arg2,
+    ):
+        print("Should't change quotes")
+
+
+    if condition:
+        print('Hy "Micha"')  # Should not change quotes
+
+    ----- stderr -----
+    "###);
+}
+fn can_remove_whitespace_include() {
+    let mut context = Context::new();
+    context.insert("numbers", &vec![1, 2, 3]);
+
+    let inputs = vec![
+        (r#"Hi {%- include "include" -%} "#, "HiIncluded"),
+        (r#"Hi {% include "include" -%} "#, "Hi Included"),
+        (r#"Hi {% include "include" %} "#, "Hi Included "),
+    ];
+
+    for (input, expected) in inputs {
+        let mut tera = Tera::default();
+        tera.add_raw_templates(vec![("include", "Included"), ("tpl", input)]).unwrap();
+        assert_eq!(tera.render("tpl", &context).unwrap(), expected);
+    }
+}
+fn render_for() {
+    let mut context = Context::new();
+    let mut map = BTreeMap::new();
+    map.insert("name", "bob");
+    map.insert("age", "18");
+
+    context.insert("data", &vec![1, 2, 3]);
+    context.insert("notes", &vec![1, 2, 3]);
+    context.insert("vectors", &vec![vec![0, 3, 6], vec![1, 4, 7]]);
+    context.insert("vectors_some_empty", &vec![vec![0, 3, 6], vec![], vec![1, 4, 7]]);
+    context.insert("map", &map);
+    context.insert("truthy", &2);
+
+    let inputs = vec![
+        ("{% for i in data %}{{i}}{% endfor %}", "123"),
+        ("{% for key, val in map %}{{key}}:{{val}} {% endfor %}", "age:18 name:bob "),
+        (
+            "{% for i in data %}{{loop.index}}{{loop.index0}}{{loop.first}}{{loop.last}}{% endfor %}",
+            "10truefalse21falsefalse32falsetrue"
+        ),
+        (
+            "{% for vector in vectors %}{% for j in vector %}{{ j }}{% endfor %}{% endfor %}",
+            "036147"
+        ),
+        (
+            "{% for vector in vectors_some_empty %}{% for j in vector %}{{ j }}{% endfor %}{% endfor %}",
+            "036147"
+        ),
+        (
+            "{% for val in data %}{% if val == truthy %}on{% else %}off{% endif %}{% endfor %}",
+            "offonoff"
+        ),
+        ("{% for i in range(end=5) %}{{i}}{% endfor %}", "01234"),
+        ("{% for i in range(end=5) | reverse %}{{i}}{% endfor %}", "43210"),
+        (
+            "{% set looped = 0 %}{% for i in range(end=5) %}{% set looped = i %}{{looped}}{% endfor%}{{looped}}",
+            "012340"
+        ),
+        // https://github.com/Keats/tera/issues/184
+        ("{% for note in notes %}{{ note }}{% endfor %}", "123"),
+        ("{% for note in notes | reverse %}{{ note }}{% endfor %}", "321"),
+        ("{% for v in vectors %}{{ v.0 }}{% endfor %}", "01"),
+        // Loop control (`break` and `continue`)
+        // https://github.com/Keats/tera/issues/267
+        (
+            "{% for i in data %}{{ i }}{% if i == 2 %}{% break %}{% endif %}{% endfor %}",
+            "12"
+        ),
+        (
+            "{% for i in data %}{% if i == 2 %}{% continue %}{% endif %}{{ i }}{% endfor %}",
+            "13"
+        ),
+        (
+            "{% for v in vectors %}{% for i in v %}{% if i == 3 %}{% break %}{% endif %}{{ i }}{% endfor %}{% endfor %}",
+            "0147"
+        ),
+        (
+            "{% for v in vectors %}{% for i in v %}{% if i == 3 %}{% continue %}{% endif %}{{ i }}{% endfor %}{% endfor %}",
+            "06147"
+        ),
+        (
+            "{% for a in [1, true, 1.1, 'hello'] %}{{a}}{% endfor %}",
+            "1true1.1hello"
+        ),
+        // https://github.com/Keats/tera/issues/301
+        (
+            "{% set start = 0 %}{% set end = start + 3 %}{% for i in range(start=start, end=end) %}{{ i }}{% endfor%}",
+            "012"
+        ),
+        // https://github.com/Keats/tera/issues/395
+        (
+            "{% for a in [] %}{{a}}{% else %}hello{% endfor %}",
+            "hello"
+        ),
+        (
+            "{% for a in undefined_variable | default(value=[]) %}{{a}}{% else %}hello{% endfor %}",
+            "hello"
+        ),
+        (
+            "{% for a in [] %}{{a}}{% else %}{% if 1 == 2 %}A{% else %}B{% endif %}{% endfor %}",
+            "B"
+        ),
+    ];
+
+    for (input, expected) in inputs {
+        println!("{:?} -> {:?}", input, expected);
+        assert_eq!(render_template(input, &context).unwrap(), expected);
+    }
+}

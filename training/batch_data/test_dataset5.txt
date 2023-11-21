@@ -1,0 +1,356 @@
+fn test_split_str_prefixed_chunks_by_bytes() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let name = "split_str_prefixed_chunks_by_bytes";
+    RandomFile::new(&at, name).add_bytes(10000);
+    // Important that this is less than 1024 since that's our internal buffer
+    // size. Good to test that we don't overshoot.
+    ucmd.args(&["-b", "1000", name, "b"]).succeeds();
+
+    let glob = Glob::new(&at, ".", r"b[[:alpha:]][[:alpha:]]$");
+    assert_eq!(glob.count(), 10);
+    for filename in glob.collect() {
+        assert_eq!(glob.directory.metadata(&filename).len(), 1000);
+    }
+    assert_eq!(glob.collate(), at.read_bytes(name));
+}
+fn test_normal() {
+    let result = new_ucmd!().run();
+    println!("env::var(CI).is_ok() = {}", env::var("CI").is_ok());
+
+    for (key, value) in env::vars() {
+        println!("{key}: {value}");
+    }
+    if (is_ci() || uucore::os::is_wsl_1()) && result.stderr_str().contains("no login name") {
+        // ToDO: investigate WSL failure
+        // In the CI, some server are failing to return logname.
+        // As seems to be a configuration issue, ignoring it
+        return;
+    }
+
+    result.success();
+    assert!(!result.stdout_str().trim().is_empty());
+}
+fn test_mv_arg_update_older_dest_not_older() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    let old = "test_mv_arg_update_none_file1";
+    let new = "test_mv_arg_update_none_file2";
+    let old_content = "file1 content\n";
+    let new_content = "file2 content\n";
+
+    at.write(old, old_content);
+
+    sleep(Duration::from_secs(1));
+
+    at.write(new, new_content);
+
+    ucmd.arg(old)
+        .arg(new)
+        .arg("--update=older")
+        .succeeds()
+        .no_stderr()
+        .no_stdout();
+
+    assert_eq!(at.read(new), new_content);
+}
+fn test_rm_prompts() {
+    use std::io::Write;
+
+    // Needed for talking with stdin on platforms where CRLF or LF matters
+    const END_OF_LINE: &str = if cfg!(windows) { "\r\n" } else { "\n" };
+
+    let mut answers = [
+        "rm: descend into directory 'a'?",
+        "rm: remove write-protected regular empty file 'a/empty-no-write'?",
+        "rm: remove symbolic link 'a/slink'?",
+        "rm: remove symbolic link 'a/slink-dot'?",
+        "rm: remove write-protected regular file 'a/f-no-write'?",
+        "rm: remove regular empty file 'a/empty'?",
+        "rm: remove directory 'a/b'?",
+        "rm: remove write-protected directory 'a/b-no-write'?",
+        "rm: remove directory 'a'?",
+    ];
+
+    answers.sort();
+
+    let yes = format!("y{END_OF_LINE}");
+
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+
+    at.mkdir("a/");
+
+    let file_1 = "a/empty";
+    let file_2 = "a/empty-no-write";
+    let file_3 = "a/f-no-write";
+
+    at.touch(file_1);
+    at.touch(file_2);
+    at.make_file(file_3)
+        .write_all(b"not-empty")
+        .expect("Couldn't write to a/f-no-write");
+
+    at.symlink_dir("a/empty-f", "a/slink");
+    at.symlink_dir(".", "a/slink-dot");
+
+    let dir_1 = "a/b/";
+    let dir_2 = "a/b-no-write/";
+
+    at.mkdir(dir_1);
+    at.mkdir(dir_2);
+
+    scene
+        .ccmd("chmod")
+        .arg("u-w")
+        .arg(file_3)
+        .arg(dir_2)
+        .arg(file_2)
+        .succeeds();
+
+    let mut child = scene
+        .ucmd()
+        .set_stdin(Stdio::piped())
+        .arg("-ri")
+        .arg("a")
+        .run_no_wait();
+    for _ in 0..9 {
+        child.try_write_in(yes.as_bytes()).unwrap();
+    }
+
+    let result = child.wait().unwrap();
+
+    let mut trimmed_output = Vec::new();
+    for string in result.stderr_str().split("rm: ") {
+        if !string.is_empty() {
+            let trimmed_string = format!("rm: {string}").trim().to_string();
+            trimmed_output.push(trimmed_string);
+        }
+    }
+
+    trimmed_output.sort();
+
+    assert_eq!(trimmed_output.len(), answers.len());
+
+    for (i, checking_string) in trimmed_output.iter().enumerate() {
+        assert_eq!(checking_string, answers[i]);
+    }
+
+    assert!(!at.dir_exists("a"));
+}
+fn test_mv_move_file_into_dir_with_target_arg() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let dir = "test_mv_move_file_into_dir_with_target_arg_dir";
+    let file = "test_mv_move_file_into_dir_with_target_arg_file";
+
+    at.mkdir(dir);
+    at.touch(file);
+
+    ucmd.arg("--target")
+        .arg(dir)
+        .arg(file)
+        .succeeds()
+        .no_stderr();
+
+    assert!(at.file_exists(format!("{dir}/{file}")));
+}
+fn test_relative_recursive() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    at.mkdir("dir");
+    ucmd.args(&["-sr", "dir", "dir/recursive"]).succeeds();
+    assert_eq!(at.resolve_link("dir/recursive"), ".");
+}
+fn test_mv_move_file_into_dir() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let dir = "test_mv_move_file_into_dir_dir";
+    let file = "test_mv_move_file_into_dir_file";
+
+    at.mkdir(dir);
+    at.touch(file);
+
+    ucmd.arg(file).arg(dir).succeeds().no_stderr();
+
+    assert!(at.file_exists(format!("{dir}/{file}")));
+}
+fn test_rm_recursive_multiple() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let dir = "test_rm_recursive_directory";
+    let file_a = "test_rm_recursive_directory/test_rm_recursive_file_a";
+    let file_b = "test_rm_recursive_directory/test_rm_recursive_file_b";
+
+    at.mkdir(dir);
+    at.touch(file_a);
+    at.touch(file_b);
+
+    ucmd.arg("-r")
+        .arg("-r")
+        .arg("-r")
+        .arg(dir)
+        .succeeds()
+        .no_stderr();
+
+    assert!(!at.dir_exists(dir));
+    assert!(!at.file_exists(file_a));
+    assert!(!at.file_exists(file_b));
+}
+fn test_rm_interactive_missing_value() {
+    // `--interactive` is equivalent to `--interactive=always` or `-i`
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    let file1 = "test_rm_interactive_missing_value_file1";
+    let file2 = "test_rm_interactive_missing_value_file2";
+
+    at.touch(file1);
+    at.touch(file2);
+
+    ucmd.arg("--interactive")
+        .arg(file1)
+        .arg(file2)
+        .pipe_in("y\ny")
+        .succeeds();
+
+    assert!(!at.file_exists(file1));
+    assert!(!at.file_exists(file2));
+}
+fn test_rmdir_nonempty_directory_no_parents() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    at.mkdir(DIR);
+    at.touch(DIR_FILE);
+
+    ucmd.arg(DIR)
+        .fails()
+        .stderr_is(format!("rmdir: failed to remove 'dir': {NOT_EMPTY}\n"));
+
+    assert!(at.dir_exists(DIR));
+}
+fn test_mv_arg_update_all_then_none() {
+    // take last if multiple update args are supplied,
+    // update=none wins in this case
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    let old = "test_mv_arg_update_all_then_none_file1";
+    let new = "test_mv_arg_update_all_then_none_file2";
+    let old_content = "old content\n";
+    let new_content = "new content\n";
+
+    at.write(old, old_content);
+
+    sleep(Duration::from_secs(1));
+
+    at.write(new, new_content);
+
+    ucmd.arg(old)
+        .arg(new)
+        .arg("--update=all")
+        .arg("--update=none")
+        .succeeds()
+        .no_stderr()
+        .no_stdout();
+
+    assert_eq!(at.read(new), "new content\n");
+}
+fn test_rm_descend_directory() {
+    // This test descends into each directory and deletes the files and folders inside of them
+    // This test will have the rm process asks 6 question and us answering Y to them will delete all the files and folders
+
+    // Needed for talking with stdin on platforms where CRLF or LF matters
+    const END_OF_LINE: &str = if cfg!(windows) { "\r\n" } else { "\n" };
+
+    let yes = format!("y{END_OF_LINE}");
+
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+
+    let file_1 = "a/at.txt";
+    let file_2 = "a/b/bt.txt";
+
+    at.mkdir_all("a/b/");
+    at.touch(file_1);
+    at.touch(file_2);
+
+    let mut child = scene
+        .ucmd()
+        .set_stdin(Stdio::piped())
+        .arg("-ri")
+        .arg("a")
+        .run_no_wait();
+    child.try_write_in(yes.as_bytes()).unwrap();
+    child.try_write_in(yes.as_bytes()).unwrap();
+    child.try_write_in(yes.as_bytes()).unwrap();
+    child.try_write_in(yes.as_bytes()).unwrap();
+    child.try_write_in(yes.as_bytes()).unwrap();
+    child.try_write_in(yes.as_bytes()).unwrap();
+
+    child.wait().unwrap();
+
+    assert!(!at.dir_exists("a/b"));
+    assert!(!at.dir_exists("a"));
+    assert!(!at.file_exists(file_1));
+    assert!(!at.file_exists(file_2));
+}
+fn test_mv_update_option() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+    let file_a = "test_mv_update_option_file_a";
+    let file_b = "test_mv_update_option_file_b";
+
+    at.touch(file_a);
+    at.touch(file_b);
+    let ts = time::OffsetDateTime::now_utc();
+    let now = FileTime::from_unix_time(ts.unix_timestamp(), ts.nanosecond());
+    let later = FileTime::from_unix_time(ts.unix_timestamp() + 3600, ts.nanosecond());
+    filetime::set_file_times(at.plus_as_string(file_a), now, now).unwrap();
+    filetime::set_file_times(at.plus_as_string(file_b), now, later).unwrap();
+
+    scene.ucmd().arg("--update").arg(file_a).arg(file_b).run();
+
+    assert!(at.file_exists(file_a));
+    assert!(at.file_exists(file_b));
+
+    scene
+        .ucmd()
+        .arg("--update")
+        .arg(file_b)
+        .arg(file_a)
+        .succeeds()
+        .no_stderr();
+
+    assert!(at.file_exists(file_a));
+    assert!(!at.file_exists(file_b));
+}
+fn test_mv_numbered_if_existing_backup_existing() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file_a = "test_mv_backup_numbering_file_a";
+    let file_b = "test_mv_backup_numbering_file_b";
+    let file_b_backup = "test_mv_backup_numbering_file_b.~1~";
+
+    at.touch(file_a);
+    at.touch(file_b);
+    at.touch(file_b_backup);
+    ucmd.arg("--backup=existing")
+        .arg(file_a)
+        .arg(file_b)
+        .succeeds()
+        .no_stderr();
+
+    assert!(at.file_exists(file_b));
+    assert!(at.file_exists(file_b_backup));
+    assert!(at.file_exists(format!("{file_b}.~2~")));
+}
+fn test_mv_backup_numbered() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file_a = "test_mv_backup_numbering_file_a";
+    let file_b = "test_mv_backup_numbering_file_b";
+
+    at.touch(file_a);
+    at.touch(file_b);
+    ucmd.arg("--backup=numbered")
+        .arg(file_a)
+        .arg(file_b)
+        .succeeds()
+        .no_stderr();
+
+    assert!(!at.file_exists(file_a));
+    assert!(at.file_exists(file_b));
+    assert!(at.file_exists(format!("{file_b}.~1~")));
+}

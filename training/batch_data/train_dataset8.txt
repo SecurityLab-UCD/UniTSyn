@@ -1,0 +1,2138 @@
+fn u8_test() {
+    let mut buffer = [b'\x00'; 16];
+    assert_eq!(b"0", 0u8.to_lexical(&mut buffer));
+    assert_eq!(b"1", 1u8.to_lexical(&mut buffer));
+    assert_eq!(b"5", 5u8.to_lexical(&mut buffer));
+    assert_eq!(b"127", 127u8.to_lexical(&mut buffer));
+    assert_eq!(b"128", 128u8.to_lexical(&mut buffer));
+    assert_eq!(b"255", 255u8.to_lexical(&mut buffer));
+    assert_eq!(b"255", (-1i8 as u8).to_lexical(&mut buffer));
+}
+async fn push_request_with_data() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        client
+            .assert_server_handshake_with_settings(frames::settings().max_concurrent_streams(100))
+            .await;
+        client
+            .send_frame(
+                frames::headers(1)
+                    .request("GET", "https://example.com/")
+                    .eos(),
+            )
+            .await;
+        client.recv_frame(frames::headers(1).response(200)).await;
+        client
+            .recv_frame(
+                frames::push_promise(1, 2).request("GET", "https://http2.akamai.com/style.css"),
+            )
+            .await;
+        client.recv_frame(frames::headers(2).response(200)).await;
+        client.recv_frame(frames::data(1, &b""[..]).eos()).await;
+        client.recv_frame(frames::data(2, &b"\x00"[..]).eos()).await;
+    };
+
+    let srv = async move {
+        let mut srv = server::handshake(io).await.expect("handshake");
+        let (req, mut stream) = srv.next().await.unwrap().unwrap();
+
+        assert_eq!(req.method(), &http::Method::GET);
+
+        // Start response to stream 1
+        let mut s1_tx = {
+            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            stream.send_response(rsp, false).unwrap()
+        };
+
+        // Promise stream 2, push response headers and send data
+        {
+            let pushed_req = http::Request::builder()
+                .method("GET")
+                .uri("https://http2.akamai.com/style.css")
+                .body(())
+                .unwrap();
+            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            let mut push_tx = stream
+                .push_request(pushed_req)
+                .unwrap()
+                .send_response(rsp, false)
+                .unwrap();
+            // Make sure nothing can queue our pushed stream before we have the PushPromise sent
+            push_tx.send_data(vec![0; 1].into(), true).unwrap();
+            push_tx.reserve_capacity(1);
+        }
+
+        // End response for stream 1
+        s1_tx.send_data(vec![0; 0].into(), true).unwrap();
+
+        assert!(srv.next().await.is_none());
+    };
+
+    join(client, srv).await;
+}
+fn incorrect_description_file_1() {
+    let f = super::fixture().join("incorrect-package");
+    let resolution = Resolver::default().resolve(f.join("pack1"), ".");
+    let error = ResolveError::JSON(JSONError {
+        path: f.join("pack1/package.json"),
+        message: String::from("EOF while parsing a value at line 3 column 0"),
+        line: 3,
+        column: 0,
+    });
+    assert_eq!(resolution, Err(error));
+}
+async fn read_data_no_padding() {
+    let mut codec = raw_codec! {
+        read => [
+            0, 0, 5, 0, 0, 0, 0, 0, 1,
+            "hello",
+        ];
+    };
+
+    let data = poll_frame!(Data, codec);
+    assert_eq!(data.stream_id(), 1);
+    assert_eq!(data.payload(), &b"hello"[..]);
+    assert!(!data.is_end_stream());
+
+    assert_closed!(codec);
+}
+fn resolve_to_context() {
+    let f = super::fixture();
+    let resolver =
+        Resolver::new(ResolveOptions { resolve_to_context: true, ..ResolveOptions::default() });
+
+    #[rustfmt::skip]
+    let data = [
+        ("context for fixtures", f.clone(), "./", f.clone()),
+        ("context for fixtures/lib", f.clone(), "./lib", f.join("lib")),
+        ("context for fixtures with ..", f.clone(), "./lib/../../fixtures/./lib/..", f.clone()),
+        ("context for fixtures with query", f.clone(), "./?query", f.clone().with_file_name("fixtures?query")),
+    ];
+
+    for (comment, path, request, expected) in data {
+        let resolved_path = resolver.resolve(&path, request).map(|r| r.full_path());
+        assert_eq!(resolved_path, Ok(expected), "{comment} {path:?} {request}");
+    }
+}
+fn from_f32_test() {
+    assert_eq!(
+        compact::from_float(0.0f32),
+        ExtendedFloat80 {
+            mant: 0,
+            exp: -149
+        }
+    );
+    assert_eq!(
+        compact::from_float(-0.0f32),
+        ExtendedFloat80 {
+            mant: 0,
+            exp: -149
+        }
+    );
+    assert_eq!(
+        compact::from_float(1e-45f32),
+        ExtendedFloat80 {
+            mant: 1,
+            exp: -149
+        }
+    );
+    assert_eq!(
+        compact::from_float(1e-40f32),
+        ExtendedFloat80 {
+            mant: 71362,
+            exp: -149
+        }
+    );
+    assert_eq!(
+        compact::from_float(2e-40f32),
+        ExtendedFloat80 {
+            mant: 142725,
+            exp: -149
+        }
+    );
+    assert_eq!(
+        compact::from_float(1e-20f32),
+        ExtendedFloat80 {
+            mant: 12379400,
+            exp: -90
+        }
+    );
+    assert_eq!(
+        compact::from_float(2e-20f32),
+        ExtendedFloat80 {
+            mant: 12379400,
+            exp: -89
+        }
+    );
+    assert_eq!(
+        compact::from_float(1.0f32),
+        ExtendedFloat80 {
+            mant: 8388608,
+            exp: -23
+        }
+    );
+    assert_eq!(
+        compact::from_float(2.0f32),
+        ExtendedFloat80 {
+            mant: 8388608,
+            exp: -22
+        }
+    );
+    assert_eq!(
+        compact::from_float(1e20f32),
+        ExtendedFloat80 {
+            mant: 11368684,
+            exp: 43
+        }
+    );
+    assert_eq!(
+        compact::from_float(2e20f32),
+        ExtendedFloat80 {
+            mant: 11368684,
+            exp: 44
+        }
+    );
+    assert_eq!(
+        compact::from_float(3.402823e38f32),
+        ExtendedFloat80 {
+            mant: 16777213,
+            exp: 104
+        }
+    );
+}
+fn replace_file() {
+    let f = super::fixture().join("browser-module");
+
+    let resolver = Resolver::new(ResolveOptions {
+        alias_fields: vec![
+            vec!["browser".into()],
+            vec!["innerBrowser1".into(), "field2".into(), "browser".into()], // not presented
+            vec!["innerBrowser1".into(), "field".into(), "browser".into()],
+            vec!["innerBrowser2".into(), "browser".into()],
+        ],
+        // Not part of enhanced-resolve. Added to make sure no interaction between these two fields.
+        main_fields: vec!["browser".into()],
+        ..ResolveOptions::default()
+    });
+
+    #[rustfmt::skip]
+    let data = [
+        ("should replace a file 1", f.clone(), "./lib/replaced", f.join("lib/browser.js")),
+        ("should replace a file 2", f.clone(), "./lib/replaced.js", f.join("lib/browser.js")),
+        ("should replace a file 3", f.join("lib"), "./replaced", f.join("lib/browser.js")),
+        ("should replace a file 4", f.join("lib"), "./replaced.js", f.join("lib/browser.js")),
+        ("should replace a module with a file 1", f.clone(), "module-a", f.join("browser/module-a.js")),
+        ("should replace a module with a file 2", f.join("lib"), "module-a", f.join("browser/module-a.js")),
+        ("should replace a module with a module 1", f.clone(), "module-b", f.join("node_modules/module-c.js")),
+        ("should replace a module with a module 2", f.join("lib"), "module-b", f.join("node_modules/module-c.js")),
+        ("should resolve in nested property 1", f.clone(), "./lib/main1.js", f.join("lib/main.js")),
+        ("should resolve in nested property 2", f.clone(), "./lib/main2.js", f.join("lib/browser.js")),
+        ("should check only alias field properties", f.clone(), "./toString", f.join("lib/toString.js")),
+        // not part of enhanced-resolve
+        ("recursion", f.clone(), "module-c", f.join("node_modules/module-c.js")),
+    ];
+
+    for (comment, path, request, expected) in data {
+        let resolved_path = resolver.resolve(&path, request).map(|r| r.full_path());
+        assert_eq!(resolved_path, Ok(expected), "{comment} {path:?} {request}");
+    }
+}
+fn ignore() {
+    let f = super::fixture().join("browser-module");
+
+    let resolver = Resolver::new(ResolveOptions {
+        alias_fields: vec![
+            vec!["browser".into()],
+            vec!["innerBrowser1".into()],
+            vec!["innerBrowser2".into()],
+        ],
+        ..ResolveOptions::default()
+    });
+
+    #[rustfmt::skip]
+    let data = [
+        (f.clone(), "./lib/ignore", f.join("lib/ignore.js")),
+        (f.clone(), "./lib/ignore.js", f.join("lib/ignore.js")),
+        (f.join("lib"), "./ignore", f.join("lib/ignore.js")),
+        (f.join("lib"), "./ignore.js", f.join("lib/ignore.js")),
+    ];
+
+    for (path, request, expected) in data {
+        let resolution = resolver.resolve(&path, request);
+        let expected = ResolveError::Ignored(expected);
+        assert_eq!(resolution, Err(expected), "{path:?} {request}");
+    }
+}
+async fn send_data_without_requesting_capacity() {
+    h2_support::trace_init!();
+
+    let payload = vec![0; 1024];
+
+    let mock = mock_io::Builder::new()
+        .handshake()
+        .write(&[
+            // POST /
+            0, 0, 16, 1, 4, 0, 0, 0, 1, 131, 135, 65, 139, 157, 41, 172, 75, 143, 168, 233, 25, 151,
+            33, 233, 132,
+        ])
+        .write(&[
+            // DATA
+            0, 4, 0, 0, 1, 0, 0, 0, 1,
+        ])
+        .write(&payload[..])
+        .write(frames::SETTINGS_ACK)
+        // Read response
+        .read(&[0, 0, 1, 1, 5, 0, 0, 0, 1, 0x89])
+        .build();
+
+    let (mut client, mut h2) = client::handshake(mock).await.unwrap();
+
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("https://http2.akamai.com/")
+        .body(())
+        .unwrap();
+
+    let (response, mut stream) = client.send_request(request, false).unwrap();
+
+    // The capacity should be immediately allocated
+    assert_eq!(stream.capacity(), 0);
+
+    // Send the data
+    stream.send_data(payload.into(), true).unwrap();
+
+    // Get the response
+    let resp = h2.run(response).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    h2.await.unwrap();
+}
+fn i32_test() {
+    let mut buffer = [b'\x00'; 16];
+    assert_eq!(b"0", 0i32.to_lexical(&mut buffer));
+    assert_eq!(b"1", 1i32.to_lexical(&mut buffer));
+    assert_eq!(b"5", 5i32.to_lexical(&mut buffer));
+    assert_eq!(b"2147483647", 2147483647i32.to_lexical(&mut buffer));
+    assert_eq!(b"-2147483648", (2147483648u32 as i32).to_lexical(&mut buffer));
+    assert_eq!(b"-1", (4294967295u32 as i32).to_lexical(&mut buffer));
+    assert_eq!(b"-1", (-1i32).to_lexical(&mut buffer));
+}
+async fn extended_connect_protocol_disabled_by_default() {
+    h2_support::trace_init!();
+
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+
+        assert_eq!(settings.is_extended_connect_protocol_enabled(), None);
+
+        client
+            .send_frame(
+                frames::headers(1)
+                    .request("CONNECT", "http://bread/baguette")
+                    .protocol("the-bread-protocol"),
+            )
+            .await;
+
+        client.recv_frame(frames::reset(1).protocol_error()).await;
+    };
+
+    let srv = async move {
+        let mut srv = server::handshake(io).await.expect("handshake");
+
+        poll_fn(move |cx| srv.poll_closed(cx))
+            .await
+            .expect("server");
+    };
+
+    join(client, srv).await;
+}
+async fn read_goaway_with_debug_data() {
+    let mut codec = raw_codec! {
+        read => [
+            // head
+            0, 0, 22, 7, 0, 0, 0, 0, 0,
+            // last_stream_id
+            0, 0, 0, 1,
+            // error_code
+            0, 0, 0, 11,
+            // debug_data
+            "too_many_pings",
+        ];
+    };
+
+    let data = poll_frame!(GoAway, codec);
+    assert_eq!(data.reason(), Reason::ENHANCE_YOUR_CALM);
+    assert_eq!(data.last_stream_id(), 1);
+    assert_eq!(&**data.debug_data(), b"too_many_pings");
+
+    assert_closed!(codec);
+}
+fn f32_roundtrip_test() {
+    let mut buffer = [b'\x00'; BUFFER_SIZE];
+    let options = Options::builder().build().unwrap();
+    for &float in F32_DATA.iter() {
+        let count = unsafe { compact::write_float::<_, DECIMAL>(float, &mut buffer, &options) };
+        let actual = unsafe { std::str::from_utf8_unchecked(&buffer[..count]) };
+        let roundtrip = actual.parse::<f32>();
+        assert_eq!(roundtrip, Ok(float));
+    }
+}
+fn roots() {
+    let f = super::fixture();
+
+    let resolver = Resolver::new(ResolveOptions {
+        extensions: vec![".js".into()],
+        alias: vec![("foo".into(), vec![AliasValue::Path("/fixtures".into())])],
+        roots: vec![dirname(), f.clone()],
+        ..ResolveOptions::default()
+    });
+
+    #[rustfmt::skip]
+    let pass = [
+        ("should respect roots option", "/fixtures/b.js", f.join("b.js")),
+        ("should try another root option, if it exists", "/b.js", f.join("b.js")),
+        ("should respect extension", "/fixtures/b", f.join("b.js")),
+        ("should resolve in directory", "/fixtures/extensions/dir", f.join("extensions/dir/index.js")),
+        ("should respect aliases", "foo/b", f.join("b.js")),
+    ];
+
+    for (comment, request, expected) in pass {
+        let resolved_path = resolver.resolve(&f, request).map(|r| r.full_path());
+        assert_eq!(resolved_path, Ok(expected), "{comment} {request}");
+    }
+
+    #[rustfmt::skip]
+    let fail = [
+        ("should not work with relative path", "fixtures/b.js", ResolveError::NotFound(f.clone()))
+    ];
+
+    for (comment, request, expected) in fail {
+        let resolution = resolver.resolve(&f, request);
+        assert_eq!(resolution, Err(expected), "{comment} {request}");
+    }
+}
+async fn recv_too_big_headers() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_frame_eq(settings, frames::settings().max_header_list_size(10));
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .await;
+        srv.recv_frame(
+            frames::headers(3)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+        srv.send_frame(frames::headers(3).response(200)).await;
+        // no reset for 1, since it's closed anyway
+        // but reset for 3, since server hasn't closed stream
+        srv.recv_frame(frames::reset(3).refused()).await;
+        idle_ms(10).await;
+    };
+
+    let client = async move {
+        let (mut client, mut conn) = client::Builder::new()
+            .max_header_list_size(10)
+            .handshake::<_, Bytes>(io)
+            .await
+            .expect("handshake");
+
+        let request = Request::builder()
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
+
+        let req1 = client.send_request(request, true);
+        let req1 = async move {
+            let err = req1.expect("send_request").0.await.expect_err("response1");
+            assert_eq!(err.reason(), Some(Reason::REFUSED_STREAM));
+        };
+
+        let request = Request::builder()
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
+
+        let req2 = client.send_request(request, true);
+        let req2 = async move {
+            let err = req2.expect("send_request").0.await.expect_err("response2");
+            assert_eq!(err.reason(), Some(Reason::REFUSED_STREAM));
+        };
+
+        conn.drive(join(req1, req2)).await;
+        conn.await.expect("client");
+    };
+    join(srv, client).await;
+}
+fn u128_test() {
+    let mut buffer = [b'\x00'; 48];
+    assert_eq!(b"0", 0u128.to_lexical(&mut buffer));
+    assert_eq!(b"1", 1u128.to_lexical(&mut buffer));
+    assert_eq!(b"5", 5u128.to_lexical(&mut buffer));
+    assert_eq!(
+        &b"170141183460469231731687303715884105727"[..],
+        170141183460469231731687303715884105727u128.to_lexical(&mut buffer)
+    );
+    assert_eq!(
+        &b"170141183460469231731687303715884105728"[..],
+        170141183460469231731687303715884105728u128.to_lexical(&mut buffer)
+    );
+    assert_eq!(
+        &b"340282366920938463463374607431768211455"[..],
+        340282366920938463463374607431768211455u128.to_lexical(&mut buffer)
+    );
+    assert_eq!(
+        &b"340282366920938463463374607431768211455"[..],
+        (-1i128 as u128).to_lexical(&mut buffer)
+    );
+}
+fn default_enforce_extension() {
+    let f = super::fixture().join("extensions");
+
+    let resolved = Resolver::new(ResolveOptions {
+        extensions: vec![".ts".into(), String::new(), ".js".into()],
+        ..ResolveOptions::default()
+    })
+    .resolve(&f, "./foo");
+
+    assert_eq!(resolved.map(Resolution::into_path_buf), Ok(f.join("foo.ts")));
+    // TODO: need to match missingDependencies returned from the resolve function
+}
+fn u64_digit_count_test() {
+    assert_eq!(u64::digit_count(0), 1);
+    assert_eq!(u64::digit_count(1), 1);
+    assert_eq!(u64::digit_count(9), 1);
+    assert_eq!(u64::digit_count(10), 2);
+    assert_eq!(u64::digit_count(11), 2);
+
+    assert_eq!(u64::digit_count((1 << 16) - 1), 5);
+    assert_eq!(u64::digit_count(1 << 16), 5);
+    assert_eq!(u64::digit_count((1 << 16) + 1), 5);
+
+    assert_eq!(u64::digit_count(u32::MAX as u64), 10);
+    assert_eq!(u64::digit_count(u64::MAX), 20);
+}
+async fn send_trailers_immediately() {
+    h2_support::trace_init!();
+
+    let mock = mock_io::Builder::new()
+        .handshake()
+        // Write GET /
+        .write(&[
+            0, 0, 0x10, 1, 4, 0, 0, 0, 1, 0x82, 0x87, 0x41, 0x8B, 0x9D, 0x29, 0xAC, 0x4B, 0x8F,
+            0xA8, 0xE9, 0x19, 0x97, 0x21, 0xE9, 0x84, 0, 0, 0x0A, 1, 5, 0, 0, 0, 1, 0x40, 0x83,
+            0xF6, 0x7A, 0x66, 0x84, 0x9C, 0xB4, 0x50, 0x7F,
+        ])
+        .write(frames::SETTINGS_ACK)
+        // Read response
+        .read(&[
+            0, 0, 1, 1, 4, 0, 0, 0, 1, 0x88, 0, 0, 0x0B, 0, 1, 0, 0, 0, 1, 0x68, 0x65, 0x6C, 0x6C,
+            0x6F, 0x20, 0x77, 0x6F, 0x72, 0x6C, 0x64,
+        ])
+        .build();
+
+    let (mut client, mut h2) = client::handshake(mock).await.unwrap();
+
+    // Send the request
+    let request = Request::builder()
+        .uri("https://http2.akamai.com/")
+        .body(())
+        .unwrap();
+
+    tracing::info!("sending request");
+    let (response, mut stream) = client.send_request(request, false).unwrap();
+
+    let mut trailers = HeaderMap::new();
+    trailers.insert("zomg", "hello".parse().unwrap());
+
+    stream.send_trailers(trailers).unwrap();
+
+    let response = h2.run(response).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let (_, mut body) = response.into_parts();
+
+    // There is a data chunk
+    let _ = h2.run(body.next()).await.unwrap().unwrap();
+
+    let chunk = h2.run(body.next()).await;
+    assert!(chunk.is_none());
+
+    let trailers = h2.run(poll_fn(|cx| body.poll_trailers(cx))).await.unwrap();
+    assert!(trailers.is_none());
+
+    h2.await.unwrap();
+}
+fn u16_test() {
+    let mut buffer = [b'\x00'; 16];
+    assert_eq!(b"0", 0u16.to_lexical(&mut buffer));
+    assert_eq!(b"1", 1u16.to_lexical(&mut buffer));
+    assert_eq!(b"5", 5u16.to_lexical(&mut buffer));
+    assert_eq!(b"32767", 32767u16.to_lexical(&mut buffer));
+    assert_eq!(b"32768", 32768u16.to_lexical(&mut buffer));
+    assert_eq!(b"65535", 65535u16.to_lexical(&mut buffer));
+    assert_eq!(b"65535", (-1i16 as u16).to_lexical(&mut buffer));
+}
+fn u32_digit_count_test() {
+    assert_eq!(u32::digit_count(0), 1);
+    assert_eq!(u32::digit_count(1), 1);
+    assert_eq!(u32::digit_count(9), 1);
+    assert_eq!(u32::digit_count(10), 2);
+    assert_eq!(u32::digit_count(11), 2);
+
+    assert_eq!(u32::digit_count((1 << 16) - 1), 5);
+    assert_eq!(u32::digit_count(1 << 16), 5);
+    assert_eq!(u32::digit_count((1 << 16) + 1), 5);
+
+    assert_eq!(u32::digit_count(u32::MAX), 10);
+}
+fn scale_sci_exp_test() {
+    // Binary is always the same.
+    assert_eq!(binary::scale_sci_exp(2, 1), 2);
+    assert_eq!(binary::scale_sci_exp(1, 1), 1);
+    assert_eq!(binary::scale_sci_exp(0, 1), 0);
+    assert_eq!(binary::scale_sci_exp(-1, 1), -1);
+    assert_eq!(binary::scale_sci_exp(-2, 1), -2);
+
+    // Base 4 will always be the round-to-negative-infinity div.
+    assert_eq!(binary::scale_sci_exp(2, 2), 1);
+    assert_eq!(binary::scale_sci_exp(1, 2), 0);
+    assert_eq!(binary::scale_sci_exp(0, 2), 0);
+    assert_eq!(binary::scale_sci_exp(-1, 2), -1);
+    assert_eq!(binary::scale_sci_exp(-2, 2), -1);
+    assert_eq!(binary::scale_sci_exp(-3, 2), -2);
+}
+fn u64_test() {
+    let mut buffer = [b'\x00'; 32];
+    assert_eq!(b"0", 0u64.to_lexical(&mut buffer));
+    assert_eq!(b"1", 1u64.to_lexical(&mut buffer));
+    assert_eq!(b"5", 5u64.to_lexical(&mut buffer));
+    assert_eq!(b"9223372036854775807", 9223372036854775807u64.to_lexical(&mut buffer));
+    assert_eq!(b"9223372036854775808", 9223372036854775808u64.to_lexical(&mut buffer));
+    assert_eq!(b"18446744073709551615", 18446744073709551615u64.to_lexical(&mut buffer));
+    assert_eq!(b"18446744073709551615", (-1i64 as u64).to_lexical(&mut buffer));
+}
+async fn stream_close_by_trailers_frame_releases_capacity() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let window_size = frame::DEFAULT_INITIAL_WINDOW_SIZE as usize;
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
+
+        // Send request
+        let (resp1, mut s1) = client.send_request(request, false).unwrap();
+
+        // This effectively reserves the entire connection window
+        s1.reserve_capacity(window_size);
+
+        // The capacity should be immediately available as nothing else is
+        // happening on the stream.
+        assert_eq!(s1.capacity(), window_size);
+
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
+
+        // Create a second stream
+        let (resp2, mut s2) = client.send_request(request, false).unwrap();
+
+        // Request capacity
+        s2.reserve_capacity(5);
+
+        // There should be no available capacity (as it is being held up by
+        // the previous stream
+        assert_eq!(s2.capacity(), 0);
+
+        // Closing the previous stream by sending a trailers frame will
+        // release the capacity to s2
+        s1.send_trailers(Default::default()).unwrap();
+
+        // The capacity should be available
+        assert_eq!(s2.capacity(), 5);
+
+        // Send the frame
+        s2.send_data("hello".into(), true).unwrap();
+
+        // Drive both streams to prevent the handles from being dropped
+        // (which will send a RST_STREAM) before the connection is closed.
+        h2.drive(resp1).await.unwrap();
+        h2.drive(resp2).await.unwrap();
+    };
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        // Get the first frame
+        assert_default_settings!(settings);
+        srv.recv_frame(frames::headers(1).request("POST", "https://http2.akamai.com/"))
+            .await;
+        srv.send_frame(frames::headers(1).response(200)).await;
+        srv.recv_frame(frames::headers(3).request("POST", "https://http2.akamai.com/"))
+            .await;
+        srv.send_frame(frames::headers(3).response(200)).await;
+        srv.recv_frame(frames::headers(1).eos()).await;
+        srv.recv_frame(frames::data(3, &b"hello"[..]).eos()).await;
+    };
+    join(srv, h2).await;
+}
+fn f64_roundtrip_test() {
+    let mut buffer = [b'\x00'; BUFFER_SIZE];
+    let options = Options::builder().build().unwrap();
+    for &float in F64_DATA.iter() {
+        let count = unsafe { compact::write_float::<_, DECIMAL>(float, &mut buffer, &options) };
+        let actual = unsafe { std::str::from_utf8_unchecked(&buffer[..count]) };
+        let roundtrip = actual.parse::<f64>();
+        assert_eq!(roundtrip, Ok(float));
+    }
+}
+fn extension_alias() {
+    let f = super::fixture().join("extension-alias");
+
+    let resolver = Resolver::new(ResolveOptions {
+        extensions: vec![".js".into()],
+        main_files: vec!["index.js".into()],
+        extension_alias: vec![
+            (".js".into(), vec![".ts".into(), ".js".into()]),
+            (".mjs".into(), vec![".mts".into()]),
+        ],
+        ..ResolveOptions::default()
+    });
+
+    #[rustfmt::skip]
+    let pass = [
+        ("should alias fully specified file", f.clone(), "./index.js", f.join("index.ts")),
+        ("should alias fully specified file when there are two alternatives", f.clone(), "./dir/index.js", f.join("dir/index.ts")),
+        ("should also allow the second alternative", f.clone(), "./dir2/index.js", f.join("dir2/index.js")),
+        ("should support alias option without an array", f.clone(), "./dir2/index.mjs", f.join("dir2/index.mts")),
+    ];
+
+    for (comment, path, request, expected) in pass {
+        let resolved_path = resolver.resolve(&path, request).map(|r| r.full_path());
+        assert_eq!(resolved_path, Ok(expected), "{comment} {path:?} {request}");
+    }
+
+    #[rustfmt::skip]
+    let fail = [
+        ("should not allow to fallback to the original extension or add extensions", f, "./index.mjs"),
+    ];
+
+    for (comment, path, request) in fail {
+        let resolution = resolver.resolve(&path, request);
+        assert_eq!(resolution, Err(ResolveError::ExtensionAlias), "{comment} {path:?} {request}");
+    }
+}
+fn from_f64_test() {
+    assert_eq!(
+        compact::from_float(0.0f64),
+        ExtendedFloat80 {
+            mant: 0,
+            exp: -1074
+        }
+    );
+    assert_eq!(
+        compact::from_float(-0.0f64),
+        ExtendedFloat80 {
+            mant: 0,
+            exp: -1074
+        }
+    );
+    assert_eq!(
+        compact::from_float(5e-324f64),
+        ExtendedFloat80 {
+            mant: 1,
+            exp: -1074
+        }
+    );
+    assert_eq!(
+        compact::from_float(1e-250f64),
+        ExtendedFloat80 {
+            mant: 6448907850777164,
+            exp: -883
+        }
+    );
+    assert_eq!(
+        compact::from_float(1e-150f64),
+        ExtendedFloat80 {
+            mant: 7371020360979573,
+            exp: -551
+        }
+    );
+    assert_eq!(
+        compact::from_float(1e-45f64),
+        ExtendedFloat80 {
+            mant: 6427752177035961,
+            exp: -202
+        }
+    );
+    assert_eq!(
+        compact::from_float(1e-40f64),
+        ExtendedFloat80 {
+            mant: 4903985730770844,
+            exp: -185
+        }
+    );
+    assert_eq!(
+        compact::from_float(2e-40f64),
+        ExtendedFloat80 {
+            mant: 4903985730770844,
+            exp: -184
+        }
+    );
+    assert_eq!(
+        compact::from_float(1e-20f64),
+        ExtendedFloat80 {
+            mant: 6646139978924579,
+            exp: -119
+        }
+    );
+    assert_eq!(
+        compact::from_float(2e-20f64),
+        ExtendedFloat80 {
+            mant: 6646139978924579,
+            exp: -118
+        }
+    );
+    assert_eq!(
+        compact::from_float(1.0f64),
+        ExtendedFloat80 {
+            mant: 4503599627370496,
+            exp: -52
+        }
+    );
+    assert_eq!(
+        compact::from_float(2.0f64),
+        ExtendedFloat80 {
+            mant: 4503599627370496,
+            exp: -51
+        }
+    );
+    assert_eq!(
+        compact::from_float(1e20f64),
+        ExtendedFloat80 {
+            mant: 6103515625000000,
+            exp: 14
+        }
+    );
+    assert_eq!(
+        compact::from_float(2e20f64),
+        ExtendedFloat80 {
+            mant: 6103515625000000,
+            exp: 15
+        }
+    );
+    assert_eq!(
+        compact::from_float(1e40f64),
+        ExtendedFloat80 {
+            mant: 8271806125530277,
+            exp: 80
+        }
+    );
+    assert_eq!(
+        compact::from_float(2e40f64),
+        ExtendedFloat80 {
+            mant: 8271806125530277,
+            exp: 81
+        }
+    );
+    assert_eq!(
+        compact::from_float(1e150f64),
+        ExtendedFloat80 {
+            mant: 5503284107318959,
+            exp: 446
+        }
+    );
+    assert_eq!(
+        compact::from_float(1e250f64),
+        ExtendedFloat80 {
+            mant: 6290184345309700,
+            exp: 778
+        }
+    );
+    assert_eq!(
+        compact::from_float(1.7976931348623157e308),
+        ExtendedFloat80 {
+            mant: 9007199254740991,
+            exp: 971
+        }
+    );
+}
+fn infinite_recursion() {
+    let f = super::fixture();
+    let resolver = Resolver::new(ResolveOptions {
+        alias: vec![
+            ("./a".into(), vec![AliasValue::Path("./b".into())]),
+            ("./b".into(), vec![AliasValue::Path("./a".into())]),
+        ],
+        ..ResolveOptions::default()
+    });
+    let resolution = resolver.resolve(f, "./a");
+    assert_eq!(resolution, Err(ResolveError::Recursion));
+}
+async fn recv_data_overflows_stream_window() {
+    // this tests for when streams have smaller windows than their connection
+    h2_support::trace_init!();
+
+    let (io, mut srv) = mock::new();
+
+    let mock = async move {
+        let _ = srv.assert_client_handshake().await;
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200)).await;
+        // fill the whole window
+        srv.send_frame(frames::data(1, vec![0u8; 16_384])).await;
+        // this frame overflows the window!
+        srv.send_frame(frames::data(1, &[0; 16][..]).eos()).await;
+        srv.recv_frame(frames::reset(1).flow_control()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, conn) = client::Builder::new()
+            .initial_window_size(16_384)
+            .handshake::<_, Bytes>(io)
+            .await
+            .unwrap();
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
+
+        let req = async move {
+            let resp = client.send_request(request, true).unwrap().0.await.unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            let body = resp.into_parts().1;
+            let res = util::concat(body).await;
+            let err = res.unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                "stream error detected: flow-control protocol violated"
+            );
+        };
+
+        join(async move { conn.await.unwrap() }, req).await;
+    };
+    join(mock, h2).await;
+}
+fn test() {
+    let f = super::fixture().join("restrictions");
+
+    let resolver = Resolver::new(ResolveOptions {
+        main_fields: vec!["style".into()],
+        ..ResolveOptions::default()
+    });
+
+    let resolution = resolver.resolve(&f, "pck2").map(|r| r.full_path());
+    assert_eq!(resolution, Ok(f.join("node_modules/pck2/index.css")));
+
+    let resolver = Resolver::new(ResolveOptions {
+        main_fields: vec!["module".into(), "main".into()],
+        ..ResolveOptions::default()
+    });
+
+    let resolution = resolver.resolve(&f, "pck2").map(|r| r.full_path());
+    assert_eq!(resolution, Ok(f.join("node_modules/pck2/module.js")));
+}
+async fn send_recv_data() {
+    h2_support::trace_init!();
+
+    let mock = mock_io::Builder::new()
+        .handshake()
+        .write(&[
+            // POST /
+            0, 0, 16, 1, 4, 0, 0, 0, 1, 131, 135, 65, 139, 157, 41, 172, 75, 143, 168, 233, 25, 151,
+            33, 233, 132,
+        ])
+        .write(&[
+            // DATA
+            0, 0, 5, 0, 1, 0, 0, 0, 1, 104, 101, 108, 108, 111,
+        ])
+        .write(frames::SETTINGS_ACK)
+        // Read response
+        .read(&[
+            // HEADERS
+            0, 0, 1, 1, 4, 0, 0, 0, 1, 136, // DATA
+            0, 0, 5, 0, 1, 0, 0, 0, 1, 119, 111, 114, 108, 100,
+        ])
+        .build();
+
+    let (mut client, mut h2) = client::Builder::new().handshake(mock).await.unwrap();
+
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("https://http2.akamai.com/")
+        .body(())
+        .unwrap();
+
+    tracing::info!("sending request");
+    let (response, mut stream) = client.send_request(request, false).unwrap();
+
+    // Reserve send capacity
+    stream.reserve_capacity(5);
+
+    assert_eq!(stream.capacity(), 5);
+
+    // Send the data
+    stream.send_data("hello".as_bytes(), true).unwrap();
+
+    // Get the response
+    let resp = h2.run(response).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Take the body
+    let (_, body) = resp.into_parts();
+
+    // Wait for all the data frames to be received
+    let bytes: Vec<_> = h2.run(body.try_collect()).await.unwrap();
+
+    // One byte chunk
+    assert_eq!(1, bytes.len());
+
+    assert_eq!(bytes[0], &b"world"[..]);
+
+    // The H2 connection is closed
+    h2.await.unwrap();
+}
+fn simple() {
+    // mimic `enhanced-resolve/test/simple.test.js`
+    let dirname = env::current_dir().unwrap().join("fixtures");
+    let f = dirname.join("enhanced_resolve/test");
+
+    let resolver = Resolver::default();
+
+    let data = [
+        ("direct", f.clone(), "../lib/index"),
+        ("as directory", f, ".."),
+        ("as module", dirname.clone(), "./enhanced_resolve"),
+    ];
+
+    for (comment, path, request) in data {
+        let resolved_path = resolver.resolve(&path, request).map(|f| f.full_path());
+        let expected = dirname.join("enhanced_resolve/lib/index.js");
+        assert_eq!(resolved_path, Ok(expected), "{comment} {path:?} {request}");
+    }
+}
+async fn reject_informational_status_header_in_request() {
+    h2_support::trace_init!();
+
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let _ = client.assert_server_handshake().await;
+
+        let status_code = 128;
+        assert!(StatusCode::from_u16(status_code)
+            .unwrap()
+            .is_informational());
+
+        client
+            .send_frame(frames::headers(1).response(status_code))
+            .await;
+
+        client.recv_frame(frames::reset(1).protocol_error()).await;
+    };
+
+    let srv = async move {
+        let builder = server::Builder::new();
+        let mut srv = builder.handshake::<_, Bytes>(io).await.expect("handshake");
+
+        poll_fn(move |cx| srv.poll_closed(cx))
+            .await
+            .expect("server");
+    };
+
+    join(client, srv).await;
+}
+async fn server_builder_set_max_concurrent_streams() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let mut settings = frame::Settings::default();
+    settings.set_max_concurrent_streams(Some(1));
+
+    let client = async move {
+        let recv_settings = client.assert_server_handshake().await;
+        assert_frame_eq(recv_settings, settings);
+        client
+            .send_frame(frames::headers(1).request("GET", "https://example.com/"))
+            .await;
+        client
+            .send_frame(frames::headers(3).request("GET", "https://example.com/"))
+            .await;
+        client
+            .send_frame(frames::data(1, &b"hello"[..]).eos())
+            .await;
+        client.recv_frame(frames::reset(3).refused()).await;
+        client
+            .recv_frame(frames::headers(1).response(200).eos())
+            .await;
+    };
+
+    let mut builder = server::Builder::new();
+    builder.max_concurrent_streams(1);
+
+    let h2 = async move {
+        let mut srv = builder.handshake::<_, Bytes>(io).await.expect("handshake");
+        let (req, mut stream) = srv.next().await.unwrap().unwrap();
+
+        assert_eq!(req.method(), &http::Method::GET);
+
+        let rsp = http::Response::builder().status(200).body(()).unwrap();
+        stream.send_response(rsp, true).unwrap();
+
+        assert!(srv.next().await.is_none());
+    };
+
+    join(client, h2).await;
+}
+async fn extended_connect_protocol_enabled_during_handshake() {
+    h2_support::trace_init!();
+
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+
+        assert_eq!(settings.is_extended_connect_protocol_enabled(), Some(true));
+
+        client
+            .send_frame(
+                frames::headers(1)
+                    .request("CONNECT", "http://bread/baguette")
+                    .protocol("the-bread-protocol"),
+            )
+            .await;
+
+        client.recv_frame(frames::headers(1).response(200)).await;
+    };
+
+    let srv = async move {
+        let mut builder = server::Builder::new();
+
+        builder.enable_connect_protocol();
+
+        let mut srv = builder.handshake::<_, Bytes>(io).await.expect("handshake");
+
+        let (req, mut stream) = srv.next().await.unwrap().unwrap();
+
+        assert_eq!(
+            req.extensions().get::<crate::ext::Protocol>(),
+            Some(&crate::ext::Protocol::from_static("the-bread-protocol"))
+        );
+
+        let rsp = Response::new(());
+        stream.send_response(rsp, false).unwrap();
+
+        poll_fn(move |cx| srv.poll_closed(cx))
+            .await
+            .expect("server");
+    };
+
+    join(client, srv).await;
+}
+fn broken() {
+    let f = super::fixture();
+
+    let resolver = Resolver::new(ResolveOptions {
+        alias_fields: vec![vec!["browser".into()]],
+        ..ResolveOptions::default()
+    });
+
+    #[rustfmt::skip]
+    let data = [
+        // The browser field string value should be ignored
+        (f.clone(), "browser-module-broken", f.join("node_modules/browser-module-broken/main.js")),
+    ];
+
+    for (path, request, expected) in data {
+        let resolved_path = resolver.resolve(&path, request).map(|r| r.full_path());
+        assert_eq!(resolved_path, Ok(expected), "{path:?} {request}");
+    }
+}
+async fn push_request_against_concurrency() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        client
+            .assert_server_handshake_with_settings(frames::settings().max_concurrent_streams(1))
+            .await;
+        client
+            .send_frame(
+                frames::headers(1)
+                    .request("GET", "https://example.com/")
+                    .eos(),
+            )
+            .await;
+        client
+            .recv_frame(
+                frames::push_promise(1, 2).request("GET", "https://http2.akamai.com/style.css"),
+            )
+            .await;
+        client.recv_frame(frames::headers(2).response(200)).await;
+        client
+            .recv_frame(
+                frames::push_promise(1, 4).request("GET", "https://http2.akamai.com/style2.css"),
+            )
+            .await;
+        client.recv_frame(frames::data(2, &b""[..]).eos()).await;
+        client
+            .recv_frame(frames::headers(4).response(200).eos())
+            .await;
+        client
+            .recv_frame(frames::headers(1).response(200).eos())
+            .await;
+    };
+
+    let srv = async move {
+        let mut srv = server::handshake(io).await.expect("handshake");
+        let (req, mut stream) = srv.next().await.unwrap().unwrap();
+
+        assert_eq!(req.method(), &http::Method::GET);
+
+        // Promise stream 2 and start response (concurrency limit reached)
+        let mut s2_tx = {
+            let req = http::Request::builder()
+                .method("GET")
+                .uri("https://http2.akamai.com/style.css")
+                .body(())
+                .unwrap();
+            let mut pushed_stream = stream.push_request(req).unwrap();
+            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            pushed_stream.send_response(rsp, false).unwrap()
+        };
+
+        // Promise stream 4 and push response
+        {
+            let pushed_req = http::Request::builder()
+                .method("GET")
+                .uri("https://http2.akamai.com/style2.css")
+                .body(())
+                .unwrap();
+            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            stream
+                .push_request(pushed_req)
+                .unwrap()
+                .send_response(rsp, true)
+                .unwrap();
+        }
+
+        // Send and finish response for stream 1
+        {
+            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            stream.send_response(rsp, true).unwrap();
+        }
+
+        // Finish response for stream 2 (at which point stream 4 will be sent)
+        s2_tx.send_data(vec![0; 0].into(), true).unwrap();
+
+        assert!(srv.next().await.is_none());
+    };
+
+    join(client, srv).await;
+}
+fn builtins_off() {
+    let f = Path::new("/");
+    let resolver = Resolver::default();
+    let resolved_path = resolver.resolve(f, "zlib").map(|r| r.full_path());
+    assert_eq!(resolved_path, Err(ResolveError::NotFound(PathBuf::from("/"))));
+}
+async fn recv_trailers_only() {
+    h2_support::trace_init!();
+
+    let mock = mock_io::Builder::new()
+        .handshake()
+        // Write GET /
+        .write(&[
+            0, 0, 0x10, 1, 5, 0, 0, 0, 1, 0x82, 0x87, 0x41, 0x8B, 0x9D, 0x29, 0xAC, 0x4B, 0x8F,
+            0xA8, 0xE9, 0x19, 0x97, 0x21, 0xE9, 0x84,
+        ])
+        .write(frames::SETTINGS_ACK)
+        // Read response
+        .read(&[
+            0, 0, 1, 1, 4, 0, 0, 0, 1, 0x88, 0, 0, 9, 1, 5, 0, 0, 0, 1, 0x40, 0x84, 0x42, 0x46,
+            0x9B, 0x51, 0x82, 0x3F, 0x5F,
+        ])
+        .build();
+
+    let (mut client, mut h2) = client::handshake(mock).await.unwrap();
+
+    // Send the request
+    let request = Request::builder()
+        .uri("https://http2.akamai.com/")
+        .body(())
+        .unwrap();
+
+    tracing::info!("sending request");
+    let (response, _) = client.send_request(request, true).unwrap();
+
+    let response = h2.run(response).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let (_, mut body) = response.into_parts();
+
+    // Make sure there is no body
+    let chunk = h2.run(Box::pin(body.next())).await;
+    assert!(chunk.is_none());
+
+    let trailers = h2
+        .run(poll_fn(|cx| body.poll_trailers(cx)))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(1, trailers.len());
+    assert_eq!(trailers["status"], "ok");
+
+    h2.await.unwrap();
+}
+fn prefer_absolute() {
+    let f = super::fixture();
+    let resolver = Resolver::new(ResolveOptions {
+        extensions: vec![".js".into()],
+        alias: vec![("foo".into(), vec![AliasValue::Path("/fixtures".into())])],
+        roots: vec![dirname(), f.clone()],
+        prefer_absolute: true,
+        ..ResolveOptions::default()
+    });
+
+    #[rustfmt::skip]
+    let pass = [
+        ("should resolve an absolute path (prefer absolute)", f.join("b.js").to_string_lossy().to_string(), f.join("b.js")),
+    ];
+
+    for (comment, request, expected) in pass {
+        let resolved_path = resolver.resolve(&f, &request).map(|r| r.full_path());
+        assert_eq!(resolved_path, Ok(expected), "{comment} {request}");
+    }
+}
+fn not_apply_to_extension_nor_main_files() {
+    let f = super::fixture().join("extension-alias");
+
+    let resolver = Resolver::new(ResolveOptions {
+        extensions: vec![".js".into()],
+        main_files: vec!["index.js".into()],
+        extension_alias: vec![(".js".into(), vec![])],
+        ..ResolveOptions::default()
+    });
+
+    #[rustfmt::skip]
+    let pass = [
+        ("directory", f.clone(), "./dir2", "dir2/index.js"),
+        ("file", f.clone(), "./dir2/index", "dir2/index.js"),
+    ];
+
+    for (comment, path, request, expected) in pass {
+        let resolved_path = resolver.resolve(&path, request).map(|r| r.full_path());
+        let expected = f.join(expected);
+        assert_eq!(resolved_path, Ok(expected), "{comment} {path:?} {request}");
+    }
+}
+fn hammer_client_concurrency() {
+    // This reproduces issue #326.
+    const N: usize = 5000;
+
+    let server = Server::serve(|| Bytes::from_static(b"hello world!"));
+
+    let addr = server.addr();
+    let rsps = Arc::new(AtomicUsize::new(0));
+
+    for i in 0..N {
+        print!("sending {}", i);
+        let rsps = rsps.clone();
+        let tcp = TcpStream::connect(&addr);
+        let tcp = tcp
+            .then(|res| {
+                let tcp = res.unwrap();
+                client::handshake(tcp)
+            })
+            .then(move |res| {
+                let rsps = rsps;
+                let (mut client, h2) = res.unwrap();
+                let request = Request::builder()
+                    .uri("https://http2.akamai.com/")
+                    .body(())
+                    .unwrap();
+
+                let (response, mut stream) = client.send_request(request, false).unwrap();
+                stream.send_trailers(HeaderMap::new()).unwrap();
+
+                tokio::spawn(async move {
+                    h2.await.unwrap();
+                });
+
+                response
+                    .and_then(|response| {
+                        let mut body = response.into_body();
+
+                        async move {
+                            while let Some(res) = body.data().await {
+                                res?;
+                            }
+                            body.trailers().await?;
+                            Ok(())
+                        }
+                    })
+                    .map_err(|e| {
+                        panic!("client error: {:?}", e);
+                    })
+                    .map(move |_| {
+                        rsps.fetch_add(1, Ordering::Release);
+                    })
+            });
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(tcp);
+        println!("...done");
+    }
+
+    println!("all done");
+
+    assert_eq!(N, rsps.load(Ordering::Acquire));
+    assert_eq!(N, server.request_count());
+}
+async fn closed_streams_are_released() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+        let request = Request::get("https://example.com/").body(()).unwrap();
+
+        // Send request
+        let (response, _) = client.send_request(request, true).unwrap();
+        let response = h2.drive(response).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        // There are no active streams
+        assert_eq!(0, client.num_active_streams());
+
+        // The response contains a handle for the body. This keeps the
+        // stream wired.
+        assert_eq!(1, client.num_wired_streams());
+
+        let (_, body) = response.into_parts();
+        assert!(body.is_end_stream());
+        drop(body);
+
+        // The stream state is now free
+        assert_eq!(0, client.num_wired_streams());
+    };
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(204).eos()).await;
+    };
+    join(srv, h2).await;
+}
+async fn push_request_between_data() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        client
+            .assert_server_handshake_with_settings(frames::settings().max_concurrent_streams(100))
+            .await;
+        client
+            .send_frame(
+                frames::headers(1)
+                    .request("GET", "https://example.com/")
+                    .eos(),
+            )
+            .await;
+        client.recv_frame(frames::headers(1).response(200)).await;
+        client.recv_frame(frames::data(1, &b""[..])).await;
+        client
+            .recv_frame(
+                frames::push_promise(1, 2).request("GET", "https://http2.akamai.com/style.css"),
+            )
+            .await;
+        client
+            .recv_frame(frames::headers(2).response(200).eos())
+            .await;
+        client.recv_frame(frames::data(1, &b""[..]).eos()).await;
+    };
+
+    let srv = async move {
+        let mut srv = server::handshake(io).await.expect("handshake");
+        let (req, mut stream) = srv.next().await.unwrap().unwrap();
+
+        assert_eq!(req.method(), &http::Method::GET);
+
+        // Push response to stream 1 and send some data
+        let mut s1_tx = {
+            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            let mut tx = stream.send_response(rsp, false).unwrap();
+            tx.send_data(vec![0; 0].into(), false).unwrap();
+            tx
+        };
+
+        // Promise stream 2 and push response headers
+        {
+            let pushed_req = http::Request::builder()
+                .method("GET")
+                .uri("https://http2.akamai.com/style.css")
+                .body(())
+                .unwrap();
+            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            stream
+                .push_request(pushed_req)
+                .unwrap()
+                .send_response(rsp, true)
+                .unwrap();
+        }
+
+        // End response for stream 1
+        s1_tx.send_data(vec![0; 0].into(), true).unwrap();
+
+        assert!(srv.next().await.is_none());
+    };
+
+    join(client, srv).await;
+}
+fn scoped_packages() {
+    let f = super::fixture().join("scoped");
+
+    let resolver = Resolver::new(ResolveOptions {
+        alias_fields: vec![vec!["browser".into()]],
+        ..ResolveOptions::default()
+    });
+
+    #[rustfmt::skip]
+    let pass = [
+        ("main field should work", f.clone(), "@scope/pack1", f.join("./node_modules/@scope/pack1/main.js")),
+        ("browser field should work", f.clone(), "@scope/pack2", f.join("./node_modules/@scope/pack2/main.js")),
+        ("folder request should work", f.clone(), "@scope/pack2/lib", f.join("./node_modules/@scope/pack2/lib/index.js"))
+    ];
+
+    for (comment, path, request, expected) in pass {
+        let resolved_path = resolver.resolve(&f, request).map(|r| r.full_path());
+        assert_eq!(resolved_path, Ok(expected), "{comment} {path:?} {request}");
+    }
+}
+async fn send_headers_recv_data_single_frame() {
+    h2_support::trace_init!();
+
+    let mock = mock_io::Builder::new()
+        .handshake()
+        // Write GET /
+        .write(&[
+            0, 0, 16, 1, 5, 0, 0, 0, 1, 130, 135, 65, 139, 157, 41, 172, 75, 143, 168, 233, 25,
+            151, 33, 233, 132,
+        ])
+        .write(frames::SETTINGS_ACK)
+        // Read response
+        .read(&[
+            0, 0, 1, 1, 4, 0, 0, 0, 1, 136, 0, 0, 5, 0, 0, 0, 0, 0, 1, 104, 101, 108, 108, 111, 0,
+            0, 5, 0, 1, 0, 0, 0, 1, 119, 111, 114, 108, 100,
+        ])
+        .build();
+
+    let (mut client, mut h2) = client::handshake(mock).await.unwrap();
+
+    // Send the request
+    let request = Request::builder()
+        .uri("https://http2.akamai.com/")
+        .body(())
+        .unwrap();
+
+    tracing::info!("sending request");
+    let (response, _) = client.send_request(request, true).unwrap();
+
+    let resp = h2.run(response).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Take the body
+    let (_, body) = resp.into_parts();
+
+    // Wait for all the data frames to be received
+    let bytes: Vec<_> = h2.run(body.try_collect()).await.unwrap();
+
+    // Two data frames
+    assert_eq!(2, bytes.len());
+
+    assert_eq!(bytes[0], &b"hello"[..]);
+    assert_eq!(bytes[1], &b"world"[..]);
+
+    // The H2 connection is closed
+    h2.await.unwrap();
+}
+fn extension_alias_1_2() {
+    let f = super::fixture().join("exports-field-and-extension-alias");
+
+    let resolver = Resolver::new(ResolveOptions {
+        extensions: vec![".js".into()],
+        extension_alias: vec![(".js".into(), vec![".ts".into(), ".js".into()])],
+        fully_specified: true,
+        condition_names: vec!["webpack".into(), "default".into()],
+        ..ResolveOptions::default()
+    });
+
+    #[rustfmt::skip]
+    let pass = [
+        ("should resolve with the `extensionAlias` option", f.clone(), "@org/pkg/string.js", f.join("node_modules/@org/pkg/dist/string.js")),
+        ("should resolve with the `extensionAlias` option #2", f.clone(), "pkg/string.js", f.join("node_modules/pkg/dist/string.js")),
+    ];
+
+    for (comment, path, request, expected) in pass {
+        let resolved_path = resolver.resolve(&path, request).map(|r| r.full_path());
+        assert_eq!(resolved_path, Ok(expected), "{comment} {path:?} {request}");
+    }
+}
+async fn read_push_promise() {
+    let mut codec = raw_codec! {
+        read => [
+            0, 0, 0x5,
+            0x5, 0x4,
+            0, 0, 0, 0x1, // stream id
+            0, 0, 0, 0x2, // promised id
+            0x82, // HPACK :method="GET"
+        ];
+    };
+
+    let pp = poll_frame!(PushPromise, codec);
+    assert_eq!(pp.stream_id(), 1);
+    assert_eq!(pp.promised_id(), 2);
+    assert_eq!(pp.into_parts().0.method, Some(Method::GET));
+
+    assert_closed!(codec);
+}
+fn restriction1() {
+    let fixture = super::fixture();
+    let f = fixture.join("restrictions");
+
+    let resolver = Resolver::new(ResolveOptions {
+        extensions: vec![".js".into()],
+        restrictions: vec![Restriction::Path(f.clone())],
+        ..ResolveOptions::default()
+    });
+
+    let resolution = resolver.resolve(&f, "pck2");
+    assert_eq!(resolution, Err(ResolveError::Restriction(fixture.join("c.js"))));
+}
+async fn errors_if_recv_frame_exceeds_max_frame_size() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let h2 = async move {
+        let (mut client, h2) = client::handshake(io).await.unwrap();
+        let req = async move {
+            let resp = client.get("https://example.com/").await.expect("response");
+            assert_eq!(resp.status(), StatusCode::OK);
+            let body = resp.into_parts().1;
+            let res = util::concat(body).await;
+            let err = res.unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                "connection error detected: frame with invalid size"
+            );
+        };
+
+        // client should see a conn error
+        let conn = async move {
+            let err = h2.await.unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                "connection error detected: frame with invalid size"
+            );
+        };
+        join(conn, req).await;
+    };
+
+    // a bad peer
+    srv.codec_mut().set_max_send_frame_size(16_384 * 4);
+
+    let srv = async move {
+        let _ = srv.assert_client_handshake().await;
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200)).await;
+        srv.send_frame(frames::data(1, vec![0; 16_385]).eos()).await;
+        srv.recv_frame(frames::go_away(0).frame_size()).await;
+    };
+
+    join(srv, h2).await;
+}
+fn test_declare_oxc_lint() {
+    // Simple, multiline documentation
+    assert_eq!(TestRule::documentation().unwrap(), "Dummy description\n# which is multiline\n");
+
+    // Ensure structs with fields can be passed to the macro
+    assert_eq!(TestRule2::documentation().unwrap(), "Dummy description2\n");
+
+    // Auto-generated kebab-case name
+    assert_eq!(TestRule::NAME, "test-rule");
+}
+fn test() {
+    let f = super::fixture().join("imports-field");
+    let f2 = super::fixture().join("imports-exports-wildcard/node_modules/m/");
+
+    let resolver = Resolver::new(ResolveOptions {
+        extensions: vec![".js".into()],
+        main_files: vec!["index.js".into()],
+        condition_names: vec!["webpack".into()],
+        ..ResolveOptions::default()
+    });
+
+    #[rustfmt::skip]
+    let pass = [
+        ("should resolve using imports field instead of self-referencing", f.clone(), "#imports-field", f.join("b.js")),
+        ("should resolve using imports field instead of self-referencing for a subpath", f.join("dir"), "#imports-field", f.join("b.js")),
+        ("should resolve package #1", f.clone(), "#a/dist/main.js", f.join("node_modules/a/lib/lib2/main.js")),
+        ("should resolve package #3", f.clone(), "#ccc/index.js", f.join("node_modules/c/index.js")),
+        ("should resolve package #4", f.clone(), "#c", f.join("node_modules/c/index.js")),
+        ("should resolve with wildcard pattern", f2.clone(), "#internal/i.js", f2.join("src/internal/i.js")),
+    ];
+
+    for (comment, path, request, expected) in pass {
+        let resolved_path = resolver.resolve(&path, request).map(|r| r.full_path());
+        assert_eq!(resolved_path, Ok(expected), "{comment} {path:?} {request}");
+    }
+
+    // Note added:
+    // * should resolve absolute path as an imports field target
+    // * should log the correct info
+
+    #[rustfmt::skip]
+    let fail = [
+        ("should disallow resolve out of package scope", f.clone(), "#b", ResolveError::InvalidPackageTarget("../b.js".to_string())),
+        ("should resolve package #2", f, "#a", ResolveError::PackageImportNotDefined("#a".to_string())),
+    ];
+
+    for (comment, path, request, error) in fail {
+        let resolution = resolver.resolve(&path, request);
+        assert_eq!(resolution, Err(error), "{comment} {path:?} {request}");
+    }
+}
+async fn stream_close_by_data_frame_releases_capacity() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let window_size = frame::DEFAULT_INITIAL_WINDOW_SIZE as usize;
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
+
+        // Send request
+        let (resp1, mut s1) = client.send_request(request, false).unwrap();
+
+        // This effectively reserves the entire connection window
+        s1.reserve_capacity(window_size);
+
+        // The capacity should be immediately available as nothing else is
+        // happening on the stream.
+        assert_eq!(s1.capacity(), window_size);
+
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
+
+        // Create a second stream
+        let (resp2, mut s2) = client.send_request(request, false).unwrap();
+
+        // Request capacity
+        s2.reserve_capacity(5);
+
+        // There should be no available capacity (as it is being held up by
+        // the previous stream
+        assert_eq!(s2.capacity(), 0);
+
+        // Closing the previous stream by sending an empty data frame will
+        // release the capacity to s2
+        s1.send_data("".into(), true).unwrap();
+
+        // The capacity should be available
+        assert_eq!(s2.capacity(), 5);
+
+        // Send the frame
+        s2.send_data("hello".into(), true).unwrap();
+
+        // Drive both streams to prevent the handles from being dropped
+        // (which will send a RST_STREAM) before the connection is closed.
+        h2.drive(resp1).await.unwrap();
+        h2.drive(resp2).await.unwrap();
+    };
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(frames::headers(1).request("POST", "https://http2.akamai.com/"))
+            .await;
+        srv.send_frame(frames::headers(1).response(200)).await;
+        srv.recv_frame(frames::headers(3).request("POST", "https://http2.akamai.com/"))
+            .await;
+        srv.send_frame(frames::headers(3).response(200)).await;
+        srv.recv_frame(frames::data(1, &b""[..]).eos()).await;
+        srv.recv_frame(frames::data(3, &b"hello"[..]).eos()).await;
+    };
+    join(srv, h2).await;
+}
+async fn read_data_empty_payload() {
+    let mut codec = raw_codec! {
+        read => [
+            0, 0, 0, 0, 0, 0, 0, 0, 1,
+        ];
+    };
+
+    let data = poll_frame!(Data, codec);
+    assert_eq!(data.stream_id(), 1);
+    assert_eq!(data.payload(), &b""[..]);
+    assert!(!data.is_end_stream());
+
+    assert_closed!(codec);
+}
+fn inverse_remainder_test() {
+    assert_eq!(binary::inverse_remainder(0, 8), 0);
+    assert_eq!(binary::inverse_remainder(1, 8), 7);
+    assert_eq!(binary::inverse_remainder(2, 8), 6);
+    assert_eq!(binary::inverse_remainder(3, 8), 5);
+}
+async fn reject_authority_target_on_extended_connect_request() {
+    h2_support::trace_init!();
+
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+
+        assert_eq!(settings.is_extended_connect_protocol_enabled(), Some(true));
+
+        client
+            .send_frame(
+                frames::headers(1)
+                    .request("CONNECT", "bread:80")
+                    .protocol("the-bread-protocol"),
+            )
+            .await;
+
+        client.recv_frame(frames::reset(1).protocol_error()).await;
+    };
+
+    let srv = async move {
+        let mut builder = server::Builder::new();
+
+        builder.enable_connect_protocol();
+
+        let mut srv = builder.handshake::<_, Bytes>(io).await.expect("handshake");
+
+        assert!(srv.next().await.is_none());
+
+        poll_fn(move |cx| srv.poll_closed(cx))
+            .await
+            .expect("server");
+    };
+
+    join(client, srv).await;
+}
+fn options_test() {
+    let mut buffer = [b'\x00'; 48];
+    let options = Options::new();
+    assert_eq!(b"0", 0u8.to_lexical_with_options::<{ STANDARD }>(&mut buffer, &options));
+    assert_eq!(b"0", 0u16.to_lexical_with_options::<{ STANDARD }>(&mut buffer, &options));
+    assert_eq!(b"0", 0u32.to_lexical_with_options::<{ STANDARD }>(&mut buffer, &options));
+    assert_eq!(b"0", 0u64.to_lexical_with_options::<{ STANDARD }>(&mut buffer, &options));
+    assert_eq!(b"0", 0u128.to_lexical_with_options::<{ STANDARD }>(&mut buffer, &options));
+    assert_eq!(b"0", 0i8.to_lexical_with_options::<{ STANDARD }>(&mut buffer, &options));
+    assert_eq!(b"0", 0i16.to_lexical_with_options::<{ STANDARD }>(&mut buffer, &options));
+    assert_eq!(b"0", 0i32.to_lexical_with_options::<{ STANDARD }>(&mut buffer, &options));
+    assert_eq!(b"0", 0i64.to_lexical_with_options::<{ STANDARD }>(&mut buffer, &options));
+    assert_eq!(b"0", 0i128.to_lexical_with_options::<{ STANDARD }>(&mut buffer, &options));
+}
+fn calculate_shl_test() {
+    // Binary will always be a 0 shift.
+    assert_eq!(binary::calculate_shl(2, 1), 0);
+    assert_eq!(binary::calculate_shl(3, 1), 0);
+    assert_eq!(binary::calculate_shl(5, 1), 0);
+    assert_eq!(binary::calculate_shl(-5, 1), 0);
+    assert_eq!(binary::calculate_shl(-3, 1), 0);
+    assert_eq!(binary::calculate_shl(-2, 1), 0);
+
+    // Can have a 0 or 1 shift for base 4.
+    assert_eq!(binary::calculate_shl(2, 2), 0);
+    assert_eq!(binary::calculate_shl(3, 2), 1);
+    assert_eq!(binary::calculate_shl(4, 2), 0);
+    assert_eq!(binary::calculate_shl(-4, 2), 0);
+    assert_eq!(binary::calculate_shl(-3, 2), 1);
+    assert_eq!(binary::calculate_shl(-2, 2), 0);
+
+    // Octal can have a `[0, 2]` shift.
+    assert_eq!(binary::calculate_shl(2, 3), 2);
+    assert_eq!(binary::calculate_shl(3, 3), 0);
+    assert_eq!(binary::calculate_shl(4, 3), 1);
+    assert_eq!(binary::calculate_shl(-3, 3), 0);
+    assert_eq!(binary::calculate_shl(-2, 3), 1);
+    assert_eq!(binary::calculate_shl(-1, 3), 2);
+}
+fn fast_log10_test() {
+    // Check the first, even if illogical case works.
+    assert_eq!(decimal::fast_log10(0u32), 0);
+    assert_eq!(decimal::fast_log10(10u32), 0);
+    assert_eq!(decimal::fast_log10(15u32), 0);
+    assert_eq!(decimal::fast_log10(20u32), 1);
+    assert_eq!(decimal::fast_log10(100u32), 1);
+    assert_eq!(decimal::fast_log10(200u32), 2);
+}
+fn incorrect_description_file_3() {
+    let f = super::fixture().join("incorrect-package");
+    let resolution = Resolver::default().resolve(f.join("pack2"), ".");
+    assert!(resolution.is_err());
+}
+fn issue238_resolve() {
+    let f = super::fixture().join("issue-238");
+    let resolver = Resolver::new(ResolveOptions {
+        extensions: vec![".js".into(), ".jsx".into(), ".ts".into(), ".tsx".into()],
+        modules: vec!["src/a".into(), "src/b".into(), "src/common".into(), "node_modules".into()],
+        ..ResolveOptions::default()
+    });
+    let resolved_path =
+        resolver.resolve(f.join("src/common"), "config/myObjectFile").map(|r| r.full_path());
+    assert_eq!(resolved_path, Ok(f.join("src/common/config/myObjectFile.js")),);
+}
+fn field_name_path() {
+    let f2 = super::fixture().join("exports-field2");
+    let f3 = super::fixture().join("exports-field3");
+
+    // field name path #1 #2 #3
+    let exports_fields = [
+        vec![vec!["exportsField".into(), "exports".into()]],
+        vec![vec!["exportsField".into(), "exports".into()], vec!["exports".into()]],
+        vec![vec!["exports".into()], vec!["exportsField".into(), "exports".into()]],
+    ];
+
+    for exports_fields in exports_fields {
+        let resolver = Resolver::new(ResolveOptions {
+            alias_fields: vec![vec!["browser".into()]],
+            exports_fields,
+            extensions: vec![".js".into()],
+            ..ResolveOptions::default()
+        });
+        let resolved_path = resolver.resolve(&f3, "exports-field").map(|r| r.full_path());
+        assert_eq!(resolved_path, Ok(f3.join("node_modules/exports-field/main.js")));
+    }
+
+    // field name path #4
+    let resolver = Resolver::new(ResolveOptions {
+        alias_fields: vec![vec!["browser".into()]],
+        exports_fields: vec![vec!["exports".into()]],
+        extensions: vec![".js".into()],
+        ..ResolveOptions::default()
+    });
+    let resolved_path = resolver.resolve(&f2, "exports-field").map(|r| r.full_path());
+    assert_eq!(resolved_path, Ok(f2.join("node_modules/exports-field/index.js")));
+
+    // field name path #5
+    let resolver = Resolver::new(ResolveOptions {
+        alias_fields: vec![vec!["browser".into()]],
+        exports_fields: vec![vec!["ex".into()], vec!["exports_field".into(), "exports".into()]],
+        extensions: vec![".js".into()],
+        ..ResolveOptions::default()
+    });
+    let resolved_path = resolver.resolve(&f3, "exports-field").map(|r| r.full_path());
+    assert_eq!(resolved_path, Ok(f3.join("node_modules/exports-field/index")));
+
+    // non-compliant export targeting a directory
+    let resolver = Resolver::new(ResolveOptions {
+        exports_fields: vec![vec!["broken".into()]],
+        extensions: vec![".js".into()],
+        ..ResolveOptions::default()
+    });
+    let resolved_path = resolver.resolve(&f3, "exports-field").map(|r| r.full_path());
+    assert_eq!(resolved_path, Ok(f3.join("node_modules/exports-field/src/index.js")));
+}
+fn incorrect_description_file_2() {
+    let f = super::fixture().join("incorrect-package");
+    let resolution = Resolver::default().resolve(f.join("pack2"), ".");
+    let error = ResolveError::JSON(JSONError {
+        path: f.join("pack2/package.json"),
+        message: String::from("EOF while parsing a value at line 1 column 0"),
+        line: 1,
+        column: 0,
+    });
+    assert_eq!(resolution, Err(error));
+}
+fn respect_enforce_extension() {
+    let f = super::fixture().join("extensions");
+
+    let resolved = Resolver::new(ResolveOptions {
+        enforce_extension: EnforceExtension::Disabled,
+        extensions: vec![".ts".into(), String::new(), ".js".into()],
+        ..ResolveOptions::default()
+    })
+    .resolve(&f, "./foo");
+    assert_eq!(resolved.map(Resolution::into_path_buf), Ok(f.join("foo.ts")));
+    // TODO: need to match missingDependencies returned from the resolve function
+}
+fn i128_test() {
+    let mut buffer = [b'\x00'; 48];
+    assert_eq!(b"0", 0i128.to_lexical(&mut buffer));
+    assert_eq!(b"1", 1i128.to_lexical(&mut buffer));
+    assert_eq!(b"5", 5i128.to_lexical(&mut buffer));
+    assert_eq!(
+        &b"170141183460469231731687303715884105727"[..],
+        170141183460469231731687303715884105727i128.to_lexical(&mut buffer)
+    );
+    assert_eq!(
+        &b"-170141183460469231731687303715884105728"[..],
+        (170141183460469231731687303715884105728u128 as i128).to_lexical(&mut buffer)
+    );
+    assert_eq!(
+        b"-1",
+        (340282366920938463463374607431768211455u128 as i128).to_lexical(&mut buffer)
+    );
+    assert_eq!(b"-1", (-1i128).to_lexical(&mut buffer));
+}
+async fn configure_max_frame_size() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let h2 = async move {
+        let (mut client, h2) = client::Builder::new()
+            .max_frame_size(16_384 * 2)
+            .handshake::<_, Bytes>(io)
+            .await
+            .expect("handshake");
+
+        let req = async move {
+            let resp = client.get("https://example.com/").await.expect("response");
+            assert_eq!(resp.status(), StatusCode::OK);
+            let body = resp.into_parts().1;
+            let buf = util::concat(body).await.expect("body");
+            assert_eq!(buf.len(), 16_385);
+        };
+
+        join(async move { h2.await.expect("client") }, req).await;
+    };
+    // a good peer
+    srv.codec_mut().set_max_send_frame_size(16_384 * 2);
+
+    let srv = async move {
+        let _ = srv.assert_client_handshake().await;
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://example.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(frames::headers(1).response(200)).await;
+        srv.send_frame(frames::data(1, vec![0; 16_385]).eos()).await;
+    };
+    join(srv, h2).await;
+}
+fn exports_not_browser_field1() {
+    let f = super::fixture().join("exports-field");
+
+    let resolver = Resolver::new(ResolveOptions {
+        alias_fields: vec![vec!["browser".into()]],
+        condition_names: vec!["webpack".into()],
+        extensions: vec![".js".into()],
+        ..ResolveOptions::default()
+    });
+
+    let resolved_path = resolver.resolve(&f, "exports-field/dist/main.js").map(|r| r.full_path());
+    assert_eq!(resolved_path, Ok(f.join("node_modules/exports-field/lib/lib2/main.js")));
+}
+fn i16_test() {
+    let mut buffer = [b'\x00'; 16];
+    assert_eq!(b"0", 0i16.to_lexical(&mut buffer));
+    assert_eq!(b"1", 1i16.to_lexical(&mut buffer));
+    assert_eq!(b"5", 5i16.to_lexical(&mut buffer));
+    assert_eq!(b"32767", 32767i16.to_lexical(&mut buffer));
+    assert_eq!(b"-32768", (32768u16 as i16).to_lexical(&mut buffer));
+    assert_eq!(b"-1", (65535u16 as i16).to_lexical(&mut buffer));
+    assert_eq!(b"-1", (-1i16).to_lexical(&mut buffer));
+}
+fn prefer_relative() {
+    let f = super::fixture();
+
+    let resolver =
+        Resolver::new(ResolveOptions { prefer_relative: true, ..ResolveOptions::default() });
+
+    #[rustfmt::skip]
+    let pass = [
+        ("should correctly resolve with preferRelative 1", "main1.js", f.join("main1.js")),
+        ("should correctly resolve with preferRelative 2", "m1/a.js", f.join("node_modules/m1/a.js")),
+    ];
+
+    for (comment, request, expected) in pass {
+        let resolved_path = resolver.resolve(&f, request).map(|r| r.full_path());
+        assert_eq!(resolved_path, Ok(expected), "{comment} {request}");
+    }
+}
+async fn reject_pseudo_protocol_on_non_connect_request() {
+    h2_support::trace_init!();
+
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+
+        assert_eq!(settings.is_extended_connect_protocol_enabled(), Some(true));
+
+        client
+            .send_frame(
+                frames::headers(1)
+                    .request("GET", "http://bread/baguette")
+                    .protocol("the-bread-protocol"),
+            )
+            .await;
+
+        client.recv_frame(frames::reset(1).protocol_error()).await;
+    };
+
+    let srv = async move {
+        let mut builder = server::Builder::new();
+
+        builder.enable_connect_protocol();
+
+        let mut srv = builder.handshake::<_, Bytes>(io).await.expect("handshake");
+
+        assert!(srv.next().await.is_none());
+
+        poll_fn(move |cx| srv.poll_closed(cx))
+            .await
+            .expect("server");
+    };
+
+    join(client, srv).await;
+}

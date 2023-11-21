@@ -1,0 +1,335 @@
+fn link_undefined() -> Result<()> {
+    let mut store = Store::<()>::default();
+    let linker = Linker::new(store.engine());
+    let module = Module::new(store.engine(), r#"(module (import "" "" (func)))"#)?;
+    assert!(linker.instantiate(&mut store, &module).is_err());
+    let module = Module::new(store.engine(), r#"(module (import "" "" (global i32)))"#)?;
+    assert!(linker.instantiate(&mut store, &module).is_err());
+    let module = Module::new(store.engine(), r#"(module (import "" "" (memory 1)))"#)?;
+    assert!(linker.instantiate(&mut store, &module).is_err());
+    let module = Module::new(
+        store.engine(),
+        r#"(module (import "" "" (table 1 funcref)))"#,
+    )?;
+    assert!(linker.instantiate(&mut store, &module).is_err());
+    Ok(())
+}
+fn pass_guest_back_as_borrow() -> Result<()> {
+    let engine = super::engine();
+    let c = Component::new(
+        &engine,
+        r#"
+            (component
+                (type $t' (resource (rep i32)))
+
+                (export $t "t" (type $t'))
+
+                (core func $new (canon resource.new $t))
+
+                (core module $m
+                    (import "" "new" (func $new (param i32) (result i32)))
+
+                    (func (export "mk") (result i32)
+                        (call $new (i32.const 100))
+                    )
+
+                    (func (export "take") (param i32)
+                        (if (i32.ne (local.get 0) (i32.const 100)) (then (unreachable)))
+                    )
+                )
+                (core instance $i (instantiate $m
+                    (with "" (instance
+                        (export "new" (func $new))
+                    ))
+                ))
+
+                (func (export "mk") (result (own $t))
+                    (canon lift (core func $i "mk")))
+                (func (export "take") (param "x" (borrow $t))
+                    (canon lift (core func $i "take")))
+            )
+        "#,
+    )?;
+
+    let mut store = Store::new(&engine, ());
+    let i = Linker::new(&engine).instantiate(&mut store, &c)?;
+    let mk = i.get_typed_func::<(), (ResourceAny,)>(&mut store, "mk")?;
+    let take = i.get_typed_func::<(&ResourceAny,), ()>(&mut store, "take")?;
+
+    let (resource,) = mk.call(&mut store, ())?;
+    mk.post_return(&mut store)?;
+    take.call(&mut store, (&resource,))?;
+    take.post_return(&mut store)?;
+
+    resource.resource_drop(&mut store)?;
+
+    // Should not be valid to use `resource` again
+    let err = take.call(&mut store, (&resource,)).unwrap_err();
+    assert_eq!(err.to_string(), "unknown handle index 0");
+
+    Ok(())
+}
+fn test_writer_indent() -> Result<()> {
+    let txt = include_str!("../tests/documents/test_writer_indent.xml");
+    let mut reader = Reader::from_str(txt);
+    reader.trim_text(true);
+    let mut writer = Writer::new_with_indent(Cursor::new(Vec::new()), b' ', 4);
+    loop {
+        match reader.read_event()? {
+            Eof => break,
+            e => assert!(writer.write_event(e).is_ok()),
+        }
+    }
+
+    let result = writer.into_inner().into_inner();
+    assert_eq!(result, txt.as_bytes());
+
+    Ok(())
+}
+fn pair_int_and_ptr_offsets() {
+    assert_eq!(types::PairIntAndPtr::offset_of_first(), 0);
+    assert_eq!(types::PairIntAndPtr::offset_of_second(), 4);
+}
+fn parse_scalar_subqueries() {
+    let sql = "(SELECT 1) + (SELECT 2)";
+    assert_matches!(
+        verified_expr(sql),
+        Expr::BinaryOp {
+            op: BinaryOperator::Plus,
+            ..
+        }
+    );
+}
+fn cannot_use_borrow_for_own() -> Result<()> {
+    let engine = super::engine();
+    let c = Component::new(
+        &engine,
+        r#"
+            (component
+                (import "t" (type $t (sub resource)))
+
+                (core module $m
+                    (func (export "f") (param i32) (result i32)
+                        local.get 0
+                    )
+                )
+                (core instance $i (instantiate $m))
+
+                (func (export "f") (param "x" (borrow $t)) (result (own $t))
+                    (canon lift (core func $i "f")))
+            )
+        "#,
+    )?;
+
+    struct MyType;
+
+    let mut store = Store::new(&engine, ());
+    let mut linker = Linker::new(&engine);
+    linker.root().resource::<MyType>("t", |_, _| Ok(()))?;
+    let i = linker.instantiate(&mut store, &c)?;
+
+    let f = i.get_typed_func::<(&Resource<MyType>,), (Resource<MyType>,)>(&mut store, "f")?;
+
+    let resource = Resource::new_own(100);
+    let err = f.call(&mut store, (&resource,)).unwrap_err();
+    assert_eq!(err.to_string(), "cannot lift own resource from a borrow");
+    Ok(())
+}
+fn parse_create_table_on_cluster() {
+    // Using single-quote literal to define current cluster
+    let sql = "CREATE TABLE t ON CLUSTER '{cluster}' (a INT, b INT)";
+    match verified_stmt(sql) {
+        Statement::CreateTable { on_cluster, .. } => {
+            assert_eq!(on_cluster.unwrap(), "{cluster}".to_string());
+        }
+        _ => unreachable!(),
+    }
+
+    // Using explicitly declared cluster name
+    let sql = "CREATE TABLE t ON CLUSTER my_cluster (a INT, b INT)";
+    match verified_stmt(sql) {
+        Statement::CreateTable { on_cluster, .. } => {
+            assert_eq!(on_cluster.unwrap(), "my_cluster".to_string());
+        }
+        _ => unreachable!(),
+    }
+}
+fn test_gt() {
+    assert!(version("1.2.3-alpha2") > version("0.0.0"));
+    assert!(version("1.2.3-alpha2") > version("1.0.0"));
+    assert!(version("1.2.3-alpha2") > version("1.2.0"));
+    assert!(version("1.2.3-alpha2") > version("1.2.3-alpha1"));
+    assert!(version("1.2.3") > version("1.2.3-alpha2"));
+    assert!(!(version("1.2.3-alpha2") > version("1.2.3-alpha2")));
+    assert!(!(version("1.2.3+23") > version("1.2.3+42")));
+}
+fn test_cache_write_default_config() {
+    let dir = tempfile::tempdir().expect("Can't create temporary directory");
+    let config_path = dir.path().join("cache-config.toml");
+
+    let result = create_new_config(Some(&config_path));
+    assert!(result.is_ok());
+    assert!(config_path.exists());
+    assert_eq!(config_path, result.unwrap());
+}
+fn run_wasmtime_simple_fail_no_args() -> Result<()> {
+    let wasm = build_wasm("tests/all/cli_tests/simple.wat")?;
+    assert!(
+        run_wasmtime(&[
+            "run",
+            "-Ccache=n",
+            "--invoke",
+            "simple",
+            wasm.path().to_str().unwrap(),
+        ])
+        .is_err(),
+        "shall fail"
+    );
+    Ok(())
+}
+fn test_write_empty_element_attrs() -> Result<()> {
+    let str_from = r#"<source attr="val"/>"#;
+    let expected = r#"<source attr="val"/>"#;
+    let mut reader = Reader::from_str(str_from);
+    let mut writer = Writer::new(Cursor::new(Vec::new()));
+    loop {
+        match reader.read_event()? {
+            Eof => break,
+            e => assert!(writer.write_event(e).is_ok()),
+        }
+    }
+
+    let result = writer.into_inner().into_inner();
+    assert_eq!(String::from_utf8(result).unwrap(), expected);
+    Ok(())
+}
+fn pair_int_ptrs_offsets() {
+    assert_eq!(types::PairIntPtrs::offset_of_first(), 0);
+    assert_eq!(types::PairIntPtrs::offset_of_second(), 4);
+}
+fn test_xml_decl() {
+    let mut r = Reader::from_str("<?xml version=\"1.0\" encoding='utf-8'?>");
+    r.trim_text(true);
+    match r.read_event().unwrap() {
+        Decl(ref e) => {
+            match e.version() {
+                Ok(v) => assert_eq!(
+                    &*v,
+                    b"1.0",
+                    "expecting version '1.0', got '{:?}",
+                    from_utf8(&v)
+                ),
+                Err(e) => panic!("{:?}", e),
+            }
+            match e.encoding() {
+                Some(Ok(v)) => assert_eq!(
+                    &*v,
+                    b"utf-8",
+                    "expecting encoding 'utf-8', got '{:?}",
+                    from_utf8(&v)
+                ),
+                Some(Err(e)) => panic!("{:?}", e),
+                None => panic!("cannot find encoding"),
+            }
+            match e.standalone() {
+                None => (),
+                e => panic!("doesn't expect standalone, got {:?}", e),
+            }
+        }
+        _ => panic!("unable to parse XmlDecl"),
+    }
+}
+fn default_ns_shadowing_expanded() {
+    let src = "<e xmlns='urn:example:o'><e att1='a' xmlns='urn:example:i' /></e>";
+
+    let mut r = NsReader::from_str(src);
+    r.trim_text(true).expand_empty_elements(true);
+
+    // <outer xmlns='urn:example:o'>
+    {
+        match r.read_resolved_event() {
+            Ok((ns, Start(e))) => {
+                assert_eq!(ns, Bound(Namespace(b"urn:example:o")));
+                assert_eq!(e.name(), QName(b"e"));
+            }
+            e => panic!("Expected Start event (<outer>), got {:?}", e),
+        }
+    }
+
+    // <inner att1='a' xmlns='urn:example:i' />
+    {
+        let e = match r.read_resolved_event() {
+            Ok((ns, Start(e))) => {
+                assert_eq!(ns, Bound(Namespace(b"urn:example:i")));
+                assert_eq!(e.name(), QName(b"e"));
+                e
+            }
+            e => panic!("Expecting Start event (<inner>), got {:?}", e),
+        };
+        let mut attrs = e
+            .attributes()
+            .map(|ar| ar.expect("Expecting attribute parsing to succeed."))
+            // we don't care about xmlns attributes for this test
+            .filter(|kv| kv.key.as_namespace_binding().is_none())
+            .map(|Attribute { key: name, value }| {
+                let (opt_ns, local_name) = r.resolve_attribute(name);
+                (opt_ns, local_name.into_inner(), value)
+            });
+        // the attribute should _not_ have a namespace name. The default namespace does not
+        // apply to attributes.
+        assert_eq!(
+            attrs.next(),
+            Some((Unbound, &b"att1"[..], Cow::Borrowed(&b"a"[..])))
+        );
+        assert_eq!(attrs.next(), None);
+    }
+
+    // virtual </inner>
+    match r.read_resolved_event() {
+        Ok((ns, End(e))) => {
+            assert_eq!(ns, Bound(Namespace(b"urn:example:i")));
+            assert_eq!(e.name(), QName(b"e"));
+        }
+        e => panic!("Expected End event (</inner>), got {:?}", e),
+    }
+    // </outer>
+    match r.read_resolved_event() {
+        Ok((ns, End(e))) => {
+            assert_eq!(ns, Bound(Namespace(b"urn:example:o")));
+            assert_eq!(e.name(), QName(b"e"));
+        }
+        e => panic!("Expected End event (</outer>), got {:?}", e),
+    }
+}
+fn issue299() -> Result<(), Error> {
+    let xml = r#"
+<?xml version="1.0" encoding="utf8"?>
+<MICEX_DOC xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <SECURITY SecurityId="PLZL" ISIN="RU000A0JNAA8" SecShortName="Short Name" PriceType="CASH">
+    <RECORDS RecNo="1" TradeNo="1111" TradeDate="2021-07-08" TradeTime="15:00:00" BuySell="S" SettleCode="Y1Dt" Decimals="3" Price="13057.034" Quantity="766" Value="10001688.29" AccInt="0" Amount="10001688.29" Balance="766" TrdAccId="X0011" ClientDetails="2222" CPFirmId="3333" CPFirmShortName="Firm Short Name" Price2="13057.034" RepoPart="2" ReportTime="16:53:27" SettleTime="17:47:06" ClientCode="4444" DueDate="2021-07-09" EarlySettleStatus="N" RepoRate="5.45" RateType="FIX"/>
+  </SECURITY>
+</MICEX_DOC>
+"#;
+    let mut reader = Reader::from_str(xml);
+    loop {
+        match reader.read_event()? {
+            Event::Start(e) | Event::Empty(e) => {
+                let attr_count = match e.name().as_ref() {
+                    b"MICEX_DOC" => 1,
+                    b"SECURITY" => 4,
+                    b"RECORDS" => 26,
+                    _ => unreachable!(),
+                };
+                assert_eq!(
+                    attr_count,
+                    e.attributes().filter(Result::is_ok).count(),
+                    "mismatch att count on '{:?}'",
+                    reader.decoder().decode(e.name().as_ref())
+                );
+            }
+            Event::Eof => break,
+            _ => (),
+        }
+    }
+    Ok(())
+}

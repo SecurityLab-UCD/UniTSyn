@@ -1,0 +1,435 @@
+fn owning() -> Result<()> {
+    wasmtime::component::bindgen!({
+        inline: "
+        package inline:inline;
+        world test {
+            export lists: interface {
+                foo: func(a: list<list<string>>) -> list<list<string>>;
+            }
+
+            export thing-in: interface {
+                record thing {
+                    name: string,
+                    value: list<string>
+                }
+
+                bar: func(a: thing);
+            }
+
+            export thing-in-and-out: interface {
+                record thing {
+                    name: string,
+                    value: list<string>
+                }
+
+                baz: func(a: thing) -> thing;
+            }
+        }",
+        ownership: Owning
+    });
+
+    impl PartialEq for exports::thing_in::Thing {
+        fn eq(&self, other: &Self) -> bool {
+            self.name == other.name && self.value == other.value
+        }
+    }
+
+    impl PartialEq for exports::thing_in_and_out::Thing {
+        fn eq(&self, other: &Self) -> bool {
+            self.name == other.name && self.value == other.value
+        }
+    }
+
+    let engine = engine();
+    let component = Component::new(&engine, component())?;
+
+    let linker = Linker::new(&engine);
+    let mut store = Store::new(&engine, ());
+    let (test, _) = Test::instantiate(&mut store, &component, &linker)?;
+
+    let value = vec![vec!["a".to_owned(), "b".to_owned()]];
+    assert_eq!(value, test.lists().call_foo(&mut store, &value)?);
+
+    let value = exports::thing_in::Thing {
+        name: "thing 1".to_owned(),
+        value: vec!["some value".to_owned(), "another value".to_owned()],
+    };
+    test.thing_in().call_bar(&mut store, &value)?;
+
+    let value = exports::thing_in_and_out::Thing {
+        name: "thing 1".to_owned(),
+        value: vec!["some value".to_owned(), "another value".to_owned()],
+    };
+    assert_eq!(value, test.thing_in_and_out().call_baz(&mut store, &value)?);
+
+    Ok(())
+}
+fn parse_include_tag() {
+    let ast = parse("{% include \"index.html\" -%}").unwrap();
+    assert_eq!(
+        ast[0],
+        Node::Include(WS { left: false, right: true }, vec!["index.html".to_string()], false,),
+    );
+    let ast =
+        parse("{% include [\"custom/index.html\", \"index.html\"] ignore missing %}").unwrap();
+    assert_eq!(
+        ast[0],
+        Node::Include(
+            WS { left: false, right: false },
+            vec!["custom/index.html".to_string(), "index.html".to_string()],
+            true,
+        ),
+    );
+}
+fn parse_variable_tag_simple_negated_expr() {
+    let ast = parse("{{ not id }}").unwrap();
+    assert_eq!(
+        ast[0],
+        Node::VariableBlock(WS::default(), Expr::new_negated(ExprVal::Ident("id".to_string())))
+    );
+}
+fn cannot_serialize_exported_module() -> Result<()> {
+    let engine = super::engine();
+    let component = Component::new(
+        &engine,
+        r#"(component
+            (core module $m)
+            (export "a" (core module $m))
+        )"#,
+    )?;
+    let mut store = Store::new(&engine, ());
+    let instance = Linker::new(&engine).instantiate(&mut store, &component)?;
+    let module = instance.get_module(&mut store, "a").unwrap();
+    assert!(module.serialize().is_err());
+    Ok(())
+}
+fn lex_include_tag() {
+    assert!(TeraParser::parse(Rule::include_tag, "{% include \"index.html\" %}").is_ok());
+    assert!(TeraParser::parse(Rule::include_tag, "{% include [\"index.html\"] %}").is_ok());
+    assert!(TeraParser::parse(Rule::include_tag, "{% include [\"index.html\"] ignore missing %}")
+        .is_ok());
+}
+fn parse_set_tag_fn_call() {
+    let ast = parse("{% set hello = utcnow() %}").unwrap();
+    assert_eq!(
+        ast[0],
+        Node::Set(
+            WS::default(),
+            Set {
+                key: "hello".to_string(),
+                value: Expr::new(ExprVal::FunctionCall(FunctionCall {
+                    name: "utcnow".to_string(),
+                    args: HashMap::new(),
+                },)),
+                global: false,
+            },
+        )
+    );
+}
+fn test_timeout_query_tcp() {
+    //env_logger::try_init().ok();
+    let io_loop = Runtime::new().unwrap();
+
+    // this is a test network, it should NOT be in use
+    let addr: SocketAddr = ("203.0.113.0", 53)
+        .to_socket_addrs()
+        .unwrap()
+        .next()
+        .unwrap();
+
+    let (stream, sender) = TcpClientStream::<AsyncIoTokioAsStd<TokioTcpStream>>::with_timeout(
+        addr,
+        std::time::Duration::from_millis(1),
+    );
+    let client = AsyncClient::with_timeout(
+        Box::new(stream),
+        sender,
+        std::time::Duration::from_millis(1),
+        None,
+    );
+
+    assert!(io_loop.block_on(client).is_err());
+}
+fn trap_with_native_to_wasm_stack_args() -> Result<()> {
+    let engine = Engine::default();
+    let mut store = Store::new(&engine, ());
+    let module = Module::new(
+        &engine,
+        r#"
+            (module
+                (func $trap
+                    unreachable)
+                (func $run (param i64 i64 i64 i64 i64 i64 i64 i64 i64 i64 i64 i64 i64 i64 i64)
+                    call $trap)
+                (export "run" (func $run))
+            )
+        "#,
+    )?;
+
+    let instance = Instance::new(&mut store, &module, &[])?;
+    let run = instance.get_func(&mut store, "run").unwrap();
+
+    let err = run
+        .typed::<(
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+        ), ()>(&mut store)?
+        .call(&mut store, (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+        .unwrap_err();
+    assert!(err.is::<Trap>());
+
+    let trace = err.downcast_ref::<WasmBacktrace>().unwrap();
+    assert_eq!(trace.frames().len(), 2);
+    assert_eq!(trace.frames()[0].func_name(), Some("trap"));
+    assert_eq!(trace.frames()[1].func_name(), Some("run"));
+
+    Ok(())
+}
+fn parse_variable_tag_negated_expr() {
+    let ast = parse("{{ not id and not true and not 1 + 1 }}").unwrap();
+    assert_eq!(
+        ast[0],
+        Node::VariableBlock(
+            WS::default(),
+            Expr::new(ExprVal::Logic(LogicExpr {
+                lhs: Box::new(Expr::new(ExprVal::Logic(LogicExpr {
+                    lhs: Box::new(Expr::new_negated(ExprVal::Ident("id".to_string()))),
+                    operator: LogicOperator::And,
+                    rhs: Box::new(Expr::new_negated(ExprVal::Bool(true))),
+                },))),
+                operator: LogicOperator::And,
+                rhs: Box::new(Expr::new_negated(ExprVal::Math(MathExpr {
+                    lhs: Box::new(Expr::new(ExprVal::Int(1))),
+                    operator: MathOperator::Add,
+                    rhs: Box::new(Expr::new(ExprVal::Int(1))),
+                },))),
+            },))
+        )
+    );
+}
+fn parse_comments_before_extends() {
+    let ast = parse("{# A comment #}{% extends \"index.html\" -%}").unwrap();
+    assert_eq!(ast[0], Node::Extends(WS { left: false, right: true }, "index.html".to_string(),),);
+}
+fn parse_variable_tag_macro_call_with_filter() {
+    let ast = parse("{{ macros::get_time(some=1) | round }}").unwrap();
+    let mut args = HashMap::new();
+    args.insert("some".to_string(), Expr::new(ExprVal::Int(1)));
+
+    assert_eq!(
+        ast[0],
+        Node::VariableBlock(
+            WS::default(),
+            Expr::with_filters(
+                ExprVal::MacroCall(MacroCall {
+                    namespace: "macros".to_string(),
+                    name: "get_time".to_string(),
+                    args,
+                },),
+                vec![FunctionCall { name: "round".to_string(), args: HashMap::new() },],
+            )
+        )
+    );
+}
+fn floats() -> Result<()> {
+    let component = r#"
+        (component
+            (core module $m
+                (func (export "i32.reinterpret_f32") (param f32) (result i32)
+                    local.get 0
+                    i32.reinterpret_f32
+                )
+                (func (export "i64.reinterpret_f64") (param f64) (result i64)
+                    local.get 0
+                    i64.reinterpret_f64
+                )
+                (func (export "f32.reinterpret_i32") (param i32) (result f32)
+                    local.get 0
+                    f32.reinterpret_i32
+                )
+                (func (export "f64.reinterpret_i64") (param i64) (result f64)
+                    local.get 0
+                    f64.reinterpret_i64
+                )
+            )
+            (core instance $i (instantiate $m))
+
+            (func (export "f32-to-u32") (param "a" float32) (result u32)
+                (canon lift (core func $i "i32.reinterpret_f32"))
+            )
+            (func (export "f64-to-u64") (param "a" float64) (result u64)
+                (canon lift (core func $i "i64.reinterpret_f64"))
+            )
+            (func (export "u32-to-f32") (param "a" u32) (result float32)
+                (canon lift (core func $i "f32.reinterpret_i32"))
+            )
+            (func (export "u64-to-f64") (param "a" u64) (result float64)
+                (canon lift (core func $i "f64.reinterpret_i64"))
+            )
+        )
+    "#;
+
+    let engine = super::engine();
+    let component = Component::new(&engine, component)?;
+    let mut store = Store::new(&engine, ());
+    let instance = Linker::new(&engine).instantiate(&mut store, &component)?;
+    let f32_to_u32 = instance.get_typed_func::<(f32,), (u32,)>(&mut store, "f32-to-u32")?;
+    let f64_to_u64 = instance.get_typed_func::<(f64,), (u64,)>(&mut store, "f64-to-u64")?;
+    let u32_to_f32 = instance.get_typed_func::<(u32,), (f32,)>(&mut store, "u32-to-f32")?;
+    let u64_to_f64 = instance.get_typed_func::<(u64,), (f64,)>(&mut store, "u64-to-f64")?;
+
+    assert_eq!(f32_to_u32.call(&mut store, (1.0,))?, (1.0f32.to_bits(),));
+    f32_to_u32.post_return(&mut store)?;
+    assert_eq!(f64_to_u64.call(&mut store, (2.0,))?, (2.0f64.to_bits(),));
+    f64_to_u64.post_return(&mut store)?;
+    assert_eq!(u32_to_f32.call(&mut store, (3.0f32.to_bits(),))?, (3.0,));
+    u32_to_f32.post_return(&mut store)?;
+    assert_eq!(u64_to_f64.call(&mut store, (4.0f64.to_bits(),))?, (4.0,));
+    u64_to_f64.post_return(&mut store)?;
+
+    assert_eq!(
+        u32_to_f32
+            .call(&mut store, (CANON_32BIT_NAN | 1,))?
+            .0
+            .to_bits(),
+        CANON_32BIT_NAN
+    );
+    u32_to_f32.post_return(&mut store)?;
+    assert_eq!(
+        u64_to_f64
+            .call(&mut store, (CANON_64BIT_NAN | 1,))?
+            .0
+            .to_bits(),
+        CANON_64BIT_NAN,
+    );
+    u64_to_f64.post_return(&mut store)?;
+
+    assert_eq!(
+        f32_to_u32.call(&mut store, (f32::from_bits(CANON_32BIT_NAN | 1),))?,
+        (CANON_32BIT_NAN,)
+    );
+    f32_to_u32.post_return(&mut store)?;
+    assert_eq!(
+        f64_to_u64.call(&mut store, (f64::from_bits(CANON_64BIT_NAN | 1),))?,
+        (CANON_64BIT_NAN,)
+    );
+    f64_to_u64.post_return(&mut store)?;
+
+    Ok(())
+}
+fn parse_set_array_with_filter() {
+    let ast = parse("{% set hello = [1, true, 'hello'] | length %}").unwrap();
+    assert_eq!(
+        ast[0],
+        Node::Set(
+            WS::default(),
+            Set {
+                key: "hello".to_string(),
+                value: Expr::with_filters(
+                    ExprVal::Array(vec![
+                        Expr::new(ExprVal::Int(1)),
+                        Expr::new(ExprVal::Bool(true)),
+                        Expr::new(ExprVal::String("hello".to_string())),
+                    ]),
+                    vec![FunctionCall { name: "length".to_string(), args: HashMap::new() },],
+                ),
+                global: false,
+            },
+        )
+    );
+}
+fn test_dnssec_restart_with_update_journal_dep() {
+    // TODO: make journal path configurable, it should be in target/tests/...
+    let server_path = env::var("TDNS_WORKSPACE_ROOT").unwrap_or_else(|_| "..".to_owned());
+    let server_path = Path::new(&server_path);
+    let journal = server_path.join("tests/test-data/test_configs/example.com.jrnl");
+    std::fs::remove_file(&journal).ok();
+
+    generic_test(
+        "dnssec_with_update_deprecated.toml",
+        "tests/test-data/test_configs/dnssec/rsa_2048.pem",
+        KeyFormat::Pem,
+        Algorithm::RSASHA256,
+    );
+
+    // after running the above test, the journal file should exist
+    assert!(journal.exists());
+
+    // and all dnssec tests should still pass
+    generic_test(
+        "dnssec_with_update_deprecated.toml",
+        "tests/test-data/test_configs/dnssec/rsa_2048.pem",
+        KeyFormat::Pem,
+        Algorithm::RSASHA256,
+    );
+
+    // and journal should still exist
+    assert!(journal.exists());
+
+    // cleanup...
+    // TODO: fix journal path so that it doesn't leave the dir dirty... this might make windows an option after that
+    std::fs::remove_file(&journal).expect("failed to cleanup after test");
+}
+fn host_resource_types() -> Result<()> {
+    let engine = super::engine();
+    let c = Component::new(
+        &engine,
+        r#"
+            (component
+                (import "t" (type $t (sub resource)))
+                (import "u" (type $u (sub resource)))
+
+                (export "t1" (type $t))
+                (export "t2" (type $t))
+                (export "u1" (type $u))
+                (export "u2" (type $u))
+
+                (component $c
+                    (import "r" (type $r (sub resource)))
+                    (export "r1" (type $r))
+                )
+                (instance $i1 (instantiate $c (with "r" (type $t))))
+                (instance $i2 (instantiate $c (with "r" (type $t))))
+                (export "t3" (type $i1 "r1"))
+                (export "t4" (type $i2 "r1"))
+            )
+        "#,
+    )?;
+
+    struct T;
+    struct U;
+    assert!(ResourceType::host::<T>() != ResourceType::host::<U>());
+
+    let mut store = Store::new(&engine, ());
+    let mut linker = Linker::new(&engine);
+    linker.root().resource::<T>("t", |_, _| Ok(()))?;
+    linker.root().resource::<U>("u", |_, _| Ok(()))?;
+    let i = linker.instantiate(&mut store, &c)?;
+    let t1 = i.get_resource(&mut store, "t1").unwrap();
+    let t2 = i.get_resource(&mut store, "t2").unwrap();
+    let t3 = i.get_resource(&mut store, "t3").unwrap();
+    let t4 = i.get_resource(&mut store, "t4").unwrap();
+    let u1 = i.get_resource(&mut store, "u1").unwrap();
+    let u2 = i.get_resource(&mut store, "u2").unwrap();
+
+    assert_eq!(t1, ResourceType::host::<T>());
+    assert_eq!(t2, ResourceType::host::<T>());
+    assert_eq!(t3, ResourceType::host::<T>());
+    assert_eq!(t4, ResourceType::host::<T>());
+    assert_eq!(u1, ResourceType::host::<U>());
+    assert_eq!(u2, ResourceType::host::<U>());
+    Ok(())
+}

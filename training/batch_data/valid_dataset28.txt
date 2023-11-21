@@ -1,0 +1,402 @@
+fn line_width_parse_errors_overflow() {
+    let mut console = BufferConsole::default();
+    let mut fs = MemoryFileSystem::default();
+
+    let result = run_cli(
+        DynRef::Borrowed(&mut fs),
+        &mut console,
+        Args::from([("format"), ("--line-width"), ("321"), ("file.js")].as_slice()),
+    );
+
+    assert!(result.is_err(), "run_cli returned {result:?}");
+
+    assert_cli_snapshot(SnapshotPayload::new(
+        module_path!(),
+        "line_width_parse_errors_overflow",
+        fs,
+        console,
+        result,
+    ));
+}
+fn quick_test() {
+    let source = r#"{
+        "javascript": {
+            "formatter": {
+                "overrides": [
+                {}]
+            }
+        }
+    }"#;
+    let result = deserialize_from_json_str::<Configuration>(source, JsonParserOptions::default());
+
+    dbg!(result.diagnostics());
+    assert!(!result.has_errors());
+}
+fn test_vessd_case() {
+    let foo_vec = vec![Foo::Bar(0); 5];
+    let foo_str = to_string(&foo_vec).unwrap();
+    assert_eq!(foo_str.as_str(), "[0,0,0,0,0]");
+    assert_eq!(from_str::<Vec<Foo>>(&foo_str).unwrap(), foo_vec);
+}
+fn print_verbose() {
+    let mut fs = MemoryFileSystem::default();
+
+    let file_path = Path::new("ci.js");
+    fs.insert(file_path.into(), LINT_ERROR.as_bytes());
+
+    let mut console = BufferConsole::default();
+    let result = run_cli(
+        DynRef::Borrowed(&mut fs),
+        &mut console,
+        Args::from(
+            [
+                ("ci"),
+                ("--verbose"),
+                file_path.as_os_str().to_str().unwrap(),
+            ]
+            .as_slice(),
+        ),
+    );
+
+    assert!(result.is_err(), "run_cli returned {result:?}");
+
+    assert_cli_snapshot(SnapshotPayload::new(
+        module_path!(),
+        "print_verbose",
+        fs,
+        console,
+        result,
+    ));
+}
+fn no_lint_when_file_is_ignored() {
+    let mut fs = MemoryFileSystem::default();
+    let mut console = BufferConsole::default();
+
+    let file_path = Path::new("biome.json");
+    fs.insert(file_path.into(), CONFIG_LINTER_IGNORED_FILES.as_bytes());
+
+    let file_path = Path::new("test.js");
+    fs.insert(file_path.into(), FIX_BEFORE.as_bytes());
+
+    let result = run_cli(
+        DynRef::Borrowed(&mut fs),
+        &mut console,
+        Args::from(
+            [
+                ("lint"),
+                ("--apply"),
+                file_path.as_os_str().to_str().unwrap(),
+            ]
+            .as_slice(),
+        ),
+    );
+
+    assert!(result.is_err(), "run_cli returned {result:?}");
+
+    let mut buffer = String::new();
+    fs.open(file_path)
+        .unwrap()
+        .read_to_string(&mut buffer)
+        .unwrap();
+
+    assert_eq!(buffer, FIX_BEFORE);
+
+    assert_cli_snapshot(SnapshotPayload::new(
+        module_path!(),
+        "no_lint_when_file_is_ignored",
+        fs,
+        console,
+        result,
+    ));
+}
+fn test_struct_fields() {
+    assert_eq!(
+        ron::from_str::<TestStruct>("TestStruct(a: true, b: 'b', c: -42, d: \"gotcha\")"),
+        Err(SpannedError {
+            code: Error::NoSuchStructField {
+                expected: &["a", "b", "c"],
+                found: String::from("d"),
+                outer: Some(String::from("TestStruct")),
+            },
+            position: Position { line: 1, col: 38 },
+        })
+    );
+
+    assert_eq!(
+        ron::from_str::<TestStruct>("TestStruct(a: true, c: -42)"),
+        Err(SpannedError {
+            code: Error::MissingStructField {
+                field: "b",
+                outer: Some(String::from("TestStruct")),
+            },
+            position: Position { line: 1, col: 27 },
+        })
+    );
+
+    assert_eq!(
+        ron::from_str::<TestStruct>("TestStruct(a: true, b: 'b', a: false, c: -42)"),
+        Err(SpannedError {
+            code: Error::DuplicateStructField {
+                field: "a",
+                outer: Some(String::from("TestStruct")),
+            },
+            position: Position { line: 1, col: 30 },
+        })
+    );
+}
+fn apply_suggested_error() {
+    let mut fs = MemoryFileSystem::default();
+    let mut console = BufferConsole::default();
+
+    let file_path = Path::new("fix.js");
+    fs.insert(file_path.into(), APPLY_SUGGESTED_BEFORE.as_bytes());
+
+    let result = run_cli(
+        DynRef::Borrowed(&mut fs),
+        &mut console,
+        Args::from(
+            [
+                ("lint"),
+                ("--apply-unsafe"),
+                ("--apply"),
+                file_path.as_os_str().to_str().unwrap(),
+            ]
+            .as_slice(),
+        ),
+    );
+
+    assert!(result.is_err(), "run_cli returned {result:?}");
+
+    assert_cli_snapshot(SnapshotPayload::new(
+        module_path!(),
+        "apply_suggested_error",
+        fs,
+        console,
+        result,
+    ));
+}
+fn ci_runs_linter_not_formatter_issue_3495() {
+    let mut fs = MemoryFileSystem::default();
+    let mut console = BufferConsole::default();
+
+    let file_path = Path::new("biome.json");
+    fs.insert(file_path.into(), CONFIG_DISABLED_FORMATTER.as_bytes());
+
+    let file_path = Path::new("file.js");
+    fs.insert(file_path.into(), INCORRECT_CODE.as_bytes());
+
+    let result = run_cli(
+        DynRef::Borrowed(&mut fs),
+        &mut console,
+        Args::from([("ci"), file_path.as_os_str().to_str().unwrap()].as_slice()),
+    );
+
+    assert!(result.is_err(), "run_cli returned {result:?}");
+
+    let mut file = fs
+        .open(file_path)
+        .expect("ci target file was removed by the CLI");
+
+    let mut content = String::new();
+    file.read_to_string(&mut content)
+        .expect("failed to read file from memory FS");
+
+    drop(file);
+    assert_cli_snapshot(SnapshotPayload::new(
+        module_path!(),
+        "ci_runs_linter_not_formatter_issue_3495",
+        fs,
+        console,
+        result,
+    ));
+}
+fn test_deserialise_non_newtypes() {
+    assert_eq!(
+        from_str::<TestEnum>(r#"#![enable(unwrap_variant_newtypes)] Unit"#).unwrap(),
+        TestEnum::Unit,
+    );
+
+    assert_eq!(
+        from_str::<TestEnum>(r#"#![enable(unwrap_variant_newtypes)] PrimitiveNewtype("hi")"#)
+            .unwrap(),
+        TestEnum::PrimitiveNewtype(String::from("hi")),
+    );
+
+    assert_eq!(
+        from_str::<TestEnum>(r#"#![enable(unwrap_variant_newtypes)] Tuple(4, false)"#).unwrap(),
+        TestEnum::Tuple(4, false),
+    );
+
+    assert_eq!(
+        from_str::<TestEnum>(r#"#![enable(unwrap_variant_newtypes)] Struct(a: 4, b: false)"#)
+            .unwrap(),
+        TestEnum::Struct { a: 4, b: false },
+    );
+}
+fn checked_math() {
+    assert_eq!(size(1).checked_add(size(1)), Some(size(2)));
+    assert_eq!(size(1).checked_sub(size(1)), Some(size(0)));
+    assert_eq!(size(1).checked_sub(size(2)), None);
+    assert_eq!(size(!0).checked_add(size(1)), None);
+}
+fn roundtrip_ident_with_dash() {
+    let value = MyStructWithDashes {
+        my_enum: MyEnumWithDashes::ThisIsMyUnitVariant,
+        my_enum2: MyEnumWithDashes::ThisIsMyTupleVariant(false, -3),
+        will_be_renamed: 32,
+    };
+
+    let serial = ron::ser::to_string(&value).unwrap();
+
+    println!("Serialized: {}", serial);
+
+    let deserial = ron::de::from_str(&serial);
+
+    assert_eq!(Ok(value), deserial);
+}
+fn ignore_vcs_ignored_file_via_cli() {
+    let mut fs = MemoryFileSystem::default();
+    let mut console = BufferConsole::default();
+
+    let git_ignore = r#"
+file2.js
+"#;
+
+    let code2 = r#"foo.call();
+
+
+    bar.call();"#;
+    let code1 = r#"array.map(sentence => sentence.split(' ')).flat();"#;
+
+    // ignored files
+    let file_path1 = Path::new("file1.js");
+    fs.insert(file_path1.into(), code1.as_bytes());
+    let file_path2 = Path::new("file2.js");
+    fs.insert(file_path2.into(), code2.as_bytes());
+
+    // git folder
+    let git_folder = Path::new("./.git");
+    fs.insert(git_folder.into(), "".as_bytes());
+
+    // git ignore file
+    let ignore_file = Path::new("./.gitignore");
+    fs.insert(ignore_file.into(), git_ignore.as_bytes());
+
+    let result = run_cli(
+        DynRef::Borrowed(&mut fs),
+        &mut console,
+        Args::from(
+            [
+                ("ci"),
+                ("--vcs-enabled=true"),
+                ("--vcs-client-kind=git"),
+                ("--vcs-use-ignore-file=true"),
+                ("--vcs-root=."),
+                file_path1.as_os_str().to_str().unwrap(),
+                file_path2.as_os_str().to_str().unwrap(),
+            ]
+            .as_slice(),
+        ),
+    );
+
+    assert!(result.is_err(), "run_cli returned {result:?}");
+
+    assert_cli_snapshot(SnapshotPayload::new(
+        module_path!(),
+        "ignore_vcs_ignored_file_via_cli",
+        fs,
+        console,
+        result,
+    ));
+}
+fn test_adjacently_tagged_enum() {
+    // Note: TestEnumAdjacent makes sense here since we are now treating
+    //        the enum as a struct
+
+    assert_eq!(
+        ron::from_str::<TestEnumAdjacent>("(type: StructVariant, content: (d: 4))"),
+        Err(SpannedError {
+            code: Error::MissingStructField {
+                field: "a",
+                outer: Some(String::from("TestEnumAdjacent")),
+            },
+            position: Position { line: 1, col: 37 },
+        })
+    );
+}
+fn does_not_format_if_files_are_listed_in_ignore_option() {
+    let mut fs = MemoryFileSystem::default();
+    let mut console = BufferConsole::default();
+
+    let file_path = Path::new("biome.json");
+    fs.insert(
+        file_path.into(),
+        CONFIG_FORMATTER_AND_FILES_IGNORE.as_bytes(),
+    );
+
+    let file_path_test1 = Path::new("test1.js");
+    fs.insert(file_path_test1.into(), UNFORMATTED.as_bytes());
+
+    let file_path_test2 = Path::new("test2.js");
+    fs.insert(file_path_test2.into(), UNFORMATTED.as_bytes());
+
+    let result = run_cli(
+        DynRef::Borrowed(&mut fs),
+        &mut console,
+        Args::from(
+            [
+                ("format"),
+                file_path_test1.as_os_str().to_str().unwrap(),
+                file_path_test2.as_os_str().to_str().unwrap(),
+                ("--write"),
+            ]
+            .as_slice(),
+        ),
+    );
+
+    assert!(result.is_err(), "run_cli returned {result:?}");
+
+    let mut buffer = String::new();
+    fs.open(file_path_test1)
+        .unwrap()
+        .read_to_string(&mut buffer)
+        .unwrap();
+
+    assert_eq!(buffer, UNFORMATTED);
+
+    let mut buffer = String::new();
+    fs.open(file_path_test2)
+        .unwrap()
+        .read_to_string(&mut buffer)
+        .unwrap();
+
+    assert_eq!(buffer, UNFORMATTED);
+
+    assert_cli_snapshot(SnapshotPayload::new(
+        module_path!(),
+        "does_not_format_if_files_are_listed_in_ignore_option",
+        fs,
+        console,
+        result,
+    ));
+}
+fn indent_style_parse_errors() {
+    let mut console = BufferConsole::default();
+    let mut fs = MemoryFileSystem::default();
+
+    let result = run_cli(
+        DynRef::Borrowed(&mut fs),
+        &mut console,
+        Args::from([("format"), ("--indent-style"), ("invalid"), ("file.js")].as_slice()),
+    );
+
+    assert!(result.is_err(), "run_cli returned {result:?}");
+
+    assert_cli_snapshot(SnapshotPayload::new(
+        module_path!(),
+        "indent_style_parse_errors",
+        fs,
+        console,
+        result,
+    ));
+}

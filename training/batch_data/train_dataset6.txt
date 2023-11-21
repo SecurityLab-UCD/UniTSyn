@@ -1,0 +1,1223 @@
+fn test_split_overflow_bytes_size() {
+    #[cfg(not(target_pointer_width = "128"))]
+    let (at, mut ucmd) = at_and_ucmd!();
+    let name = "test_split_overflow_bytes_size";
+    RandomFile::new(&at, name).add_bytes(1000);
+    ucmd.args(&["-b", "1Y", name]).succeeds();
+    let glob = Glob::new(&at, ".", r"x[[:alpha:]][[:alpha:]]$");
+    assert_eq!(glob.count(), 1);
+    assert_eq!(glob.collate(), at.read_bytes(name));
+}
+fn test_split_separator_semicolon_lines() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    ucmd.args(&["--lines=2", "-t", ";", "separator_semicolon.txt"])
+        .succeeds();
+
+    assert_eq!(file_read(&at, "xaa"), "1;2;");
+    assert_eq!(file_read(&at, "xab"), "3;4;");
+    assert_eq!(file_read(&at, "xac"), "5;");
+    assert!(!at.plus("xad").exists());
+}
+fn test_underflow_relative_size() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    ucmd.args(&["-s-1", FILE1])
+        .succeeds()
+        .no_stdout()
+        .no_stderr();
+    assert!(at.file_exists(FILE1));
+    assert!(at.read_bytes(FILE1).is_empty());
+}
+fn test_numeric_suffix_alias() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    ucmd.args(&["-n", "4", "--numeric=9", "threebytes.txt"])
+        .succeeds()
+        .no_stdout()
+        .no_stderr();
+    assert_eq!(at.read("x09"), "a");
+    assert_eq!(at.read("x10"), "b");
+    assert_eq!(at.read("x11"), "c");
+    assert_eq!(at.read("x12"), "");
+}
+fn gen_c_header_works_pirita() -> anyhow::Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let operating_dir: PathBuf = temp_dir.path().to_owned();
+
+    let wasm_path = operating_dir.join(fixtures::wabt());
+    let out_path = temp_dir.path().join("header.h");
+
+    let _ = Command::new(get_wasmer_path())
+        .arg("gen-c-header")
+        .arg(&wasm_path)
+        .arg("-o")
+        .arg(&out_path)
+        .arg("--atom")
+        .arg("wasm-validate")
+        .output()
+        .unwrap();
+
+    let file = std::fs::read_to_string(&out_path).expect("no header.h file");
+    assert!(file.contains("wasmer_function_0f41d38dcfb5abc1fadb5e9acbc5c645e53fe4d0dd86270b72a09bfeee04d055_0"), "no wasmer_function_6f62a6bc5c8f8e3e12a54e2ecbc5674ccfe1c75f91d8e4dd6ebb3fec422a4d6c_0 in file");
+
+    let cmd = Command::new(get_wasmer_path())
+        .arg("gen-c-header")
+        .arg(&wasm_path)
+        .arg("-o")
+        .arg(&out_path)
+        .output()
+        .unwrap();
+
+    assert!(!cmd.status.success());
+
+    Ok(())
+}
+fn test_split_obs_lines_standalone_overflow() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let name = "obs-lines-standalone";
+    RandomFile::new(&at, name).add_lines(4);
+    ucmd.args(&["-99999999999999999991", name])
+        .succeeds()
+        .no_stderr()
+        .no_stdout();
+    let glob = Glob::new(&at, ".", r"x[[:alpha:]][[:alpha:]]$");
+    assert_eq!(glob.count(), 1);
+    assert_eq!(glob.collate(), at.read_bytes(name));
+}
+fn test_touch_set_ymdhms_time() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file = "test_touch_set_ymdhms_time";
+
+    ucmd.args(&["-t", "1501011234.56", file])
+        .succeeds()
+        .no_stderr();
+
+    assert!(at.file_exists(file));
+
+    let start_of_year = str_to_filetime("%Y%m%d%H%M.%S", "201501010000.00");
+    let (atime, mtime) = get_file_times(&at, file);
+    assert_eq!(atime, mtime);
+    assert_eq!(atime.unix_seconds() - start_of_year.unix_seconds(), 45296);
+    assert_eq!(mtime.unix_seconds() - start_of_year.unix_seconds(), 45296);
+}
+fn test_touch_set_ymdhm_time() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file = "test_touch_set_ymdhm_time";
+
+    ucmd.args(&["-t", "1501011234", file])
+        .succeeds()
+        .no_stderr();
+
+    assert!(at.file_exists(file));
+
+    let start_of_year = str_to_filetime("%Y%m%d%H%M", "201501010000");
+    let (atime, mtime) = get_file_times(&at, file);
+    assert_eq!(atime, mtime);
+    assert_eq!(atime.unix_seconds() - start_of_year.unix_seconds(), 45240);
+    assert_eq!(mtime.unix_seconds() - start_of_year.unix_seconds(), 45240);
+}
+fn test_short_combination() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    ucmd.args(&["-dxen", "4", "threebytes.txt"])
+        .succeeds()
+        .no_stdout()
+        .no_stderr();
+    assert_eq!(at.read("x00"), "a");
+    assert_eq!(at.read("x01"), "b");
+    assert_eq!(at.read("x02"), "c");
+    assert!(!at.file_exists("x03"));
+}
+fn test_split_number_chunks_short_concatenated_with_value() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    ucmd.args(&["-n3", "threebytes.txt"])
+        .succeeds()
+        .no_stdout()
+        .no_stderr();
+    assert_eq!(at.read("xaa"), "a");
+    assert_eq!(at.read("xab"), "b");
+    assert_eq!(at.read("xac"), "c");
+}
+fn test_split_separator_semicolon_number_l() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    ucmd.args(&["--number=l/3", "--separator=;", "separator_semicolon.txt"])
+        .succeeds();
+
+    assert_eq!(file_read(&at, "xaa"), "1;2;");
+    assert_eq!(file_read(&at, "xab"), "3;4;");
+    assert_eq!(file_read(&at, "xac"), "5;");
+    assert!(!at.plus("xad").exists());
+}
+fn test_hex_suffix_no_value() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    ucmd.args(&["-l", "9", "--hex-suffixes", "onehundredlines.txt"])
+        .succeeds()
+        .no_stdout()
+        .no_stderr();
+    assert_eq!(at.read("x00"), "00\n01\n02\n03\n04\n05\n06\n07\n08\n");
+    assert_eq!(at.read("x01"), "09\n10\n11\n12\n13\n14\n15\n16\n17\n");
+    assert_eq!(at.read("x02"), "18\n19\n20\n21\n22\n23\n24\n25\n26\n");
+    assert_eq!(at.read("x03"), "27\n28\n29\n30\n31\n32\n33\n34\n35\n");
+    assert_eq!(at.read("x04"), "36\n37\n38\n39\n40\n41\n42\n43\n44\n");
+    assert_eq!(at.read("x05"), "45\n46\n47\n48\n49\n50\n51\n52\n53\n");
+    assert_eq!(at.read("x06"), "54\n55\n56\n57\n58\n59\n60\n61\n62\n");
+    assert_eq!(at.read("x07"), "63\n64\n65\n66\n67\n68\n69\n70\n71\n");
+    assert_eq!(at.read("x08"), "72\n73\n74\n75\n76\n77\n78\n79\n80\n");
+    assert_eq!(at.read("x09"), "81\n82\n83\n84\n85\n86\n87\n88\n89\n");
+    assert_eq!(at.read("x0a"), "90\n91\n92\n93\n94\n95\n96\n97\n98\n");
+    assert_eq!(at.read("x0b"), "99\n");
+}
+fn test_split_obs_lines_within_combined_shorts_tailing_suffix_length() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let name = "obs-lines-combined-shorts-tailing-suffix-length";
+    RandomFile::new(&at, name).add_lines(1000);
+    ucmd.args(&["-d200a4", name]).succeeds();
+
+    let glob = Glob::new(&at, ".", r"x\d\d\d\d$");
+    assert_eq!(glob.count(), 5);
+    assert_eq!(glob.collate(), at.read_bytes(name));
+}
+fn test_wasmer_run_complex_url() {
+    let wasm_test_path = fixtures::qjs();
+    let wasm_test_path = wasm_test_path.canonicalize().unwrap_or(wasm_test_path);
+    let mut wasm_test_path = format!("{}", wasm_test_path.display());
+    if wasm_test_path.starts_with(r#"\\?\"#) {
+        wasm_test_path = wasm_test_path.replacen(r#"\\?\"#, "", 1);
+    }
+    #[cfg(target_os = "windows")]
+    {
+        wasm_test_path = wasm_test_path.replace("D:\\", "D://");
+        wasm_test_path = wasm_test_path.replace("C:\\", "C://");
+        wasm_test_path = wasm_test_path.replace("c:\\", "c://");
+        wasm_test_path = wasm_test_path.replace("\\", "/");
+        // wasmer run used to fail on c:\Users\username\wapm_packages\ ...
+        assert!(
+            wasm_test_path.contains("://"),
+            "wasm_test_path path is not complex enough"
+        );
+    }
+
+    Command::new(get_wasmer_path())
+        .arg("run")
+        .arg(wasm_test_path)
+        .arg("--")
+        .arg("-q")
+        .assert()
+        .success();
+}
+fn test_numeric_suffix() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    ucmd.args(&["-n", "4", "--numeric-suffixes=9", "threebytes.txt"])
+        .succeeds()
+        .no_stdout()
+        .no_stderr();
+    assert_eq!(at.read("x09"), "a");
+    assert_eq!(at.read("x10"), "b");
+    assert_eq!(at.read("x11"), "c");
+    assert_eq!(at.read("x12"), "");
+}
+fn test_lines() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    let file_read = |f| {
+        let mut s = String::new();
+        at.open(f).read_to_string(&mut s).unwrap();
+        s
+    };
+
+    // Split into two files without splitting up lines.
+    ucmd.args(&["-n", "l/2", "fivelines.txt"]).succeeds();
+
+    assert_eq!(file_read("xaa"), "1\n2\n3\n");
+    assert_eq!(file_read("xab"), "4\n5\n");
+}
+fn test_touch_set_date6() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file = "test_touch_set_date";
+
+    ucmd.args(&["-d", "2000-01-01 00:00", file])
+        .succeeds()
+        .no_stderr();
+
+    assert!(at.file_exists(file));
+
+    let expected = FileTime::from_unix_time(946_684_800, 0);
+
+    let (atime, mtime) = get_file_times(&at, file);
+    assert_eq!(atime, mtime);
+    assert_eq!(atime, expected);
+    assert_eq!(mtime, expected);
+}
+fn test_guard_input() {
+    let ts = TestScenario::new(util_name!());
+    let at = &ts.fixtures;
+
+    ts.ucmd()
+        .args(&["-C", "6"])
+        .pipe_in("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n")
+        .succeeds()
+        .no_stdout()
+        .no_stderr();
+    assert_eq!(at.read("xaa"), "1\n2\n3\n");
+
+    ts.ucmd()
+        .args(&["-C", "6"])
+        .pipe_in("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n")
+        .succeeds()
+        .no_stdout()
+        .no_stderr();
+    assert_eq!(at.read("xaa"), "1\n2\n3\n");
+
+    ts.ucmd()
+        .args(&["-C", "6", "xaa"])
+        .fails()
+        .stderr_only("split: 'xaa' would overwrite input; aborting\n");
+    assert_eq!(at.read("xaa"), "1\n2\n3\n");
+}
+fn test_touch_no_create_file_exists() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file = "test_touch_no_create_file_exists";
+
+    at.touch(file);
+    assert!(at.file_exists(file));
+
+    ucmd.arg("-c").arg(file).succeeds().no_stderr();
+
+    assert!(at.file_exists(file));
+}
+fn test_split_number_with_io_blksize() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file_read = |f| {
+        let mut s = String::new();
+        at.open(f).read_to_string(&mut s).unwrap();
+        s
+    };
+    ucmd.args(&["-n", "5", "asciilowercase.txt", "---io-blksize", "1024"])
+        .succeeds();
+    assert_eq!(file_read("xaa"), "abcde");
+    assert_eq!(file_read("xab"), "fghij");
+    assert_eq!(file_read("xac"), "klmno");
+    assert_eq!(file_read("xad"), "pqrst");
+    assert_eq!(file_read("xae"), "uvwxyz\n");
+}
+fn test_line_bytes_no_eof() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    ucmd.args(&["-C", "3"])
+        .pipe_in("1\n2222\n3\n4")
+        .succeeds()
+        .no_stdout()
+        .no_stderr();
+    assert_eq!(at.read("xaa"), "1\n");
+    assert_eq!(at.read("xab"), "222");
+    assert_eq!(at.read("xac"), "2\n");
+    assert_eq!(at.read("xad"), "3\n");
+    assert_eq!(at.read("xae"), "4");
+    assert!(!at.plus("xaf").exists());
+}
+fn test_split_lines_short_concatenated_with_value() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let name = "split_num_prefixed_chunks_by_lines";
+    RandomFile::new(&at, name).add_lines(10000);
+    ucmd.args(&["-l1000", name]).succeeds();
+
+    let glob = Glob::new(&at, ".", r"x[[:alpha:]][[:alpha:]]$");
+    assert_eq!(glob.count(), 10);
+    assert_eq!(glob.collate(), at.read_bytes(name));
+}
+fn test_allow_empty_files() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    ucmd.args(&["-n", "4", "threebytes.txt"])
+        .succeeds()
+        .no_stdout()
+        .no_stderr();
+    assert_eq!(at.read("xaa"), "a");
+    assert_eq!(at.read("xab"), "b");
+    assert_eq!(at.read("xac"), "c");
+    assert_eq!(at.read("xad"), "");
+}
+fn test_round_robin() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    let file_read = |f| {
+        let mut s = String::new();
+        at.open(f).read_to_string(&mut s).unwrap();
+        s
+    };
+
+    ucmd.args(&["-n", "r/2", "fivelines.txt"]).succeeds();
+
+    assert_eq!(file_read("xaa"), "1\n3\n5\n");
+    assert_eq!(file_read("xab"), "2\n4\n");
+}
+fn test_split_obs_lines_starts_combined_shorts() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+    let name = "obs-lines-starts-shorts";
+    RandomFile::new(at, name).add_lines(400);
+
+    scene
+        .ucmd()
+        .args(&["-200xd", name])
+        .succeeds()
+        .no_stderr()
+        .no_stdout();
+    let glob = Glob::new(at, ".", r"x\d\d$");
+    assert_eq!(glob.count(), 2);
+    assert_eq!(glob.collate(), at.read_bytes(name));
+}
+fn test_touch_set_date3() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file = "test_touch_set_date";
+
+    ucmd.args(&["-d", "@1623786360", file])
+        .succeeds()
+        .no_stderr();
+
+    assert!(at.file_exists(file));
+
+    let expected = FileTime::from_unix_time(1_623_786_360, 0);
+    let (atime, mtime) = get_file_times(&at, file);
+    assert_eq!(atime, mtime);
+    assert_eq!(atime, expected);
+    assert_eq!(mtime, expected);
+}
+fn test_split_obs_lines_within_combined_shorts() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+    let name = "obs-lines-within-shorts";
+    RandomFile::new(at, name).add_lines(400);
+
+    scene
+        .ucmd()
+        .args(&["-x200de", name])
+        .succeeds()
+        .no_stderr()
+        .no_stdout();
+    let glob = Glob::new(at, ".", r"x\d\d$");
+    assert_eq!(glob.count(), 2);
+    assert_eq!(glob.collate(), at.read_bytes(name));
+}
+fn test_touch_set_mdhms_time() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file = "test_touch_set_mdhms_time";
+
+    ucmd.args(&["-t", "01011234.56", file])
+        .succeeds()
+        .no_stderr();
+
+    assert!(at.file_exists(file));
+
+    let start_of_year = str_to_filetime(
+        "%Y%m%d%H%M.%S",
+        &format!("{}01010000.00", time::OffsetDateTime::now_utc().year()),
+    );
+    let (atime, mtime) = get_file_times(&at, file);
+    assert_eq!(atime, mtime);
+    assert_eq!(atime.unix_seconds() - start_of_year.unix_seconds(), 45296);
+    assert_eq!(mtime.unix_seconds() - start_of_year.unix_seconds(), 45296);
+}
+fn test_effective_suffix_numeric_last() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    ucmd.args(&[
+        "-n",
+        "4",
+        "--numeric-suffixes=7",
+        "--hex-suffixes=4",
+        "-d",
+        "-x",
+        "--numeric-suffixes=9",
+        "threebytes.txt",
+    ])
+    .succeeds()
+    .no_stdout()
+    .no_stderr();
+    assert_eq!(at.read("x09"), "a");
+    assert_eq!(at.read("x10"), "b");
+    assert_eq!(at.read("x11"), "c");
+    assert_eq!(at.read("x12"), "");
+}
+fn test_unlink_symlink() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    at.touch("foo");
+    at.symlink_file("foo", "bar");
+
+    ucmd.arg("bar").succeeds().no_stderr();
+
+    assert!(at.file_exists("foo"));
+    assert!(!at.file_exists("bar"));
+}
+fn test_tee_processing_multiple_operands() {
+    // POSIX says: "Processing of at least 13 file operands shall be supported."
+
+    let content = "tee_sample_content";
+    for n in [1, 2, 12, 13] {
+        let files = (1..=n).map(|x| x.to_string()).collect::<Vec<_>>();
+        let (at, mut ucmd) = at_and_ucmd!();
+
+        ucmd.args(&files)
+            .pipe_in(content)
+            .succeeds()
+            .stdout_is(content);
+
+        for file in &files {
+            assert!(at.file_exists(file));
+            assert_eq!(at.read(file), content);
+        }
+    }
+}
+fn test_convert_eh_frame() {
+    // Convert existing section
+    let eh_frame = read_section("eh_frame");
+    let mut eh_frame = read::EhFrame::new(&eh_frame, LittleEndian);
+    // The `.eh_frame` fixture data was created on a 64-bit machine.
+    eh_frame.set_address_size(8);
+    let frames = write::FrameTable::from(&eh_frame, &|address| Some(Address::Constant(address)))
+        .expect("Should convert eh_frame information");
+    assert_eq!(frames.cie_count(), 2);
+    assert_eq!(frames.fde_count(), 3482);
+
+    // Write to new section
+    let mut write_eh_frame = write::EhFrame(EndianVec::new(LittleEndian));
+    frames
+        .write_eh_frame(&mut write_eh_frame)
+        .expect("Should write eh_frame information");
+    let eh_frame = write_eh_frame.slice();
+    assert_eq!(eh_frame.len(), 147144);
+
+    // Convert new section
+    let mut eh_frame = read::EhFrame::new(&eh_frame, LittleEndian);
+    eh_frame.set_address_size(8);
+    let frames = write::FrameTable::from(&eh_frame, &|address| Some(Address::Constant(address)))
+        .expect("Should convert eh_frame information");
+    assert_eq!(frames.cie_count(), 2);
+    assert_eq!(frames.fde_count(), 3482);
+}
+fn test_bytes_big() {
+    const FILE: &str = "test_bytes_big.txt";
+    const EXPECTED_FILE: &str = "test_bytes_big_expected.txt";
+    const BYTES: usize = 1_000_000;
+    const N_ARG: usize = 100_000;
+
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    let mut big_input = at.make_file(FILE);
+    for i in 0..BYTES {
+        let digit = from_digit((i % 10) as u32, 10).unwrap();
+        write!(big_input, "{digit}").expect("Could not write to FILE");
+    }
+    big_input.flush().expect("Could not flush FILE");
+
+    let mut big_expected = at.make_file(EXPECTED_FILE);
+    for i in (BYTES - N_ARG)..BYTES {
+        let digit = from_digit((i % 10) as u32, 10).unwrap();
+        write!(big_expected, "{digit}").expect("Could not write to EXPECTED_FILE");
+    }
+    big_expected.flush().expect("Could not flush EXPECTED_FILE");
+
+    let result = ucmd
+        .arg(FILE)
+        .arg("-c")
+        .arg(format!("{N_ARG}"))
+        .succeeds()
+        .stdout_move_str();
+    let expected = at.read(EXPECTED_FILE);
+
+    assert_eq!(result.len(), expected.len());
+    for (actual_char, expected_char) in result.chars().zip(expected.chars()) {
+        assert_eq!(actual_char, expected_char);
+    }
+}
+fn test_split_separator_nul_lines() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    ucmd.args(&["--lines=2", "-t", "\\0", "separator_nul.txt"])
+        .succeeds();
+
+    assert_eq!(file_read(&at, "xaa"), "1\x002\0");
+    assert_eq!(file_read(&at, "xab"), "3\x004\0");
+    assert_eq!(file_read(&at, "xac"), "5\0");
+    assert!(!at.plus("xad").exists());
+}
+fn test_split_separator_semicolon_number_r() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    ucmd.args(&["--number=r/3", "--separator=;", "separator_semicolon.txt"])
+        .succeeds();
+
+    assert_eq!(file_read(&at, "xaa"), "1;4;");
+    assert_eq!(file_read(&at, "xab"), "2;5;");
+    assert_eq!(file_read(&at, "xac"), "3;");
+    assert!(!at.plus("xad").exists());
+}
+fn test_touch_set_cymdhm_time() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file = "test_touch_set_cymdhm_time";
+
+    ucmd.args(&["-t", "201501011234", file])
+        .succeeds()
+        .no_stderr();
+
+    assert!(at.file_exists(file));
+
+    let start_of_year = str_to_filetime("%Y%m%d%H%M", "201501010000");
+    let (atime, mtime) = get_file_times(&at, file);
+    assert_eq!(atime, mtime);
+    assert_eq!(atime.unix_seconds() - start_of_year.unix_seconds(), 45240);
+    assert_eq!(mtime.unix_seconds() - start_of_year.unix_seconds(), 45240);
+}
+fn test_split_separator_nul_number_r() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    ucmd.args(&["--number=r/3", "--separator=\\0", "separator_nul.txt"])
+        .succeeds();
+
+    assert_eq!(file_read(&at, "xaa"), "1\x004\0");
+    assert_eq!(file_read(&at, "xab"), "2\x005\0");
+    assert_eq!(file_read(&at, "xac"), "3\0");
+    assert!(!at.plus("xad").exists());
+}
+fn test_touch_set_cymdhms_time() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file = "test_touch_set_cymdhms_time";
+
+    ucmd.args(&["-t", "201501011234.56", file])
+        .succeeds()
+        .no_stderr();
+
+    assert!(at.file_exists(file));
+
+    let start_of_year = str_to_filetime("%Y%m%d%H%M.%S", "201501010000.00");
+    let (atime, mtime) = get_file_times(&at, file);
+    assert_eq!(atime, mtime);
+    assert_eq!(atime.unix_seconds() - start_of_year.unix_seconds(), 45296);
+    assert_eq!(mtime.unix_seconds() - start_of_year.unix_seconds(), 45296);
+}
+fn test_touch_no_create_file_absent() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file = "test_touch_no_create_file_absent";
+
+    ucmd.arg("-c").arg(file).succeeds().no_stderr();
+
+    assert!(!at.file_exists(file));
+}
+fn issue_22() {
+    let mut x = Router::new();
+    x.insert("/foo_bar", "Welcome!").unwrap();
+    x.insert("/foo/bar", "Welcome!").unwrap();
+    assert_eq!(x.at("/foo/").unwrap_err(), MatchError::NotFound);
+
+    let mut x = Router::new();
+    x.insert("/foo", "Welcome!").unwrap();
+    x.insert("/foo/bar", "Welcome!").unwrap();
+    assert_eq!(x.at("/foo/").unwrap_err(), MatchError::ExtraTrailingSlash);
+}
+fn test_touch_set_date4() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file = "test_touch_set_date";
+
+    ucmd.args(&["-d", "1970-01-01 18:43:33", file])
+        .succeeds()
+        .no_stderr();
+
+    assert!(at.file_exists(file));
+
+    let expected = FileTime::from_unix_time(67413, 0);
+    let (atime, mtime) = get_file_times(&at, file);
+    assert_eq!(atime, mtime);
+    assert_eq!(atime, expected);
+    assert_eq!(mtime, expected);
+}
+fn test_split_separator_nl_number_l() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    ucmd.args(&["--number=l/3", "--separator=\n", "fivelines.txt"])
+        .succeeds();
+
+    assert_eq!(file_read(&at, "xaa"), "1\n2\n");
+    assert_eq!(file_read(&at, "xab"), "3\n4\n");
+    assert_eq!(file_read(&at, "xac"), "5\n");
+    assert!(!at.plus("xad").exists());
+}
+fn test_tee_append() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let content = "tee_sample_content";
+    let file = "tee_out";
+
+    at.touch(file);
+    at.write(file, content);
+    assert_eq!(at.read(file), content);
+
+    ucmd.arg("-a")
+        .arg(file)
+        .pipe_in(content)
+        .succeeds()
+        .stdout_is(content);
+    assert!(at.file_exists(file));
+    assert_eq!(at.read(file), content.repeat(2));
+}
+fn test_split_separator_semicolon_line_bytes() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    ucmd.args(&["--line-bytes=4", "-t", ";", "separator_semicolon.txt"])
+        .succeeds();
+
+    assert_eq!(file_read(&at, "xaa"), "1;2;");
+    assert_eq!(file_read(&at, "xab"), "3;4;");
+    assert_eq!(file_read(&at, "xac"), "5;");
+    assert!(!at.plus("xad").exists());
+}
+fn test_convert_debug_info() {
+    // Convert existing sections
+    let debug_abbrev = read_section("debug_abbrev");
+    let debug_abbrev = read::DebugAbbrev::new(&debug_abbrev, LittleEndian);
+
+    let debug_info = read_section("debug_info");
+    let debug_info = read::DebugInfo::new(&debug_info, LittleEndian);
+
+    let debug_line = read_section("debug_line");
+    let debug_line = read::DebugLine::new(&debug_line, LittleEndian);
+
+    let debug_str = read_section("debug_str");
+    let debug_str = read::DebugStr::new(&debug_str, LittleEndian);
+
+    let debug_ranges = read_section("debug_ranges");
+    let debug_ranges = read::DebugRanges::new(&debug_ranges, LittleEndian);
+
+    let debug_rnglists = read::DebugRngLists::new(&[], LittleEndian);
+
+    let ranges = gimli::RangeLists::new(debug_ranges, debug_rnglists);
+
+    let debug_loc = read_section("debug_loc");
+    let debug_loc = read::DebugLoc::new(&debug_loc, LittleEndian);
+
+    let debug_loclists = read::DebugLocLists::new(&[], LittleEndian);
+
+    let locations = gimli::LocationLists::new(debug_loc, debug_loclists);
+
+    let dwarf = read::Dwarf {
+        debug_abbrev,
+        debug_info,
+        debug_line,
+        debug_str,
+        ranges,
+        locations,
+        ..Default::default()
+    };
+
+    let mut dwarf = write::Dwarf::from(&dwarf, &|address| Some(Address::Constant(address)))
+        .expect("Should convert DWARF information");
+
+    assert_eq!(dwarf.units.count(), 23);
+    let entries: usize = (0..dwarf.units.count())
+        .map(|i| dwarf.units.get(dwarf.units.id(i)).count())
+        .sum();
+    assert_eq!(entries, 29_560);
+    assert_eq!(dwarf.line_strings.count(), 0);
+    assert_eq!(dwarf.strings.count(), 3921);
+
+    // Write to new sections
+    let mut write_sections = write::Sections::new(EndianVec::new(LittleEndian));
+    dwarf
+        .write(&mut write_sections)
+        .expect("Should write DWARF information");
+    let debug_info_data = write_sections.debug_info.slice();
+    let debug_abbrev_data = write_sections.debug_abbrev.slice();
+    let debug_line_data = write_sections.debug_line.slice();
+    let debug_ranges_data = write_sections.debug_ranges.slice();
+    let debug_loc_data = write_sections.debug_loc.slice();
+    let debug_str_data = write_sections.debug_str.slice();
+    assert_eq!(debug_info_data.len(), 394_930);
+    assert_eq!(debug_abbrev_data.len(), 9701);
+    assert_eq!(debug_line_data.len(), 105_797);
+    assert_eq!(debug_ranges_data.len(), 155_712);
+    assert_eq!(debug_loc_data.len(), 245_168);
+    assert_eq!(debug_str_data.len(), 144_731);
+
+    // Convert new sections
+    let debug_abbrev = read::DebugAbbrev::new(debug_abbrev_data, LittleEndian);
+    let debug_info = read::DebugInfo::new(debug_info_data, LittleEndian);
+    let debug_line = read::DebugLine::new(debug_line_data, LittleEndian);
+    let debug_str = read::DebugStr::new(debug_str_data, LittleEndian);
+    let debug_ranges = read::DebugRanges::new(debug_ranges_data, LittleEndian);
+    let debug_rnglists = read::DebugRngLists::new(&[], LittleEndian);
+    let debug_loc = read::DebugLoc::new(debug_loc_data, LittleEndian);
+    let debug_loclists = read::DebugLocLists::new(&[], LittleEndian);
+
+    let ranges = gimli::RangeLists::new(debug_ranges, debug_rnglists);
+    let locations = gimli::LocationLists::new(debug_loc, debug_loclists);
+
+    let dwarf = read::Dwarf {
+        debug_abbrev,
+        debug_info,
+        debug_line,
+        debug_str,
+        ranges,
+        locations,
+        ..Default::default()
+    };
+
+    let dwarf = write::Dwarf::from(&dwarf, &|address| Some(Address::Constant(address)))
+        .expect("Should convert DWARF information");
+
+    assert_eq!(dwarf.units.count(), 23);
+    let entries: usize = (0..dwarf.units.count())
+        .map(|i| dwarf.units.get(dwarf.units.id(i)).count())
+        .sum();
+    assert_eq!(entries, 29_560);
+    assert_eq!(dwarf.strings.count(), 3921);
+}
+fn test_tee_treat_minus_as_filename() {
+    // Ensure tee treats '-' as the name of a file, as mandated by POSIX.
+
+    let (at, mut ucmd) = at_and_ucmd!();
+    let content = "tee_sample_content";
+    let file = "-";
+
+    ucmd.arg("-").pipe_in(content).succeeds().stdout_is(content);
+
+    assert!(at.file_exists(file));
+    assert_eq!(at.read(file), content);
+}
+fn test_touch_reference() {
+    let scenario = TestScenario::new("touch");
+    let (at, mut _ucmd) = (scenario.fixtures.clone(), scenario.ucmd());
+    let file_a = "test_touch_reference_a";
+    let file_b = "test_touch_reference_b";
+    let start_of_year = str_to_filetime("%Y%m%d%H%M", "201501010000");
+
+    at.touch(file_a);
+    set_file_times(&at, file_a, start_of_year, start_of_year);
+    assert!(at.file_exists(file_a));
+    for opt in ["-r", "--ref", "--reference"] {
+        scenario
+            .ccmd("touch")
+            .args(&[opt, file_a, file_b])
+            .succeeds()
+            .no_stderr();
+
+        assert!(at.file_exists(file_b));
+
+        let (atime, mtime) = get_file_times(&at, file_b);
+        assert_eq!(atime, mtime);
+        assert_eq!(atime, start_of_year);
+        assert_eq!(mtime, start_of_year);
+        let _ = remove_file(file_b);
+    }
+}
+fn test_numeric_suffix_no_value() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    ucmd.args(&["-l", "9", "--numeric-suffixes", "onehundredlines.txt"])
+        .succeeds()
+        .no_stdout()
+        .no_stderr();
+    assert_eq!(at.read("x00"), "00\n01\n02\n03\n04\n05\n06\n07\n08\n");
+    assert_eq!(at.read("x01"), "09\n10\n11\n12\n13\n14\n15\n16\n17\n");
+    assert_eq!(at.read("x02"), "18\n19\n20\n21\n22\n23\n24\n25\n26\n");
+    assert_eq!(at.read("x03"), "27\n28\n29\n30\n31\n32\n33\n34\n35\n");
+    assert_eq!(at.read("x04"), "36\n37\n38\n39\n40\n41\n42\n43\n44\n");
+    assert_eq!(at.read("x05"), "45\n46\n47\n48\n49\n50\n51\n52\n53\n");
+    assert_eq!(at.read("x06"), "54\n55\n56\n57\n58\n59\n60\n61\n62\n");
+    assert_eq!(at.read("x07"), "63\n64\n65\n66\n67\n68\n69\n70\n71\n");
+    assert_eq!(at.read("x08"), "72\n73\n74\n75\n76\n77\n78\n79\n80\n");
+    assert_eq!(at.read("x09"), "81\n82\n83\n84\n85\n86\n87\n88\n89\n");
+    assert_eq!(at.read("x10"), "90\n91\n92\n93\n94\n95\n96\n97\n98\n");
+    assert_eq!(at.read("x11"), "99\n");
+}
+fn test_wasmer_run_works_with_dir() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let qjs_path = temp_dir.path().join("qjs.wasm");
+
+    std::fs::copy(fixtures::qjs(), &qjs_path).unwrap();
+    std::fs::copy(
+        fixtures::qjs_wasmer_toml(),
+        temp_dir.path().join("wasmer.toml"),
+    )
+    .unwrap();
+
+    assert!(temp_dir.path().exists());
+    assert!(temp_dir.path().join("wasmer.toml").exists());
+    assert!(temp_dir.path().join("qjs.wasm").exists());
+
+    // test with "wasmer qjs.wasm"
+    Command::new(get_wasmer_path())
+        .arg(temp_dir.path())
+        .arg("--")
+        .arg("--quit")
+        .assert()
+        .success();
+
+    // test again with "wasmer run qjs.wasm"
+    Command::new(get_wasmer_path())
+        .arg("run")
+        .arg(temp_dir.path())
+        .arg("--")
+        .arg("--quit")
+        .assert()
+        .success();
+}
+fn test_non_existing_files() {
+    let scenario = TestScenario::new(util_name!());
+
+    let result = scenario
+        .ucmd()
+        .args(&["newer_file", "-nt", "regular_file"])
+        .fails();
+    assert!(result.stderr().is_empty());
+}
+fn test_touch_set_mdhm_time() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file = "test_touch_set_mdhm_time";
+
+    ucmd.args(&["-t", "01011234", file]).succeeds().no_stderr();
+
+    assert!(at.file_exists(file));
+
+    let start_of_year = str_to_filetime(
+        "%Y%m%d%H%M",
+        &format!("{}01010000", time::OffsetDateTime::now_utc().year()),
+    );
+    let (atime, mtime) = get_file_times(&at, file);
+    assert_eq!(atime, mtime);
+    assert_eq!(atime.unix_seconds() - start_of_year.unix_seconds(), 45240);
+    assert_eq!(mtime.unix_seconds() - start_of_year.unix_seconds(), 45240);
+}
+fn test_new_file_no_create() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let filename = "new_file_that_does_not_exist_yet";
+    ucmd.args(&["-s", "8", "-c", filename])
+        .succeeds()
+        .no_stdout()
+        .no_stderr();
+    assert!(!at.file_exists(filename));
+}
+fn test_effective_suffix_hex_last() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    ucmd.args(&[
+        "-n",
+        "4",
+        "--hex-suffixes=7",
+        "--numeric-suffixes=4",
+        "-x",
+        "-d",
+        "--hex-suffixes=9",
+        "threebytes.txt",
+    ])
+    .succeeds()
+    .no_stdout()
+    .no_stderr();
+    assert_eq!(at.read("x09"), "a");
+    assert_eq!(at.read("x0a"), "b");
+    assert_eq!(at.read("x0b"), "c");
+    assert_eq!(at.read("x0c"), "");
+}
+fn test_hex_suffix() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    ucmd.args(&["-n", "4", "--hex-suffixes=9", "threebytes.txt"])
+        .succeeds()
+        .no_stdout()
+        .no_stderr();
+    assert_eq!(at.read("x09"), "a");
+    assert_eq!(at.read("x0a"), "b");
+    assert_eq!(at.read("x0b"), "c");
+    assert_eq!(at.read("x0c"), "");
+}
+fn test_split_additional_suffix() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let name = "split_additional_suffix";
+    RandomFile::new(&at, name).add_lines(2000);
+    ucmd.args(&["--additional-suffix", ".txt", name]).succeeds();
+
+    let glob = Glob::new(&at, ".", r"x[[:alpha:]][[:alpha:]].txt$");
+    assert_eq!(glob.count(), 2);
+    assert_eq!(glob.collate(), at.read_bytes(name));
+}
+fn test_format_created_time() {
+    let args = ["-c", "%w", "/bin"];
+    let ts = TestScenario::new(util_name!());
+    let actual = ts.ucmd().args(&args).succeeds().stdout_move_str();
+    let expect = unwrap_or_return!(expected_result(&ts, &args)).stdout_move_str();
+    println!("actual: {actual:?}");
+    println!("expect: {expect:?}");
+    // note: using a regex instead of `split_whitespace()` in order to detect whitespace differences
+    let re = regex::Regex::new(r"\s").unwrap();
+    let v_actual: Vec<&str> = re.split(&actual).collect();
+    let v_expect: Vec<&str> = re.split(&expect).collect();
+    assert!(!v_expect.is_empty());
+    // * allow for inequality if `stat` (aka, expect) returns "-" (unknown value)
+    assert!(
+        expect == "-"
+            || expect == "-\n"
+            || v_actual
+                .iter()
+                .zip(v_expect.iter())
+                .all(|(a, e)| a == e || *e == "-" || *e == "-\n")
+    );
+}
+fn test_line_bytes_concatenated_with_value() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    ucmd.args(&["-C8", "letters.txt"]).succeeds();
+    assert_eq!(at.read("xaa"), "aaaaaaaa");
+    assert_eq!(at.read("xab"), "a\nbbbb\n");
+    assert_eq!(at.read("xac"), "cccc\ndd\n");
+    assert_eq!(at.read("xad"), "ee\n");
+}
+fn test_split_additional_suffix_hyphen_value() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let name = "split_additional_suffix";
+    RandomFile::new(&at, name).add_lines(2000);
+    ucmd.args(&["--additional-suffix", "-300", name]).succeeds();
+
+    let glob = Glob::new(&at, ".", r"x[[:alpha:]][[:alpha:]]-300$");
+    assert_eq!(glob.count(), 2);
+    assert_eq!(glob.collate(), at.read_bytes(name));
+}
+fn test_line_bytes_no_empty_file() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    ucmd.args(&["-C", "1"])
+        .pipe_in("1\n2222\n3\n4")
+        .succeeds()
+        .no_stdout()
+        .no_stderr();
+    assert_eq!(at.read("xaa"), "1");
+    assert_eq!(at.read("xab"), "\n");
+    assert_eq!(at.read("xac"), "2");
+    assert_eq!(at.read("xad"), "2");
+    assert_eq!(at.read("xae"), "2");
+    assert_eq!(at.read("xaf"), "2");
+    assert_eq!(at.read("xag"), "\n");
+    assert_eq!(at.read("xah"), "3");
+    assert_eq!(at.read("xai"), "\n");
+    assert_eq!(at.read("xaj"), "4");
+    assert!(!at.plus("xak").exists());
+}
+fn test_help_flag() {
+    let help_short = new_ucmd!().arg("-h").succeeds();
+    let help_long = new_ucmd!().arg("--help").succeeds();
+
+    assert_eq!(help_short.stdout_str(), help_long.stdout_str());
+}
+fn c_flags() {
+    let temp = setup_wasmer_dir();
+    let wasmer_dir = temp.path();
+
+    wasmer_cmd(&temp)
+        .arg("config")
+        .arg("--bindir")
+        .assert()
+        .success()
+        .stdout(contains_path(temp.path().join("bin")));
+
+    wasmer_cmd(&temp)
+        .arg("config")
+        .arg("--cflags")
+        .assert()
+        .success()
+        .stdout(contains(format!(
+            "-I{}\n",
+            wasmer_dir.join("include").display()
+        )));
+
+    wasmer_cmd(&temp)
+        .arg("config")
+        .arg("--includedir")
+        .assert()
+        .success()
+        .stdout(contains_path(wasmer_dir.join("include")));
+
+    wasmer_cmd(&temp)
+        .arg("config")
+        .arg("--libdir")
+        .assert()
+        .success()
+        .stdout(contains_path(wasmer_dir.join("lib")));
+
+    wasmer_cmd(&temp)
+        .arg("config")
+        .arg("--libs")
+        .assert()
+        .stdout(contains(format!(
+            "-L{} -lwasmer\n",
+            wasmer_dir.join("lib").display()
+        )));
+
+    wasmer_cmd(&temp)
+        .arg("config")
+        .arg("--prefix")
+        .assert()
+        .success()
+        .stdout(contains_path(wasmer_dir));
+
+    let output = wasmer_cmd(&temp)
+        .arg("config")
+        .arg("--pkg-config")
+        .output()
+        .unwrap();
+
+    let pkg_config = vec![
+        format!("prefix={}", wasmer_dir.display()),
+        format!("exec_prefix={}", wasmer_dir.join("bin").display()),
+        format!("includedir={}", wasmer_dir.join("include").display()),
+        format!("libdir={}", wasmer_dir.join("lib").display()),
+        format!(""),
+        format!("Name: wasmer"),
+        format!("Description: The Wasmer library for running WebAssembly"),
+        format!("Version: {}", env!("CARGO_PKG_VERSION")),
+        format!("Cflags: -I{}", wasmer_dir.join("include").display()),
+        format!("Libs: -L{} -lwasmer", wasmer_dir.join("lib").display()),
+    ]
+    .join("\n");
+
+    assert!(output.status.success());
+    let stderr = std::str::from_utf8(&output.stdout)
+        .unwrap()
+        .replace("\r\n", "\n");
+    assert_eq!(stderr.trim(), pkg_config.trim());
+
+    wasmer_cmd(&temp)
+        .arg("config")
+        .arg("--config-path")
+        .assert()
+        .success()
+        .stdout(contains_path(temp.path().join("wasmer.toml")));
+}
+fn test_touch_set_both() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file = "test_touch_set_both";
+
+    ucmd.args(&["-t", "201501011234", "-a", "-m", file])
+        .succeeds()
+        .no_stderr();
+
+    assert!(at.file_exists(file));
+
+    let start_of_year = str_to_filetime("%Y%m%d%H%M", "201501010000");
+    let (atime, mtime) = get_file_times(&at, file);
+    assert_eq!(atime, mtime);
+    assert_eq!(atime.unix_seconds() - start_of_year.unix_seconds(), 45240);
+    assert_eq!(mtime.unix_seconds() - start_of_year.unix_seconds(), 45240);
+}
+fn test_version_flag() {
+    let version_short = new_ucmd!().arg("-V").succeeds();
+    let version_long = new_ucmd!().arg("--version").succeeds();
+
+    assert_eq!(version_short.stdout_str(), version_long.stdout_str());
+}
+fn test_touch_set_date7() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file = "test_touch_set_date";
+
+    ucmd.args(&["-d", "2004-01-16 12:00 +0000", file])
+        .succeeds()
+        .no_stderr();
+
+    assert!(at.file_exists(file));
+
+    let expected = FileTime::from_unix_time(1_074_254_400, 0);
+
+    let (atime, mtime) = get_file_times(&at, file);
+    assert_eq!(atime, mtime);
+    assert_eq!(atime, expected);
+    assert_eq!(mtime, expected);
+}
+fn test_line_bytes() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    ucmd.args(&["-C", "8", "letters.txt"]).succeeds();
+    assert_eq!(at.read("xaa"), "aaaaaaaa");
+    assert_eq!(at.read("xab"), "a\nbbbb\n");
+    assert_eq!(at.read("xac"), "cccc\ndd\n");
+    assert_eq!(at.read("xad"), "ee\n");
+}
+fn test_touch_default() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let file = "test_touch_default_file";
+
+    ucmd.arg(file).succeeds().no_stderr();
+
+    assert!(at.file_exists(file));
+}
+fn test_touch_set_both_date_and_reference() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let ref_file = "test_touch_reference";
+    let file = "test_touch_set_both_date_and_reference";
+
+    let start_of_year = str_to_filetime("%Y%m%d%H%M", "201501011234");
+
+    at.touch(ref_file);
+    set_file_times(&at, ref_file, start_of_year, start_of_year);
+    assert!(at.file_exists(ref_file));
+
+    ucmd.args(&["-d", "Thu Jan 01 12:34:00 2015", "-r", ref_file, file])
+        .succeeds()
+        .no_stderr();
+    let (atime, mtime) = get_file_times(&at, file);
+    assert_eq!(atime, start_of_year);
+    assert_eq!(mtime, start_of_year);
+}
+fn test_split_default_with_io_blksize() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    let name = "split_default_with_io_blksize";
+    RandomFile::new(&at, name).add_lines(2000);
+    ucmd.args(&[name, "---io-blksize", "2M"]).succeeds();
+
+    let glob = Glob::new(&at, ".", r"x[[:alpha:]][[:alpha:]]$");
+    assert_eq!(glob.count(), 2);
+    assert_eq!(glob.collate(), at.read_bytes(name));
+}
+fn gen_c_header_works() -> anyhow::Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let operating_dir: PathBuf = temp_dir.path().to_owned();
+
+    let wasm_path = operating_dir.join(fixtures::qjs());
+    let out_path = temp_dir.path().join("header.h");
+
+    let _ = Command::new(get_wasmer_path())
+        .arg("gen-c-header")
+        .arg(&wasm_path)
+        .arg("-o")
+        .arg(&out_path)
+        .output()
+        .unwrap();
+
+    let file = std::fs::read_to_string(&out_path).expect("no header.h file");
+    assert!(file.contains("wasmer_function_6f62a6bc5c8f8e3e12a54e2ecbc5674ccfe1c75f91d8e4dd6ebb3fec422a4d6c_0"), "no wasmer_function_6f62a6bc5c8f8e3e12a54e2ecbc5674ccfe1c75f91d8e4dd6ebb3fec422a4d6c_0 in file");
+
+    let _ = Command::new(get_wasmer_path())
+        .arg("gen-c-header")
+        .arg(&wasm_path)
+        .arg("-o")
+        .arg(&out_path)
+        .arg("--prefix")
+        .arg("abc123")
+        .output()
+        .unwrap();
+
+    let file = std::fs::read_to_string(&out_path).expect("no header.h file");
+    assert!(
+        file.contains("wasmer_function_abc123_0"),
+        "no wasmer_function_abc123_0 in file"
+    );
+
+    Ok(())
+}
+fn test_terse_normal_format() {
+    // note: contains birth/creation date which increases test fragility
+    // * results may vary due to built-in `stat` limitations as well as linux kernel and rust version capability variations
+    let args = ["-t", "/"];
+    let ts = TestScenario::new(util_name!());
+    let actual = ts.ucmd().args(&args).succeeds().stdout_move_str();
+    let expect = unwrap_or_return!(expected_result(&ts, &args)).stdout_move_str();
+    println!("actual: {actual:?}");
+    println!("expect: {expect:?}");
+    let v_actual: Vec<&str> = actual.trim().split(' ').collect();
+    let mut v_expect: Vec<&str> = expect.trim().split(' ').collect();
+    assert!(!v_expect.is_empty());
+
+    // uu_stat does not support selinux
+    if v_actual.len() == v_expect.len() - 1 && v_expect[v_expect.len() - 1].contains(':') {
+        // assume last element contains: `SELinux security context string`
+        v_expect.pop();
+    }
+
+    // * allow for inequality if `stat` (aka, expect) returns "0" (unknown value)
+    assert!(
+        expect == "0"
+            || expect == "0\n"
+            || v_actual
+                .iter()
+                .zip(v_expect.iter())
+                .all(|(a, e)| a == e || *e == "0" || *e == "0\n")
+    );
+}

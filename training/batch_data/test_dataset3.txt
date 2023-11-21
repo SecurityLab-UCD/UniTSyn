@@ -1,0 +1,292 @@
+fn test_block_size_in_posix_portability_mode() {
+    fn get_header(block_size: &str) -> String {
+        let output = new_ucmd!()
+            .args(&["-P", "-B", block_size])
+            .succeeds()
+            .stdout_move_str();
+        output
+            .lines()
+            .next()
+            .unwrap()
+            .to_string()
+            .split_whitespace()
+            .nth(1)
+            .unwrap()
+            .trim()
+            .to_string()
+    }
+
+    assert_eq!(get_header("1024"), "1024-blocks");
+    assert_eq!(get_header("1K"), "1024-blocks");
+    assert_eq!(get_header("1KB"), "1000-blocks");
+    assert_eq!(get_header("1M"), "1048576-blocks");
+    assert_eq!(get_header("1MB"), "1000000-blocks");
+}
+fn parse_key_value_with_space_test() {
+  let ini_file = &b"parameter = value
+key = value2"[..];
+
+  let ini_without_key_value = &b"\nkey = value2"[..];
+
+  let res = key_value(ini_file);
+  println!("{:?}", res);
+  match res {
+    Ok((i, (o1, o2))) => println!("i: {:?} | o: ({:?},{:?})", str::from_utf8(i), o1, o2),
+    _ => println!("error"),
+  }
+
+  assert_eq!(res, Ok((ini_without_key_value, ("parameter", "value"))));
+}
+fn test_chroot_skip_chdir() {
+    let ts = TestScenario::new(util_name!());
+    let at = ts.fixtures.clone();
+    let dirs = ["/", "/.", "/..", "isroot"];
+    at.symlink_file("/", "isroot");
+    for dir in dirs {
+        let env_cd = std::env::current_dir().unwrap();
+        if let Ok(result) = run_ucmd_as_root(&ts, &[dir, "--skip-chdir"]) {
+            // Should return the same path
+            assert_eq!(
+                result.success().no_stderr().stdout_str(),
+                env_cd.to_str().unwrap()
+            );
+        } else {
+            print!("Test skipped; requires root user");
+        }
+    }
+}
+fn test_cp_backup_off() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    ucmd.arg("--backup=off")
+        .arg(TEST_HELLO_WORLD_SOURCE)
+        .arg(TEST_HOW_ARE_YOU_SOURCE)
+        .succeeds()
+        .no_stderr();
+
+    assert_eq!(at.read(TEST_HOW_ARE_YOU_SOURCE), "Hello, World!\n");
+    assert!(!at.file_exists(format!("{TEST_HOW_ARE_YOU_SOURCE}~")));
+}
+fn parse_key_value_test() {
+  let ini_file = "parameter=value
+key = value2";
+
+  let ini_without_key_value = "key = value2";
+
+  let res = key_value(ini_file);
+  println!("{:?}", res);
+  match res {
+    Ok((i, (o1, o2))) => println!("i: {} | o: ({:?},{:?})", i, o1, o2),
+    _ => println!("error"),
+  }
+
+  assert_eq!(res, Ok((ini_without_key_value, ("parameter", "value"))));
+}
+fn unsigned_float_test() {
+  assert_eq!(unsigned_float(&b"123.456;"[..]), Ok((&b";"[..], 123.456)));
+  assert_eq!(unsigned_float(&b"0.123;"[..]), Ok((&b";"[..], 0.123)));
+  assert_eq!(unsigned_float(&b"123.0;"[..]), Ok((&b";"[..], 123.0)));
+  assert_eq!(unsigned_float(&b"123.;"[..]), Ok((&b";"[..], 123.0)));
+  assert_eq!(unsigned_float(&b".123;"[..]), Ok((&b";"[..], 0.123)));
+}
+fn parse_category_test() {
+  let ini_file = "[category]
+
+parameter=value
+key = value2";
+
+  let ini_without_category = "parameter=value
+key = value2";
+
+  let res = category(ini_file);
+  println!("{:?}", res);
+  match res {
+    Ok((i, o)) => println!("i: {} | o: {:?}", i, o),
+    _ => println!("error"),
+  }
+
+  assert_eq!(res, Ok((ini_without_category, "category")));
+}
+fn test_cp_backup_existing() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    ucmd.arg("--backup=existing")
+        .arg(TEST_HELLO_WORLD_SOURCE)
+        .arg(TEST_HOW_ARE_YOU_SOURCE)
+        .succeeds()
+        .no_stderr();
+
+    assert_eq!(at.read(TEST_HOW_ARE_YOU_SOURCE), "Hello, World!\n");
+    assert_eq!(
+        at.read(&format!("{TEST_HOW_ARE_YOU_SOURCE}~")),
+        "How are you?\n"
+    );
+}
+fn test_cp_backup_simple() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    ucmd.arg("--backup=simple")
+        .arg(TEST_HELLO_WORLD_SOURCE)
+        .arg(TEST_HOW_ARE_YOU_SOURCE)
+        .succeeds()
+        .no_stderr();
+
+    assert_eq!(at.read(TEST_HOW_ARE_YOU_SOURCE), "Hello, World!\n");
+    assert_eq!(
+        at.read(&format!("{TEST_HOW_ARE_YOU_SOURCE}~")),
+        "How are you?\n"
+    );
+}
+fn test_cp_parents_with_permissions_copy_dir() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    let dir1 = "dir";
+    let dir2 = "p1/p2";
+    let file = "p1/p2/file";
+
+    at.mkdir(dir1);
+    at.mkdir_all(dir2);
+    at.touch(file);
+
+    #[cfg(unix)]
+    {
+        let p1_mode = 0o0777;
+        let p2_mode = 0o0711;
+        let file_mode = 0o0702;
+
+        at.set_mode("p1", p1_mode);
+        at.set_mode("p1/p2", p2_mode);
+        at.set_mode(file, file_mode);
+    }
+
+    ucmd.arg("-p")
+        .arg("--parents")
+        .arg("-r")
+        .arg(dir2)
+        .arg(dir1)
+        .succeeds();
+
+    #[cfg(all(unix, not(target_os = "freebsd")))]
+    {
+        let p1_metadata = at.metadata("p1");
+        let p2_metadata = at.metadata("p1/p2");
+        let file_metadata = at.metadata(file);
+
+        assert_metadata_eq!(p1_metadata, at.metadata("dir/p1"));
+        assert_metadata_eq!(p2_metadata, at.metadata("dir/p1/p2"));
+        assert_metadata_eq!(file_metadata, at.metadata("dir/p1/p2/file"));
+    }
+}
+fn test_cp_cp() {
+    let (at, mut ucmd) = at_and_ucmd!();
+    // Invoke our binary to make the copy.
+    ucmd.arg(TEST_HELLO_WORLD_SOURCE)
+        .arg(TEST_HELLO_WORLD_DEST)
+        .succeeds();
+
+    // Check the content of the destination file that was copied.
+    assert_eq!(at.read(TEST_HELLO_WORLD_DEST), "Hello, World!\n");
+}
+fn test_cp_backup_none() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    ucmd.arg("--backup=none")
+        .arg(TEST_HELLO_WORLD_SOURCE)
+        .arg(TEST_HOW_ARE_YOU_SOURCE)
+        .succeeds()
+        .no_stderr();
+
+    assert_eq!(at.read(TEST_HOW_ARE_YOU_SOURCE), "Hello, World!\n");
+    assert!(!at.file_exists(format!("{TEST_HOW_ARE_YOU_SOURCE}~")));
+}
+fn test_chown_no_change_to_user() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+
+    let result = scene.cmd("whoami").run();
+    if skipping_test_is_okay(&result, "whoami: cannot find name for user ID") {
+        return;
+    }
+    let user_name = String::from(result.stdout_str().trim());
+    assert!(!user_name.is_empty());
+
+    for (i, from) in ["42", ":42", "42:42"].iter().enumerate() {
+        let file = i.to_string();
+        at.touch(&file);
+        scene
+            .ucmd()
+            .arg("-v")
+            .arg(format!("--from={from}"))
+            .arg("43")
+            .arg(&file)
+            .succeeds()
+            .stdout_only(format!("ownership of '{file}' retained as {user_name}\n"));
+    }
+}
+fn test_chown_only_user_id() {
+    // test chown 1111 file.txt
+
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+
+    let result = scene.cmd("id").arg("-u").run();
+    if skipping_test_is_okay(&result, "id: cannot find name for group ID") {
+        return;
+    }
+    let user_id = String::from(result.stdout_str().trim());
+    assert!(!user_id.is_empty());
+
+    let file1 = "test_chown_file1";
+    at.touch(file1);
+
+    let result = scene.ucmd().arg(user_id).arg("--verbose").arg(file1).run();
+    if skipping_test_is_okay(&result, "invalid user") {
+        // From the Logs: "Build (ubuntu-18.04, x86_64-unknown-linux-gnu, feat_os_unix, use-cross)"
+        // stderr: "chown: invalid user: '1001'
+        return;
+    }
+    result.stderr_contains("retained as");
+
+    scene
+        .ucmd()
+        .arg("0")
+        .arg("--verbose")
+        .arg(file1)
+        .fails()
+        .stderr_contains("failed to change");
+}
+fn test_chmod_file_symlink_after_non_existing_file() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+    let existing = "file";
+    let test_existing_symlink = "file_symlink";
+
+    let non_existing = "test_chmod_symlink_non_existing_file";
+    let test_dangling_symlink = "test_chmod_symlink_non_existing_file_symlink";
+    let expected_stdout = &format!(
+        "failed to change mode of '{test_dangling_symlink}' from 0000 (---------) to 1500 (r-x-----T)"
+    );
+    let expected_stderr = &format!("cannot operate on dangling symlink '{test_dangling_symlink}'");
+
+    at.touch(existing);
+    set_permissions(at.plus(existing), Permissions::from_mode(0o664)).unwrap();
+    at.symlink_file(non_existing, test_dangling_symlink);
+    at.symlink_file(existing, test_existing_symlink);
+
+    // this cannot succeed since the symbolic link dangles
+    // but the metadata for the existing target should change
+    scene
+        .ucmd()
+        .arg("u+x")
+        .arg("-v")
+        .arg(test_dangling_symlink)
+        .arg(test_existing_symlink)
+        .fails()
+        .code_is(1)
+        .stdout_contains(expected_stdout)
+        .stderr_contains(expected_stderr);
+    assert_eq!(
+        at.metadata(test_existing_symlink).permissions().mode(),
+        0o100_764
+    );
+}

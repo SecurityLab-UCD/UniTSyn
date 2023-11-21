@@ -1,0 +1,411 @@
+fn u128_digit_count_test() {
+    assert_eq!(u128::digit_count(u128::MAX), 39);
+}
+async fn reject_non_authority_target_on_connect_request() {
+    h2_support::trace_init!();
+
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        let settings = client.assert_server_handshake().await;
+
+        assert_eq!(settings.is_extended_connect_protocol_enabled(), Some(true));
+
+        client
+            .send_frame(frames::headers(1).request("CONNECT", "https://bread/baguette"))
+            .await;
+
+        client.recv_frame(frames::reset(1).protocol_error()).await;
+    };
+
+    let srv = async move {
+        let mut builder = server::Builder::new();
+
+        builder.enable_connect_protocol();
+
+        let mut srv = builder.handshake::<_, Bytes>(io).await.expect("handshake");
+
+        assert!(srv.next().await.is_none());
+
+        poll_fn(move |cx| srv.poll_closed(cx))
+            .await
+            .expect("server");
+    };
+
+    join(client, srv).await;
+}
+fn test() {
+    let f = super::fixture().join("exports-field");
+    let f2 = super::fixture().join("exports-field2");
+    let f4 = super::fixture().join("exports-field-error");
+    let f5 = super::fixture().join("imports-exports-wildcard");
+
+    let resolver = Resolver::new(ResolveOptions {
+        extensions: vec![".js".into()],
+        fully_specified: true,
+        condition_names: vec!["webpack".into()],
+        ..ResolveOptions::default()
+    });
+
+    #[rustfmt::skip]
+    let pass = [
+        ("resolve root using exports field, not a main field", f.clone(), "exports-field", f.join("node_modules/exports-field/x.js")),
+        ("resolver should respect condition names", f.clone(), "exports-field/dist/main.js", f.join("node_modules/exports-field/lib/lib2/main.js")),
+        // enhanced_resolve behaves differently to node.js. enhanced_resolve fallbacks when an
+        // array item is unresolved, where as node.js fallbacks when an array has an
+        // InvalidPackageTarget error.
+        // ("resolver should respect fallback", f2.clone(), "exports-field/dist/browser.js", f2.join("node_modules/exports-field/lib/browser.js")),
+        // The following two tests require fallback from array values, the path is changed here to
+        // only test query and fragment.
+        ("resolver should respect query parameters #1", f2.clone(), "exports-field/dist/main.js?foo", f2.join("node_modules/exports-field/lib/lib2/main.js?foo")),
+        ("resolver should respect fragment parameters #1", f2.clone(), "exports-field/dist/main.js#foo", f2.join("node_modules/exports-field/lib/lib2/main.js#foo")),
+        ("relative path should work, if relative path as request is used", f.clone(), "./node_modules/exports-field/lib/main.js", f.join("node_modules/exports-field/lib/main.js")),
+        ("self-resolving root", f.clone(), "@exports-field/core", f.join("a.js")),
+        ("should resolve with wildcard pattern #1", f5.clone(), "m/features/f.js", f5.join("node_modules/m/src/features/f.js")),
+        ("should resolve with wildcard pattern #2", f5.clone(), "m/features/y/y.js", f5.join("node_modules/m/src/features/y/y.js")),
+        ("should resolve with wildcard pattern #3", f5.clone(), "m/features-no-ext/y/y.js", f5.join("node_modules/m/src/features/y/y.js")),
+        ("should resolve with wildcard pattern #4", f5.clone(), "m/middle/nested/f.js", f5.join("node_modules/m/src/middle/nested/f.js")),
+        ("should resolve with wildcard pattern #5", f5.clone(), "m/middle-1/nested/f.js", f5.join("node_modules/m/src/middle-1/nested/f.js")),
+        ("should resolve with wildcard pattern #6", f5.clone(), "m/middle-2/nested/f.js", f5.join("node_modules/m/src/middle-2/nested/f.js")),
+        ("should resolve with wildcard pattern #7", f5.clone(), "m/middle-3/nested/f", f5.join("node_modules/m/src/middle-3/nested/f/nested/f.js")),
+        ("should resolve with wildcard pattern #8", f5.clone(), "m/middle-4/f/nested", f5.join("node_modules/m/src/middle-4/f/f.js")),
+        ("should resolve with wildcard pattern #9", f5.clone(), "m/middle-5/f$/$", f5.join("node_modules/m/src/middle-5/f$/$.js")),
+    ];
+
+    // Not needed or snapshot:
+    //   * should log the correct info
+
+    for (comment, path, request, expected) in pass {
+        let resolved_path = resolver.resolve(&path, request).map(|r| r.full_path());
+        assert_eq!(resolved_path, Ok(expected), "{comment} {path:?} {request}");
+    }
+
+    #[rustfmt::skip]
+    let fail = [
+        // ("throw error if extension not provided", f2.clone(), "exports-field/dist/main", ResolveError::NotFound(f2.join("node_modules/exports-field/lib/lib2/main"))),
+        ("resolver should respect query parameters #2. Direct matching", f2.clone(), "exports-field?foo", ResolveError::PackagePathNotExported("./?foo".into())),
+        ("resolver should respect fragment parameters #2. Direct matching", f2, "exports-field#foo", ResolveError::PackagePathNotExported("./#foo".into())),
+        ("relative path should not work with exports field", f.clone(), "./node_modules/exports-field/dist/main.js", ResolveError::NotFound(f.join("node_modules/exports-field/dist/main.js"))),
+        ("backtracking should not work for request", f.clone(), "exports-field/dist/../../../a.js", ResolveError::InvalidPackageTarget("./lib/../../../a.js".to_string())),
+        ("backtracking should not work for exports field target", f.clone(), "exports-field/dist/a.js", ResolveError::InvalidPackageTarget("./../../a.js".to_string())),
+        ("not exported error", f.clone(), "exports-field/anything/else", ResolveError::PackagePathNotExported("./anything/else".to_string())),
+        ("request ending with slash #1", f.clone(), "exports-field/", ResolveError::PackagePathNotExported("./".to_string())),
+        ("request ending with slash #2", f.clone(), "exports-field/dist/", ResolveError::PackagePathNotExported("./dist/".to_string())),
+        ("request ending with slash #3", f.clone(), "exports-field/lib/", ResolveError::PackagePathNotExported("./lib/".to_string())),
+        ("should throw error if target is invalid", f4, "exports-field", ResolveError::InvalidPackageTarget("./a/../b/../../pack1/index.js".to_string())),
+        ("throw error if exports field is invalid", f.clone(), "invalid-exports-field", ResolveError::InvalidPackageConfig(f.join("node_modules/invalid-exports-field/package.json"))),
+        ("should throw error if target is 'null'", f5, "m/features/internal/file.js", ResolveError::PackagePathNotExported("./features/internal/file.js".to_string())),
+    ];
+
+    for (comment, path, request, error) in fail {
+        let resolution = resolver.resolve(&path, request);
+        assert_eq!(resolution, Err(error), "{comment} {path:?} {request}");
+    }
+}
+fn u32_test() {
+    let mut buffer = [b'\x00'; 16];
+    assert_eq!(b"0", 0u32.to_lexical(&mut buffer));
+    assert_eq!(b"1", 1u32.to_lexical(&mut buffer));
+    assert_eq!(b"5", 5u32.to_lexical(&mut buffer));
+    assert_eq!(b"2147483647", 2147483647u32.to_lexical(&mut buffer));
+    assert_eq!(b"2147483648", 2147483648u32.to_lexical(&mut buffer));
+    assert_eq!(b"4294967295", 4294967295u32.to_lexical(&mut buffer));
+    assert_eq!(b"4294967295", (-1i32 as u32).to_lexical(&mut buffer));
+}
+async fn push_request_disabled() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        client
+            .assert_server_handshake_with_settings(frames::settings().disable_push())
+            .await;
+        client
+            .send_frame(
+                frames::headers(1)
+                    .request("GET", "https://example.com/")
+                    .eos(),
+            )
+            .await;
+        client
+            .recv_frame(frames::headers(1).response(200).eos())
+            .await;
+    };
+
+    let srv = async move {
+        let mut srv = server::handshake(io).await.expect("handshake");
+        let (req, mut stream) = srv.next().await.unwrap().unwrap();
+
+        assert_eq!(req.method(), &http::Method::GET);
+
+        // attempt to push - expect failure
+        let req = http::Request::builder()
+            .method("GET")
+            .uri("https://http2.akamai.com/style.css")
+            .body(())
+            .unwrap();
+        stream
+            .push_request(req)
+            .expect_err("push_request should error");
+
+        // send normal response
+        let rsp = http::Response::builder().status(200).body(()).unwrap();
+        stream.send_response(rsp, true).unwrap();
+
+        assert!(srv.next().await.is_none());
+    };
+
+    join(client, srv).await;
+}
+fn no_description_file() {
+    let f = super::fixture_root().join("enhanced_resolve");
+
+    // has description file
+    let resolver = Resolver::default();
+    assert_eq!(
+        resolver.resolve(&f, ".").map(Resolution::into_path_buf),
+        Ok(f.join("lib/index.js"))
+    );
+
+    // without description file
+    let resolver =
+        Resolver::new(ResolveOptions { description_files: vec![], ..ResolveOptions::default() });
+    assert_eq!(resolver.resolve(&f, "."), Err(ResolveError::NotFound(f)));
+}
+async fn reserved_capacity_assigned_in_multi_window_updates() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
+
+        let (response, mut stream) = client.send_request(request, false).unwrap();
+
+        // Consume the capacity
+        let payload = vec![0; frame::DEFAULT_INITIAL_WINDOW_SIZE as usize];
+        stream.send_data(payload.into(), false).unwrap();
+
+        // Reserve more data than we want
+        stream.reserve_capacity(10);
+
+        let mut stream = h2.drive(util::wait_for_capacity(stream, 5)).await;
+        stream.send_data("hello".into(), false).unwrap();
+        stream.send_data("world".into(), true).unwrap();
+
+        let response = h2.drive(response).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        // Wait for the connection to close
+        h2.await.unwrap();
+    };
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(frames::headers(1).request("POST", "https://http2.akamai.com/"))
+            .await;
+        srv.recv_frame(frames::data(1, vec![0u8; 16_384])).await;
+        srv.recv_frame(frames::data(1, vec![0u8; 16_384])).await;
+        srv.recv_frame(frames::data(1, vec![0u8; 16_384])).await;
+        srv.recv_frame(frames::data(1, vec![0u8; 16_383])).await;
+        idle_ms(100).await;
+        // Increase the connection window
+        srv.send_frame(frames::window_update(0, 10)).await;
+        // Incrementally increase the stream window
+        srv.send_frame(frames::window_update(1, 4)).await;
+        idle_ms(50).await;
+        srv.send_frame(frames::window_update(1, 1)).await;
+        // Receive first chunk
+        srv.recv_frame(frames::data(1, "hello")).await;
+        srv.send_frame(frames::window_update(1, 5)).await;
+        // Receive second chunk
+        srv.recv_frame(frames::data(1, "world").eos()).await;
+        srv.send_frame(frames::headers(1).response(204).eos()).await;
+        /*
+        .recv_frame(frames::data(1, "hello").eos())
+        .send_frame(frames::window_update(1, 5))
+        */
+    };
+    join(srv, h2).await;
+}
+fn i8_test() {
+    let mut buffer = [b'\x00'; 16];
+    assert_eq!(b"0", 0i8.to_lexical(&mut buffer));
+    assert_eq!(b"1", 1i8.to_lexical(&mut buffer));
+    assert_eq!(b"5", 5i8.to_lexical(&mut buffer));
+    assert_eq!(b"127", 127i8.to_lexical(&mut buffer));
+    assert_eq!(b"-128", (128u8 as i8).to_lexical(&mut buffer));
+    assert_eq!(b"-1", (255u8 as i8).to_lexical(&mut buffer));
+    assert_eq!(b"-1", (-1i8).to_lexical(&mut buffer));
+}
+fn exports_not_browser_field2() {
+    let f2 = super::fixture().join("exports-field2");
+
+    let resolver = Resolver::new(ResolveOptions {
+        alias_fields: vec![vec!["browser".into()]],
+        extensions: vec![".js".into()],
+        condition_names: vec!["node".into()],
+        ..ResolveOptions::default()
+    });
+
+    let resolved_path = resolver.resolve(&f2, "exports-field/dist/main.js").map(|r| r.full_path());
+    assert_eq!(resolved_path, Ok(f2.join("node_modules/exports-field/lib/browser.js")));
+}
+async fn send_recv_headers_only() {
+    h2_support::trace_init!();
+
+    let mock = mock_io::Builder::new()
+        .handshake()
+        // Write GET /
+        .write(&[
+            0, 0, 0x10, 1, 5, 0, 0, 0, 1, 0x82, 0x87, 0x41, 0x8B, 0x9D, 0x29, 0xAC, 0x4B, 0x8F,
+            0xA8, 0xE9, 0x19, 0x97, 0x21, 0xE9, 0x84,
+        ])
+        .write(frames::SETTINGS_ACK)
+        // Read response
+        .read(&[0, 0, 1, 1, 5, 0, 0, 0, 1, 0x89])
+        .build();
+
+    let (mut client, mut h2) = client::handshake(mock).await.unwrap();
+
+    // Send the request
+    let request = Request::builder()
+        .uri("https://http2.akamai.com/")
+        .body(())
+        .unwrap();
+
+    tracing::info!("sending request");
+    let (response, _) = client.send_request(request, true).unwrap();
+
+    let resp = h2.run(response).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    h2.await.unwrap();
+}
+fn extensions() {
+    let f = super::fixture().join("extensions");
+
+    let resolver = Resolver::new(ResolveOptions {
+        extensions: vec![".ts".into(), ".js".into()],
+        ..ResolveOptions::default()
+    });
+
+    #[rustfmt::skip]
+    let pass = [
+        ("should resolve according to order of provided extensions", "./foo", "foo.ts"),
+        ("should resolve according to order of provided extensions (dir index)", "./dir", "dir/index.ts"),
+        ("should resolve according to main field in module root", ".", "index.js"),
+        // This is a core module
+        // ("should resolve single file module before directory", "module", "node_modules/module.js"),
+        ("should resolve trailing slash directory before single file", "module/", "node_modules/module/index.ts"),
+    ];
+
+    for (comment, request, expected_path) in pass {
+        let resolved_path = resolver.resolve(&f, request).map(|r| r.full_path());
+        let expected = f.join(expected_path);
+        assert_eq!(resolved_path, Ok(expected), "{comment} {request} {expected_path}");
+    }
+
+    #[rustfmt::skip]
+    let fail = [
+        ("not resolve to file when request has a trailing slash (relative)", "./foo.js/", f.join("foo.js"))
+    ];
+
+    for (comment, request, expected_error) in fail {
+        let resolution = resolver.resolve(&f, request);
+        let error = ResolveError::NotFound(expected_error);
+        assert_eq!(resolution, Err(error), "{comment} {request} {resolution:?}");
+    }
+}
+fn i64_test() {
+    let mut buffer = [b'\x00'; 32];
+    assert_eq!(b"0", 0i64.to_lexical(&mut buffer));
+    assert_eq!(b"1", 1i64.to_lexical(&mut buffer));
+    assert_eq!(b"5", 5i64.to_lexical(&mut buffer));
+    assert_eq!(b"9223372036854775807", 9223372036854775807i64.to_lexical(&mut buffer));
+    assert_eq!(b"-9223372036854775808", (9223372036854775808u64 as i64).to_lexical(&mut buffer));
+    assert_eq!(b"-1", (18446744073709551615u64 as i64).to_lexical(&mut buffer));
+    assert_eq!(b"-1", (-1i64).to_lexical(&mut buffer));
+}
+fn resolve() {
+    let f = super::fixture();
+
+    let resolver = Resolver::default();
+
+    let main1_js_path = f.join("main1.js").to_string_lossy().to_string();
+
+    #[rustfmt::skip]
+    let pass = [
+        ("absolute path", f.clone(), main1_js_path.as_str(), f.join("main1.js")),
+        ("file with .js", f.clone(), "./main1.js", f.join("main1.js")),
+        ("file without extension", f.clone(), "./main1", f.join("main1.js")),
+        ("another file with .js", f.clone(), "./a.js", f.join("a.js")),
+        ("another file without extension", f.clone(), "./a", f.join("a.js")),
+        ("file in module with .js", f.clone(), "m1/a.js", f.join("node_modules/m1/a.js")),
+        ("file in module without extension", f.clone(), "m1/a", f.join("node_modules/m1/a.js")),
+        ("another file in module without extension", f.clone(), "complexm/step1", f.join("node_modules/complexm/step1.js")),
+        ("from submodule to file in sibling module", f.join("node_modules/complexm"), "m2/b.js", f.join("node_modules/m2/b.js")),
+        ("from nested directory to overwritten file in module", f.join("multiple_modules"), "m1/a.js", f.join("multiple_modules/node_modules/m1/a.js")),
+        ("from nested directory to not overwritten file in module", f.join("multiple_modules"), "m1/b.js", f.join("node_modules/m1/b.js")),
+        ("file with query", f.clone(), "./main1.js?query", f.join("main1.js?query")),
+        ("file with fragment", f.clone(), "./main1.js#fragment", f.join("main1.js#fragment")),
+        ("file with fragment and query", f.clone(), "./main1.js#fragment?query", f.join("main1.js#fragment?query")),
+        ("file with query and fragment", f.clone(), "./main1.js?#fragment", f.join("main1.js?#fragment")),
+        ("file in module with query", f.clone(), "m1/a?query", f.join("node_modules/m1/a.js?query")),
+        ("file in module with fragment", f.clone(), "m1/a#fragment", f.join("node_modules/m1/a.js#fragment")),
+        ("file in module with fragment and query", f.clone(), "m1/a#fragment?query", f.join("node_modules/m1/a.js#fragment?query")),
+        ("file in module with query and fragment", f.clone(), "m1/a?#fragment", f.join("node_modules/m1/a.js?#fragment")),
+        ("file in module with query and fragment", f.clone(), "m1/a?#fragment", f.join("node_modules/m1/a.js?#fragment")),
+        ("differ between directory and file, resolve file", f.clone(), "./dirOrFile", f.join("dirOrFile.js")),
+        ("differ between directory and file, resolve directory", f.clone(), "./dirOrFile/", f.join("dirOrFile/index.js")),
+        ("find node_modules outside of node_modules", f.join("browser-module/node_modules"), "m1/a", f.join("node_modules/m1/a.js")),
+        ("don't crash on main field pointing to self", f.clone(), "./main-field-self", f.join("./main-field-self/index.js")),
+        ("don't crash on main field pointing to self (2)", f.clone(), "./main-field-self2", f.join("./main-field-self2/index.js")),
+        // enhanced-resolve has `#` prepended with a `\0`, they are removed from the
+        // following 3 expected test results.
+        // See https://github.com/webpack/enhanced-resolve#escaping
+        ("handle fragment edge case (no fragment)", f.clone(), "./no#fragment/#/#", f.join("no#fragment/#/#.js")),
+        ("handle fragment edge case (fragment)", f.clone(), "./no#fragment/#/", f.join("no.js#fragment/#/")),
+        ("handle fragment escaping", f.clone(), "./no\0#fragment/\0#/\0##fragment", f.join("no#fragment/#/#.js#fragment")),
+    ];
+
+    for (comment, path, request, expected) in pass {
+        let resolved_path = resolver.resolve(&path, request).map(|r| r.full_path());
+        assert_eq!(resolved_path, Ok(expected), "{comment} {path:?} {request}");
+    }
+}
+async fn read_data_padding() {
+    let mut codec = raw_codec! {
+        read => [
+            0, 0, 16, 0, 0x8, 0, 0, 0, 1,
+            5,       // Pad length
+            "helloworld", // Data
+            "\0\0\0\0\0", // Padding
+        ];
+    };
+
+    let data = poll_frame!(Data, codec);
+    assert_eq!(data.stream_id(), 1);
+    assert_eq!(data.payload(), &b"helloworld"[..]);
+    assert!(!data.is_end_stream());
+
+    assert_closed!(codec);
+}
+fn fast_log2_test() {
+    // Check the first, even if illogical case works.
+    assert_eq!(decimal::fast_log2(0u32), 0);
+    assert_eq!(decimal::fast_log2(1u32), 0);
+    assert_eq!(decimal::fast_log2(2u32), 1);
+    assert_eq!(decimal::fast_log2(3u32), 1);
+
+    assert_eq!(decimal::fast_log2((1u32 << 16) - 1), 15);
+    assert_eq!(decimal::fast_log2(1u32 << 16), 16);
+    assert_eq!(decimal::fast_log2((1u32 << 16) + 1), 16);
+
+    assert_eq!(decimal::fast_log2(u32::MAX), 31);
+}

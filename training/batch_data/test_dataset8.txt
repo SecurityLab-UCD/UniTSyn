@@ -1,0 +1,500 @@
+fn resolve_to_context() {
+    let f = super::fixture();
+    let resolver = Resolver::new(ResolveOptions {
+        roots: vec![dirname(), f.clone()],
+        resolve_to_context: true,
+        ..ResolveOptions::default()
+    });
+    let resolved_path = resolver.resolve(&f, "/fixtures/lib").map(|r| r.full_path());
+    let expected = f.join("lib");
+    assert_eq!(resolved_path, Ok(expected));
+}
+fn truncate_and_round_test() {
+    let truncate = Options::builder()
+        .max_significant_digits(num::NonZeroUsize::new(4))
+        .round_mode(RoundMode::Truncate)
+        .build()
+        .unwrap();
+    let round = Options::builder()
+        .max_significant_digits(num::NonZeroUsize::new(4))
+        .round_mode(RoundMode::Round)
+        .build()
+        .unwrap();
+
+    // Above halfway
+    assert_eq!(binary::truncate_and_round(6602499140956772u64, 2, &round), (12, 53));
+    assert_eq!(binary::truncate_and_round(6602499140956772u64, 2, &truncate), (11, 53));
+
+    // At halfway
+    assert_eq!(binary::truncate_and_round(6473924464345088u64, 2, &round), (12, 53));
+    assert_eq!(binary::truncate_and_round(6473924464345088u64, 2, &truncate), (11, 53));
+
+    // Below halfway.
+    assert_eq!(binary::truncate_and_round(6473924464345087u64, 2, &round), (11, 53));
+    assert_eq!(binary::truncate_and_round(6473924464345087u64, 2, &truncate), (11, 53));
+}
+async fn recv_push_promise_over_max_header_list_size() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_frame_eq(settings, frames::settings().max_header_list_size(10));
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(
+            frames::push_promise(1, 2).request("GET", "https://http2.akamai.com/style.css"),
+        )
+        .await;
+        srv.recv_frame(frames::reset(2).refused()).await;
+        srv.send_frame(frames::headers(1).response(200).eos()).await;
+        idle_ms(10).await;
+    };
+
+    let client = async move {
+        let (mut client, mut conn) = client::Builder::new()
+            .max_header_list_size(10)
+            .handshake::<_, Bytes>(io)
+            .await
+            .expect("handshake");
+        let request = Request::builder()
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
+
+        let req = async move {
+            let err = client
+                .send_request(request, true)
+                .expect("send_request")
+                .0
+                .await
+                .expect_err("response");
+            assert_eq!(err.reason(), Some(Reason::REFUSED_STREAM));
+        };
+
+        conn.drive(req).await;
+        conn.await.expect("client");
+    };
+    join(srv, client).await;
+}
+fn extension_alias_throw_error() {
+    let f = super::fixture().join("exports-field-and-extension-alias");
+
+    let resolver = Resolver::new(ResolveOptions {
+        extensions: vec![".js".into()],
+        extension_alias: vec![(".js".into(), vec![".ts".into()])],
+        fully_specified: true,
+        condition_names: vec!["webpack".into(), "default".into()],
+        ..ResolveOptions::default()
+    });
+
+    #[rustfmt::skip]
+    let fail = [
+        // enhanced-resolve has two test cases that are exactly the same here
+        // https://github.com/webpack/enhanced-resolve/blob/a998c7d218b7a9ec2461fc4fddd1ad5dd7687485/test/exportsField.test.js#L2976-L3024
+        ("should throw error with the `extensionAlias` option", f, "pkg/string.js", ResolveError::ExtensionAlias),
+        // TODO: The error is PackagePathNotExported in enhanced-resolve
+        // ("should throw error with the `extensionAlias` option", f.clone(), "pkg/string.js", ResolveError::PackagePathNotExported("node_modules/pkg/dist/string.ts".to_string())),
+    ];
+
+    for (comment, path, request, error) in fail {
+        let resolution = resolver.resolve(&path, request);
+        assert_eq!(resolution, Err(error), "{comment} {path:?} {request}");
+    }
+}
+fn options_test() {
+    let mut opts = Options::new();
+
+    unsafe {
+        opts.set_max_significant_digits(num::NonZeroUsize::new(10));
+        opts.set_min_significant_digits(num::NonZeroUsize::new(5));
+        opts.set_positive_exponent_break(num::NonZeroI32::new(9));
+        opts.set_negative_exponent_break(num::NonZeroI32::new(-9));
+        opts.set_round_mode(options::RoundMode::Truncate);
+        opts.set_trim_floats(true);
+        opts.set_exponent(b'^');
+        opts.set_decimal_point(b',');
+        opts.set_nan_string(Some(b"nan"));
+        opts.set_inf_string(Some(b"Infinity"));
+    }
+
+    assert_eq!(opts.max_significant_digits().unwrap().get(), 10);
+    assert_eq!(opts.min_significant_digits().unwrap().get(), 5);
+    assert_eq!(opts.positive_exponent_break().unwrap().get(), 9);
+    assert_eq!(opts.negative_exponent_break().unwrap().get(), -9);
+    assert_eq!(opts.round_mode(), options::RoundMode::Truncate);
+    assert_eq!(opts.trim_floats(), true);
+    assert_eq!(opts.exponent(), b'^');
+    assert_eq!(opts.decimal_point(), b',');
+    assert_eq!(opts.nan_string(), Some("nan".as_bytes()));
+    assert_eq!(opts.inf_string(), Some("Infinity".as_bytes()));
+    assert!(opts.is_valid());
+
+    assert_eq!(Options::builder(), OptionsBuilder::new());
+    assert_eq!(opts.rebuild().build(), Ok(opts));
+}
+fn fast_ceildiv_test() {
+    assert_eq!(binary::fast_ceildiv(10, 4), 3);
+    assert_eq!(binary::fast_ceildiv(10, 5), 2);
+    assert_eq!(binary::fast_ceildiv(10, 6), 2);
+    assert_eq!(binary::fast_ceildiv(0, 5), 0);
+    assert_eq!(binary::fast_ceildiv(4, 5), 1);
+    assert_eq!(binary::fast_ceildiv(5, 5), 1);
+    assert_eq!(binary::fast_ceildiv(6, 5), 2);
+    assert_eq!(binary::fast_ceildiv(9, 5), 2);
+    assert_eq!(binary::fast_ceildiv(11, 5), 3);
+}
+fn builder_test() {
+    let mut builder = OptionsBuilder::default();
+
+    builder = builder.max_significant_digits(num::NonZeroUsize::new(10));
+    builder = builder.min_significant_digits(num::NonZeroUsize::new(5));
+    builder = builder.positive_exponent_break(num::NonZeroI32::new(9));
+    builder = builder.negative_exponent_break(num::NonZeroI32::new(-9));
+    builder = builder.round_mode(options::RoundMode::Truncate);
+    builder = builder.trim_floats(true);
+    builder = builder.exponent(b'^');
+    builder = builder.decimal_point(b',');
+    builder = builder.nan_string(Some(b"nan"));
+    builder = builder.inf_string(Some(b"Infinity"));
+
+    assert_eq!(builder.get_max_significant_digits().unwrap().get(), 10);
+    assert_eq!(builder.get_min_significant_digits().unwrap().get(), 5);
+    assert_eq!(builder.get_positive_exponent_break().unwrap().get(), 9);
+    assert_eq!(builder.get_negative_exponent_break().unwrap().get(), -9);
+    assert_eq!(builder.get_round_mode(), options::RoundMode::Truncate);
+    assert_eq!(builder.get_trim_floats(), true);
+    assert_eq!(builder.get_exponent(), b'^');
+    assert_eq!(builder.get_decimal_point(), b',');
+    assert_eq!(builder.get_nan_string(), Some("nan".as_bytes()));
+    assert_eq!(builder.get_inf_string(), Some("Infinity".as_bytes()));
+
+    assert!(builder.is_valid());
+    assert_eq!(builder.build(), Ok(unsafe { builder.build_unchecked() }));
+}
+fn builtins() {
+    let f = Path::new("/");
+
+    let resolver =
+        Resolver::new(ResolveOptions { builtin_modules: true, ..ResolveOptions::default() });
+
+    let pass = [
+        "_http_agent",
+        "_http_client",
+        "_http_common",
+        "_http_incoming",
+        "_http_outgoing",
+        "_http_server",
+        "_stream_duplex",
+        "_stream_passthrough",
+        "_stream_readable",
+        "_stream_transform",
+        "_stream_wrap",
+        "_stream_writable",
+        "_tls_common",
+        "_tls_wrap",
+        "assert",
+        "assert/strict",
+        "async_hooks",
+        "buffer",
+        "child_process",
+        "cluster",
+        "console",
+        "constants",
+        "crypto",
+        "dgram",
+        "diagnostics_channel",
+        "dns",
+        "dns/promises",
+        "domain",
+        "events",
+        "fs",
+        "fs/promises",
+        "http",
+        "http2",
+        "https",
+        "inspector",
+        "module",
+        "net",
+        "os",
+        "path",
+        "path/posix",
+        "path/win32",
+        "perf_hooks",
+        "process",
+        "punycode",
+        "querystring",
+        "readline",
+        "repl",
+        "stream",
+        "stream/consumers",
+        "stream/promises",
+        "stream/web",
+        "string_decoder",
+        "sys",
+        "timers",
+        "timers/promises",
+        "tls",
+        "trace_events",
+        "tty",
+        "url",
+        "util",
+        "util/types",
+        "v8",
+        "vm",
+        "worker_threads",
+        "zlib",
+    ];
+
+    for request in pass {
+        let resolved_path = resolver.resolve(f, request).map(|r| r.full_path());
+        assert_eq!(resolved_path, Err(ResolveError::Builtin(request.to_string())), "{request}");
+    }
+
+    for request in pass {
+        let request = format!("node:{request}");
+        let resolved_path = resolver.resolve(f, &request).map(|r| r.full_path());
+        assert_eq!(resolved_path, Err(ResolveError::Builtin(request.to_string())), "{request}");
+    }
+}
+fn extension_without_fully_specified() {
+    let f2 = super::fixture().join("exports-field2");
+
+    let commonjs_resolver = Resolver::new(ResolveOptions {
+        extensions: vec![".js".into()],
+        condition_names: vec!["webpack".into()],
+        ..ResolveOptions::default()
+    });
+
+    let resolved_path =
+        commonjs_resolver.resolve(&f2, "exports-field/dist/main").map(|r| r.full_path());
+    assert_eq!(resolved_path, Ok(f2.join("node_modules/exports-field/lib/lib2/main.js")));
+}
+fn multi_dot_extension() {
+    let f = super::fixture().join("extensions");
+
+    let resolver = Resolver::new(ResolveOptions {
+        // Test for `.d.ts`, not part of enhanced-resolve.
+        extensions: vec![".a.b.c".into(), ".d.ts".into(), ".ts".into(), ".js".into()],
+        ..ResolveOptions::default()
+    });
+
+    #[rustfmt::skip]
+    let pass = [
+        ("should resolve according to order of provided extensions", "./foo", "foo.ts"),
+        ("should resolve file with extension", "./app.module", "app.module.js")
+    ];
+
+    for (comment, request, expected_path) in pass {
+        let resolved_path = resolver.resolve(&f, request).map(|r| r.full_path());
+        let expected = f.join(expected_path);
+        assert_eq!(resolved_path, Ok(expected), "{comment} {request} {expected_path}");
+    }
+
+    #[rustfmt::skip]
+    let fail = [
+        ("not resolve to file", "./index.", f.join("index."))
+    ];
+
+    for (comment, request, expected_error) in fail {
+        let resolution = resolver.resolve(&f, request);
+        let error = ResolveError::NotFound(expected_error);
+        assert_eq!(resolution, Err(error), "{comment} {request} {resolution:?}");
+    }
+}
+async fn push_request() {
+    h2_support::trace_init!();
+    let (io, mut client) = mock::new();
+
+    let client = async move {
+        client
+            .assert_server_handshake_with_settings(frames::settings().max_concurrent_streams(100))
+            .await;
+        client
+            .send_frame(
+                frames::headers(1)
+                    .request("GET", "https://example.com/")
+                    .eos(),
+            )
+            .await;
+        client
+            .recv_frame(
+                frames::push_promise(1, 2).request("GET", "https://http2.akamai.com/style.css"),
+            )
+            .await;
+        client
+            .recv_frame(frames::headers(2).response(200).eos())
+            .await;
+        client
+            .recv_frame(
+                frames::push_promise(1, 4).request("GET", "https://http2.akamai.com/style2.css"),
+            )
+            .await;
+        client
+            .recv_frame(frames::headers(4).response(200).eos())
+            .await;
+        client
+            .recv_frame(frames::headers(1).response(200).eos())
+            .await;
+    };
+
+    let srv = async move {
+        let mut srv = server::handshake(io).await.expect("handshake");
+        let (req, mut stream) = srv.next().await.unwrap().unwrap();
+
+        assert_eq!(req.method(), &http::Method::GET);
+
+        // Promise stream 2
+        let mut pushed_s2 = {
+            let req = http::Request::builder()
+                .method("GET")
+                .uri("https://http2.akamai.com/style.css")
+                .body(())
+                .unwrap();
+            stream.push_request(req).unwrap()
+        };
+
+        // Promise stream 4 and push response headers
+        {
+            let req = http::Request::builder()
+                .method("GET")
+                .uri("https://http2.akamai.com/style2.css")
+                .body(())
+                .unwrap();
+            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            stream
+                .push_request(req)
+                .unwrap()
+                .send_response(rsp, true)
+                .unwrap();
+        }
+
+        // Push response to stream 2
+        {
+            let rsp = http::Response::builder().status(200).body(()).unwrap();
+            pushed_s2.send_response(rsp, true).unwrap();
+        }
+
+        // Send response for stream 1
+        let rsp = http::Response::builder().status(200).body(()).unwrap();
+        stream.send_response(rsp, true).unwrap();
+
+        assert!(srv.next().await.is_none());
+    };
+
+    join(client, srv).await;
+}
+fn extension_alias_3() {
+    let f = super::fixture().join("exports-field-and-extension-alias");
+
+    let resolver = Resolver::new(ResolveOptions {
+        extensions: vec![".js".into()],
+        extension_alias: vec![(
+            ".js".into(),
+            vec![".foo".into(), ".baz".into(), ".baz".into(), ".ts".into(), ".js".into()],
+        )],
+        fully_specified: true,
+        condition_names: vec!["webpack".into(), "default".into()],
+        ..ResolveOptions::default()
+    });
+
+    #[rustfmt::skip]
+    let pass = [
+        ("should resolve with the `extensionAlias` option #3", f.clone(), "pkg/string.js", f.join("node_modules/pkg/dist/string.js")),
+    ];
+
+    for (comment, path, request, expected) in pass {
+        let resolved_path = resolver.resolve(&path, request).map(|r| r.full_path());
+        assert_eq!(resolved_path, Ok(expected), "{comment} {path:?} {request}");
+    }
+}
+async fn recv_window_update_on_stream_closed_by_data_frame() {
+    h2_support::trace_init!();
+    let (io, mut srv) = mock::new();
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::handshake(io).await.unwrap();
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
+
+        let (response, mut stream) = client.send_request(request, false).unwrap();
+
+        // Wait for the response
+        let response = h2.drive(response).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Send a data frame, this will also close the connection
+        stream.send_data("hello".into(), true).unwrap();
+
+        // keep `stream` from being dropped in order to prevent
+        // it from sending an RST_STREAM frame.
+        //
+        // i know this is kind of evil, but it's necessary to
+        // ensure that the stream is closed by the EOS frame,
+        // and not by the RST_STREAM.
+        std::mem::forget(stream);
+
+        // Wait for the connection to close
+        h2.await.unwrap();
+    };
+    let srv = async move {
+        let settings = srv.assert_client_handshake().await;
+        assert_default_settings!(settings);
+        srv.recv_frame(frames::headers(1).request("POST", "https://http2.akamai.com/"))
+            .await;
+        srv.send_frame(frames::headers(1).response(200)).await;
+        srv.recv_frame(frames::data(1, "hello").eos()).await;
+        srv.send_frame(frames::window_update(1, 5)).await;
+    };
+    join(srv, h2).await;
+}
+async fn update_max_frame_len_at_rest() {
+    use futures::StreamExt;
+    use tokio::io::AsyncReadExt;
+
+    h2_support::trace_init!();
+    // TODO: add test for updating max frame length in flight as well?
+    let mut codec = raw_codec! {
+        read => [
+            0, 0, 5, 0, 0, 0, 0, 0, 1,
+            "hello",
+            0, 64, 1, 0, 0, 0, 0, 0, 1,
+            vec![0; 16_385],
+        ];
+    };
+
+    assert_eq!(poll_frame!(Data, codec).payload(), &b"hello"[..]);
+
+    codec.set_max_recv_frame_size(16_384);
+
+    assert_eq!(codec.max_recv_frame_size(), 16_384);
+    assert_eq!(
+        codec.next().await.unwrap().unwrap_err().to_string(),
+        "frame with invalid size"
+    );
+
+    // drain codec buffer
+    let mut buf = Vec::new();
+    codec.get_mut().read_to_end(&mut buf).await.unwrap();
+}
+async fn read_data_end_stream() {
+    let mut codec = raw_codec! {
+        read => [
+            0, 0, 5, 0, 1, 0, 0, 0, 1,
+            "hello",
+        ];
+    };
+
+    let data = poll_frame!(Data, codec);
+    assert_eq!(data.stream_id(), 1);
+    assert_eq!(data.payload(), &b"hello"[..]);
+    assert!(data.is_end_stream());
+    assert_closed!(codec);
+}

@@ -1,0 +1,335 @@
+fn test_category() {
+    assert!(from_str::<String>("123").unwrap_err().is_data());
+
+    assert!(from_str::<String>("]").unwrap_err().is_syntax());
+
+    assert!(from_str::<String>("").unwrap_err().is_eof());
+    assert!(from_str::<String>("\"").unwrap_err().is_eof());
+    assert!(from_str::<String>("\"\\").unwrap_err().is_eof());
+    assert!(from_str::<String>("\"\\u").unwrap_err().is_eof());
+    assert!(from_str::<String>("\"\\u0").unwrap_err().is_eof());
+    assert!(from_str::<String>("\"\\u00").unwrap_err().is_eof());
+    assert!(from_str::<String>("\"\\u000").unwrap_err().is_eof());
+
+    assert!(from_str::<Vec<usize>>("[").unwrap_err().is_eof());
+    assert!(from_str::<Vec<usize>>("[0").unwrap_err().is_eof());
+    assert!(from_str::<Vec<usize>>("[0,").unwrap_err().is_eof());
+
+    assert!(from_str::<BTreeMap<String, usize>>("{")
+        .unwrap_err()
+        .is_eof());
+    assert!(from_str::<BTreeMap<String, usize>>("{\"k\"")
+        .unwrap_err()
+        .is_eof());
+    assert!(from_str::<BTreeMap<String, usize>>("{\"k\":")
+        .unwrap_err()
+        .is_eof());
+    assert!(from_str::<BTreeMap<String, usize>>("{\"k\":0")
+        .unwrap_err()
+        .is_eof());
+    assert!(from_str::<BTreeMap<String, usize>>("{\"k\":0,")
+        .unwrap_err()
+        .is_eof());
+
+    let fail = FailReader(io::ErrorKind::NotConnected);
+    assert!(from_reader::<_, String>(fail).unwrap_err().is_io());
+}
+fn weak_map_basic() {
+    run_test(|| {
+        let key1 = Gc::new(String::from("key1"));
+        let key2 = Gc::new(String::from("key2"));
+        let key3 = Gc::new(String::from("key3"));
+
+        assert!(!has_weak_maps());
+
+        let mut map = WeakMap::new();
+
+        assert!(has_weak_maps());
+
+        map.insert(&key1, ());
+        map.insert(&key2, ());
+        map.insert(&key3, ());
+
+        force_collect();
+        assert!(has_weak_maps());
+
+        assert!(map.contains_key(&key1));
+        assert!(map.contains_key(&key2));
+        assert!(map.contains_key(&key3));
+
+        drop(key1);
+
+        force_collect();
+        assert!(has_weak_maps());
+
+        assert!(map.contains_key(&key2));
+        assert!(map.contains_key(&key3));
+
+        drop(key2);
+
+        force_collect();
+        assert!(has_weak_maps());
+
+        assert!(map.contains_key(&key3));
+        assert!(has_weak_maps());
+
+        drop(key3);
+
+        assert!(has_weak_maps());
+
+        force_collect();
+        assert!(has_weak_maps());
+
+        drop(map);
+
+        force_collect();
+        assert!(!has_weak_maps());
+    });
+}
+fn client_respects_buffer_limit_post_handshake() {
+    let (mut client, mut server) = make_pair(KeyType::Rsa);
+
+    do_handshake(&mut client, &mut server);
+    client.set_buffer_limit(Some(48));
+
+    assert_eq!(
+        client
+            .writer()
+            .write(b"01234567890123456789")
+            .unwrap(),
+        20
+    );
+    assert_eq!(
+        client
+            .writer()
+            .write(b"01234567890123456789")
+            .unwrap(),
+        6
+    );
+
+    transfer(&mut client, &mut server);
+    server.process_new_packets().unwrap();
+
+    check_read(&mut server.reader(), b"01234567890123456789012345");
+}
+fn justfile() {
+  let tmp = temptree! {
+    sub: {
+      ".git": {},
+    },
+  };
+
+  let output = Command::new(executable_path("just"))
+    .current_dir(tmp.path().join("sub"))
+    .arg("--init")
+    .arg("--justfile")
+    .arg(tmp.path().join("justfile"))
+    .output()
+    .unwrap();
+
+  assert!(output.status.success());
+
+  assert_eq!(
+    fs::read_to_string(tmp.path().join("justfile")).unwrap(),
+    EXPECTED
+  );
+}
+fn internal_n_mask_test() {
+    assert_eq!(internal_n_mask(1u64, 0u64), 0b0);
+    assert_eq!(internal_n_mask(1u64, 1u64), 0b1);
+    assert_eq!(internal_n_mask(2u64, 1u64), 0b10);
+    assert_eq!(internal_n_mask(4u64, 2u64), 0b1100);
+    assert_eq!(internal_n_mask(10u64, 2u64), 0b1100000000);
+    assert_eq!(internal_n_mask(10u64, 4u64), 0b1111000000);
+    assert_eq!(
+        internal_n_mask(32u64, 4u64),
+        0b11110000000000000000000000000000
+    );
+}
+fn find_command_returns_satpoint_for_sat() {
+  let rpc_server = test_bitcoincore_rpc::spawn();
+  assert_eq!(
+    CommandBuilder::new("--index-sats find 0")
+      .rpc_server(&rpc_server)
+      .run_and_deserialize_output::<Output>(),
+    Output {
+      satpoint: "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b:0:0"
+        .parse()
+        .unwrap()
+    }
+  );
+}
+fn imul_small_test() {
+    // No overflow check, 1-int.
+    let mut x = Bigint {
+        data: from_u32(&[5]),
+    };
+    x.imul_small(7);
+    assert_eq!(x.data, from_u32(&[35]));
+
+    // No overflow check, 2-ints.
+    let mut x = Bigint::from_u64(0x4000000040000);
+    x.imul_small(5);
+    assert_eq!(x.data, from_u32(&[0x00140000, 0x140000]));
+
+    // Overflow, 1 carry.
+    let mut x = Bigint {
+        data: from_u32(&[0x33333334]),
+    };
+    x.imul_small(5);
+    assert_eq!(x.data, from_u32(&[4, 1]));
+
+    // Overflow, 1 carry, internal.
+    let mut x = Bigint::from_u64(0x133333334);
+    x.imul_small(5);
+    assert_eq!(x.data, from_u32(&[4, 6]));
+
+    // Overflow, 2 carries.
+    let mut x = Bigint::from_u64(0x3333333333333334);
+    x.imul_small(5);
+    assert_eq!(x.data, from_u32(&[4, 0, 1]));
+}
+fn parent_dir() {
+  let tmp = temptree! {
+    ".git": {},
+    sub: {},
+  };
+
+  let output = Command::new(executable_path("just"))
+    .current_dir(tmp.path().join("sub"))
+    .arg("--init")
+    .output()
+    .unwrap();
+
+  assert!(output.status.success());
+
+  assert_eq!(
+    fs::read_to_string(tmp.path().join("justfile")).unwrap(),
+    EXPECTED
+  );
+}
+fn new_client_returns_initial_io_state() {
+    let (mut client, _) = make_pair(KeyType::Rsa);
+    let io_state = client.process_new_packets().unwrap();
+    println!("IoState is Debug {:?}", io_state);
+    assert_eq!(io_state.plaintext_bytes_to_read(), 0);
+    assert!(!io_state.peer_has_closed());
+    assert!(io_state.tls_bytes_to_write() > 200);
+}
+fn weak_map_key_live() {
+    run_test(|| {
+        let key = Gc::new(String::from("key"));
+        let key_copy = key.clone();
+
+        let mut map = WeakMap::new();
+
+        map.insert(&key, ());
+
+        assert!(map.contains_key(&key));
+        assert!(map.contains_key(&key_copy));
+
+        assert_eq!(map.remove(&key), Some(()));
+
+        map.insert(&key, ());
+
+        drop(key);
+
+        force_collect();
+
+        assert!(map.contains_key(&key_copy));
+    });
+}
+fn server_exposes_offered_sni_smashed_to_lowercase() {
+    // webpki actually does this for us in its DnsName type
+    let kt = KeyType::Rsa;
+    for version in rustls::ALL_VERSIONS {
+        let client_config = make_client_config_with_versions(kt, &[version]);
+        let mut client =
+            ClientConnection::new(Arc::new(client_config), dns_name("SECOND.TESTServer.com"))
+                .unwrap();
+        let mut server = ServerConnection::new(Arc::new(make_server_config(kt))).unwrap();
+
+        assert_eq!(None, server.server_name());
+        do_handshake(&mut client, &mut server);
+        assert_eq!(Some("second.testserver.com"), server.server_name());
+    }
+}
+fn vba() {
+    setup();
+
+    let path = format!("{}/tests/vba.xlsm", env!("CARGO_MANIFEST_DIR"));
+    let mut excel: Xlsx<_> = open_workbook(&path).unwrap();
+
+    let mut vba = excel.vba_project().unwrap().unwrap();
+    assert_eq!(
+        vba.to_mut().get_module("testVBA").unwrap(),
+        "Attribute VB_Name = \"testVBA\"\r\nPublic Sub test()\r\n    MsgBox \"Hello from \
+         vba!\"\r\nEnd Sub\r\n"
+    );
+}
+fn run_is_an_alias_for_update() {
+  let rpc_server = test_bitcoincore_rpc::spawn();
+  rpc_server.mine_blocks(1);
+
+  let tempdir = TempDir::new().unwrap();
+
+  let index_path = tempdir.path().join("foo.redb");
+
+  CommandBuilder::new(format!("--index {} index run", index_path.display()))
+    .rpc_server(&rpc_server)
+    .run_and_deserialize_output::<Empty>();
+
+  assert!(index_path.is_file())
+}
+fn test_boxed_raw_value() {
+    #[derive(Serialize, Deserialize)]
+    struct Wrapper {
+        a: i8,
+        b: Box<RawValue>,
+        c: i8,
+    }
+
+    let wrapper_from_str: Wrapper =
+        serde_json::from_str(r#"{"a": 1, "b": {"foo": 2}, "c": 3}"#).unwrap();
+    assert_eq!(r#"{"foo": 2}"#, wrapper_from_str.b.get());
+
+    let wrapper_from_reader: Wrapper =
+        serde_json::from_reader(br#"{"a": 1, "b": {"foo": 2}, "c": 3}"#.as_ref()).unwrap();
+    assert_eq!(r#"{"foo": 2}"#, wrapper_from_reader.b.get());
+
+    let wrapper_from_value: Wrapper =
+        serde_json::from_value(json!({"a": 1, "b": {"foo": 2}, "c": 3})).unwrap();
+    assert_eq!(r#"{"foo":2}"#, wrapper_from_value.b.get());
+
+    let wrapper_to_string = serde_json::to_string(&wrapper_from_str).unwrap();
+    assert_eq!(r#"{"a":1,"b":{"foo": 2},"c":3}"#, wrapper_to_string);
+
+    let wrapper_to_value = serde_json::to_value(&wrapper_from_str).unwrap();
+    assert_eq!(json!({"a": 1, "b": {"foo": 2}, "c": 3}), wrapper_to_value);
+
+    let array_from_str: Vec<Box<RawValue>> =
+        serde_json::from_str(r#"["a", 42, {"foo": "bar"}, null]"#).unwrap();
+    assert_eq!(r#""a""#, array_from_str[0].get());
+    assert_eq!(r#"42"#, array_from_str[1].get());
+    assert_eq!(r#"{"foo": "bar"}"#, array_from_str[2].get());
+    assert_eq!(r#"null"#, array_from_str[3].get());
+
+    let array_from_reader: Vec<Box<RawValue>> =
+        serde_json::from_reader(br#"["a", 42, {"foo": "bar"}, null]"#.as_ref()).unwrap();
+    assert_eq!(r#""a""#, array_from_reader[0].get());
+    assert_eq!(r#"42"#, array_from_reader[1].get());
+    assert_eq!(r#"{"foo": "bar"}"#, array_from_reader[2].get());
+    assert_eq!(r#"null"#, array_from_reader[3].get());
+
+    let array_to_string = serde_json::to_string(&array_from_str).unwrap();
+    assert_eq!(r#"["a",42,{"foo": "bar"},null]"#, array_to_string);
+}
+fn test_bytes_ser() {
+    let buf = vec![];
+    let bytes = Bytes::new(&buf);
+    assert_eq!(to_string(&bytes).unwrap(), "[]".to_string());
+
+    let buf = vec![1, 2, 3];
+    let bytes = Bytes::new(&buf);
+    assert_eq!(to_string(&bytes).unwrap(), "[1,2,3]".to_string());
+}

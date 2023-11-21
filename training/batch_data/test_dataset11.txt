@@ -1,0 +1,769 @@
+fn test_raft_storage_get_after_lease() {
+    let (cluster, storage, ctx) = new_raft_storage();
+    let key = b"key";
+    let value = b"value";
+    assert_eq!(
+        storage
+            .raw_get(ctx.clone(), "".to_string(), key.to_vec())
+            .unwrap(),
+        None
+    );
+    storage
+        .raw_put(ctx.clone(), "".to_string(), key.to_vec(), value.to_vec())
+        .unwrap();
+    assert_eq!(
+        storage
+            .raw_get(ctx.clone(), "".to_string(), key.to_vec())
+            .unwrap()
+            .unwrap(),
+        value.to_vec()
+    );
+
+    // Sleep until the leader lease is expired.
+    thread::sleep(cluster.cfg.raft_store.raft_store_max_leader_lease.0);
+    assert_eq!(
+        storage
+            .raw_get(ctx, "".to_string(), key.to_vec())
+            .unwrap()
+            .unwrap(),
+        value.to_vec()
+    );
+}
+fn test_get_tombstone_store() {
+    let eps_count = 1;
+    let server = MockServer::new(eps_count);
+    let eps = server.bind_addrs();
+    let mut client = new_client_v2(eps, None);
+
+    let mut all_stores = vec![];
+    let store_id = client.alloc_id().unwrap();
+    let mut store = metapb::Store::default();
+    store.set_id(store_id);
+    let region_id = client.alloc_id().unwrap();
+    let mut region = metapb::Region::default();
+    region.set_id(region_id);
+    client.bootstrap_cluster(store.clone(), region).unwrap();
+
+    all_stores.push(store);
+    assert_eq!(client.is_cluster_bootstrapped().unwrap(), true);
+    let s = client.get_all_stores(false).unwrap();
+    assert_eq!(s, all_stores);
+
+    // Add tombstone store.
+    let mut store99 = metapb::Store::default();
+    store99.set_id(99);
+    store99.set_state(metapb::StoreState::Tombstone);
+    server.default_handler().add_store(store99.clone());
+
+    let r = client.get_store(99);
+    assert_eq!(r.unwrap_err().error_code(), error_code::pd::STORE_TOMBSTONE);
+}
+fn test_resize_async_ios_failed_1() {
+    let mut cluster = new_node_cluster(0, 1);
+    cluster.cfg.raft_store.store_io_pool_size = 2;
+    cluster.pd_client.disable_default_operator();
+    cluster.run();
+
+    // Save current async-io tids before shrinking
+    let org_writers_tids = get_async_writers_tids();
+    assert_eq!(2, org_writers_tids.len());
+    // Request can be handled as usual
+    cluster.must_put(b"k1", b"v1");
+    must_get_equal(&cluster.get_engine(1), b"k1", b"v1");
+
+    // Update config, expand from async-mode(async-ios == 2) to
+    // sync-mode(async-ios == 0).
+    {
+        let sim = cluster.sim.rl();
+        let cfg_controller = sim.get_cfg_controller().unwrap();
+
+        let change = {
+            let mut change = HashMap::new();
+            change.insert("raftstore.store-io-pool-size".to_owned(), "0".to_owned());
+            change
+        };
+
+        assert!(cfg_controller.update(change).is_err());
+        assert_eq!(
+            cfg_controller.get_current().raft_store.store_io_pool_size,
+            2
+        );
+    }
+    // Save current async-io tids after scaling up, and compared with the
+    // orginial one before scaling up, the thread num should be added up to TWO.
+    let cur_writers_tids = get_async_writers_tids();
+    assert_eq!(cur_writers_tids.len(), org_writers_tids.len());
+
+    // Request can be handled as usual
+    cluster.must_put(b"k2", b"v2");
+    must_get_equal(&cluster.get_engine(1), b"k2", b"v2");
+}
+fn test_witness_ignore_consistency_check() {
+    let mut cluster = new_server_cluster(0, 3);
+    cluster.cfg.raft_store.raft_election_timeout_ticks = 50;
+    // disable compact log to make test more stable.
+    cluster.cfg.raft_store.raft_log_gc_threshold = 1000;
+    cluster.cfg.raft_store.consistency_check_interval = ReadableDuration::secs(1);
+    cluster.run();
+
+    let nodes = Vec::from_iter(cluster.get_node_ids());
+    assert_eq!(nodes.len(), 3);
+
+    let pd_client = Arc::clone(&cluster.pd_client);
+    pd_client.disable_default_operator();
+
+    cluster.must_put(b"k1", b"v1");
+
+    let region = block_on(pd_client.get_region_by_id(1)).unwrap().unwrap();
+    let peer_on_store1 = find_peer(&region, nodes[0]).unwrap();
+    cluster.must_transfer_leader(region.get_id(), peer_on_store1.clone());
+
+    // nonwitness -> witness
+    let peer_on_store3 = find_peer(&region, nodes[2]).unwrap().clone();
+    cluster.pd_client.must_switch_witnesses(
+        region.get_id(),
+        vec![peer_on_store3.get_id()],
+        vec![true],
+    );
+
+    // make sure the peer_on_store3 has completed applied to witness
+    std::thread::sleep(Duration::from_millis(200));
+
+    for i in 0..300 {
+        cluster.must_put(
+            format!("k{:06}", i).as_bytes(),
+            format!("k{:06}", i).as_bytes(),
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+fn test_get_tombstone_stores() {
+    let eps_count = 1;
+    let server = MockServer::new(eps_count);
+    let eps = server.bind_addrs();
+    let client = new_client(eps, None);
+
+    let mut all_stores = vec![];
+    let store_id = client.alloc_id().unwrap();
+    let mut store = metapb::Store::default();
+    store.set_id(store_id);
+    let region_id = client.alloc_id().unwrap();
+    let mut region = metapb::Region::default();
+    region.set_id(region_id);
+    client.bootstrap_cluster(store.clone(), region).unwrap();
+
+    all_stores.push(store);
+    assert_eq!(client.is_cluster_bootstrapped().unwrap(), true);
+    let s = client.get_all_stores(false).unwrap();
+    assert_eq!(s, all_stores);
+
+    // Add tombstone store.
+    let mut store99 = metapb::Store::default();
+    store99.set_id(99);
+    store99.set_state(metapb::StoreState::Tombstone);
+    server.default_handler().add_store(store99.clone());
+
+    // do not include tombstone.
+    let s = client.get_all_stores(true).unwrap();
+    assert_eq!(s, all_stores);
+
+    all_stores.push(store99.clone());
+    all_stores.sort_by_key(|a| a.get_id());
+    // include tombstone, there should be 2 stores.
+    let mut s = client.get_all_stores(false).unwrap();
+    s.sort_by_key(|a| a.get_id());
+    assert_eq!(s, all_stores);
+
+    // Add another tombstone store.
+    let mut store199 = store99;
+    store199.set_id(199);
+    server.default_handler().add_store(store199.clone());
+
+    all_stores.push(store199);
+    all_stores.sort_by_key(|a| a.get_id());
+    let mut s = client.get_all_stores(false).unwrap();
+    s.sort_by_key(|a| a.get_id());
+    assert_eq!(s, all_stores);
+
+    client.get_store(store_id).unwrap();
+    client.get_store(99).unwrap_err();
+    client.get_store(199).unwrap_err();
+}
+fn test_cleanup_sst() {
+    let (mut cluster, ctx, _, import) = new_cluster_and_tikv_import_client();
+
+    let temp_dir = Builder::new().prefix("test_cleanup_sst").tempdir().unwrap();
+
+    let sst_path = temp_dir.path().join("test_split.sst");
+    let sst_range = (0, 100);
+    let (mut meta, data) = gen_sst_file(sst_path, sst_range);
+    meta.set_region_id(ctx.get_region_id());
+    meta.set_region_epoch(ctx.get_region_epoch().clone());
+
+    send_upload_sst(&import, &meta, &data).unwrap();
+
+    // Can not upload the same file when it exists.
+    assert_to_string_contains!(
+        send_upload_sst(&import, &meta, &data).unwrap_err(),
+        "FileExists"
+    );
+
+    // The uploaded SST should be deleted if the region split.
+    let region = cluster.get_region(&[]);
+    cluster.must_split(&region, &[100]);
+
+    check_sst_deleted(&import, &meta, &data);
+
+    let left = cluster.get_region(&[]);
+    let right = cluster.get_region(&[100]);
+
+    let sst_path = temp_dir.path().join("test_merge.sst");
+    let sst_range = (0, 100);
+    let (mut meta, data) = gen_sst_file(sst_path, sst_range);
+    meta.set_region_id(left.get_id());
+    meta.set_region_epoch(left.get_region_epoch().clone());
+
+    send_upload_sst(&import, &meta, &data).unwrap();
+
+    // The uploaded SST should be deleted if the region merged.
+    cluster.pd_client.must_merge(left.get_id(), right.get_id());
+    let res = block_on(cluster.pd_client.get_region_by_id(left.get_id()));
+    assert_eq!(res.unwrap(), None);
+
+    check_sst_deleted(&import, &meta, &data);
+}
+fn test_rpc_client() {
+    let eps_count = 1;
+    let server = MockServer::new(eps_count);
+    let eps = server.bind_addrs();
+
+    let client = new_client(eps.clone(), None);
+    assert_ne!(client.get_cluster_id().unwrap(), 0);
+
+    let store_id = client.alloc_id().unwrap();
+    let mut store = metapb::Store::default();
+    store.set_id(store_id);
+    debug!("bootstrap store {:?}", store);
+
+    let peer_id = client.alloc_id().unwrap();
+    let mut peer = metapb::Peer::default();
+    peer.set_id(peer_id);
+    peer.set_store_id(store_id);
+
+    let region_id = client.alloc_id().unwrap();
+    let mut region = metapb::Region::default();
+    region.set_id(region_id);
+    region.mut_peers().push(peer.clone());
+    debug!("bootstrap region {:?}", region);
+
+    client
+        .bootstrap_cluster(store.clone(), region.clone())
+        .unwrap();
+    assert_eq!(client.is_cluster_bootstrapped().unwrap(), true);
+
+    let tmp_stores = client.get_all_stores(false).unwrap();
+    assert_eq!(tmp_stores.len(), 1);
+    assert_eq!(tmp_stores[0], store);
+
+    let tmp_store = client.get_store(store_id).unwrap();
+    assert_eq!(tmp_store.get_id(), store.get_id());
+
+    let region_key = region.get_start_key();
+    let tmp_region = client.get_region(region_key).unwrap();
+    assert_eq!(tmp_region.get_id(), region.get_id());
+
+    let region_info = client.get_region_info(region_key).unwrap();
+    assert_eq!(region_info.region, region);
+    assert_eq!(region_info.leader, None);
+
+    let tmp_region = block_on(client.get_region_by_id(region_id))
+        .unwrap()
+        .unwrap();
+    assert_eq!(tmp_region.get_id(), region.get_id());
+
+    let ts = block_on(client.get_tso()).unwrap();
+    assert_ne!(ts, TimeStamp::zero());
+
+    let ts100 = block_on(client.batch_get_tso(100)).unwrap();
+    assert_eq!(ts.logical() + 100, ts100.logical());
+
+    let mut prev_id = 0;
+    for _ in 0..100 {
+        let client = new_client(eps.clone(), None);
+        let alloc_id = client.alloc_id().unwrap();
+        assert!(alloc_id > prev_id);
+        prev_id = alloc_id;
+    }
+
+    let poller = Builder::new_multi_thread()
+        .thread_name(thd_name!("poller"))
+        .worker_threads(1)
+        .build()
+        .unwrap();
+    let (tx, rx) = mpsc::channel();
+    let f = client.handle_region_heartbeat_response(1, move |resp| {
+        let _ = tx.send(resp);
+    });
+    poller.spawn(f);
+    poller.spawn(client.region_heartbeat(
+        store::RAFT_INIT_LOG_TERM,
+        region.clone(),
+        peer.clone(),
+        RegionStat::default(),
+        None,
+    ));
+    rx.recv_timeout(Duration::from_secs(3)).unwrap();
+
+    let region_info = client.get_region_info(region_key).unwrap();
+    assert_eq!(region_info.region, region);
+    assert_eq!(region_info.leader.unwrap(), peer);
+
+    block_on(client.store_heartbeat(
+        pdpb::StoreStats::default(),
+        None, // store_report
+        None,
+    ))
+    .unwrap();
+    block_on(client.ask_batch_split(metapb::Region::default(), 1)).unwrap();
+    block_on(client.report_batch_split(vec![metapb::Region::default(), metapb::Region::default()]))
+        .unwrap();
+
+    let region_info = client.get_region_info(region_key).unwrap();
+    client.scatter_region(region_info).unwrap();
+}
+fn test_witness_conf_change() {
+    let mut cluster = new_server_cluster(0, 3);
+    cluster.run();
+    let nodes = Vec::from_iter(cluster.get_node_ids());
+    assert_eq!(nodes.len(), 3);
+
+    let pd_client = Arc::clone(&cluster.pd_client);
+    pd_client.disable_default_operator();
+
+    cluster.must_put(b"k1", b"v1");
+
+    let region = block_on(pd_client.get_region_by_id(1)).unwrap().unwrap();
+    let peer_on_store1 = find_peer(&region, nodes[0]).unwrap();
+    cluster.must_transfer_leader(region.get_id(), peer_on_store1.clone());
+
+    // can't switch witness by conf change
+    let mut peer_on_store3 = find_peer(&region, nodes[2]).unwrap().clone();
+    let mut peer = peer_on_store3.clone();
+    peer.set_is_witness(true);
+    let mut cp = ChangePeerRequest::default();
+    cp.set_change_type(ConfChangeType::AddLearnerNode);
+    cp.set_peer(peer);
+    let req = new_admin_request(
+        region.get_id(),
+        region.get_region_epoch(),
+        new_change_peer_v2_request(vec![cp]),
+    );
+    let resp = cluster
+        .call_command_on_leader(req, Duration::from_millis(100))
+        .unwrap();
+    assert!(resp.get_header().has_error());
+
+    // add a new witness peer
+    cluster
+        .pd_client
+        .must_remove_peer(region.get_id(), peer_on_store3.clone());
+    peer_on_store3.set_is_witness(true);
+    let applied_index = cluster.apply_state(1, 2).applied_index;
+    cluster
+        .pd_client
+        .must_add_peer(region.get_id(), peer_on_store3.clone());
+    must_get_none(&cluster.get_engine(3), b"k1");
+    let region = cluster.get_region(b"k1");
+    cluster.wait_applied_index(region.get_id(), nodes[2], applied_index + 1);
+    assert_eq!(
+        cluster
+            .region_local_state(region.get_id(), nodes[2])
+            .get_region(),
+        &region
+    );
+
+    // remove a witness peer
+    let peer_on_store3 = find_peer(&region, nodes[2]).unwrap().clone();
+    cluster
+        .pd_client
+        .must_remove_peer(region.get_id(), peer_on_store3);
+
+    std::thread::sleep(Duration::from_millis(10));
+
+    assert_eq!(
+        cluster
+            .region_local_state(region.get_id(), nodes[2])
+            .get_state(),
+        PeerState::Tombstone
+    );
+}
+fn test_witness_raftlog_gc_lagged_follower() {
+    let mut cluster = new_server_cluster(0, 3);
+    cluster.cfg.raft_store.raft_log_gc_count_limit = Some(100);
+    cluster.run();
+    let nodes = Vec::from_iter(cluster.get_node_ids());
+    assert_eq!(nodes.len(), 3);
+
+    let pd_client = Arc::clone(&cluster.pd_client);
+    pd_client.disable_default_operator();
+
+    cluster.must_put(b"k0", b"v0");
+
+    let region = block_on(pd_client.get_region_by_id(1)).unwrap().unwrap();
+    let peer_on_store1 = find_peer(&region, nodes[0]).unwrap().clone();
+    cluster.must_transfer_leader(region.get_id(), peer_on_store1);
+    // nonwitness -> witness
+    let peer_on_store3 = find_peer(&region, nodes[2]).unwrap().clone();
+    cluster.pd_client.must_switch_witnesses(
+        region.get_id(),
+        vec![peer_on_store3.get_id()],
+        vec![true],
+    );
+
+    // make sure raft log gc is triggered
+    std::thread::sleep(Duration::from_millis(200));
+    let mut before_states = HashMap::default();
+    for (&id, engines) in &cluster.engines {
+        let mut state: RaftApplyState = get_raft_msg_or_default(engines, &keys::apply_state_key(1));
+        before_states.insert(id, state.take_truncated_state());
+    }
+
+    // one follower is down
+    cluster.stop_node(nodes[1]);
+
+    // write some data to make log gap exceeds the gc limit
+    for i in 1..1000 {
+        let (k, v) = (format!("k{}", i), format!("v{}", i));
+        let key = k.as_bytes();
+        let value = v.as_bytes();
+        cluster.must_put(key, value);
+    }
+
+    // the witness truncated index is not advanced
+    for (&id, engines) in &cluster.engines {
+        let state: RaftApplyState = get_raft_msg_or_default(engines, &keys::apply_state_key(1));
+        if id == 2 {
+            assert_eq!(
+                state.get_truncated_state().get_index() - before_states[&id].get_index(),
+                0
+            );
+        } else {
+            assert_ne!(
+                900,
+                state.get_truncated_state().get_index() - before_states[&id].get_index()
+            );
+        }
+    }
+
+    // the follower is back online
+    cluster.run_node(nodes[1]).unwrap();
+    cluster.must_put(b"k00", b"v00");
+    must_get_equal(&cluster.get_engine(nodes[1]), b"k00", b"v00");
+    // make sure raft log gc is triggered
+    std::thread::sleep(Duration::from_millis(300));
+
+    // the truncated index is advanced now, as all the peers has replicated
+    for (&id, engines) in &cluster.engines {
+        let state: RaftApplyState = get_raft_msg_or_default(engines, &keys::apply_state_key(1));
+        assert_ne!(
+            900,
+            state.get_truncated_state().get_index() - before_states[&id].get_index()
+        );
+    }
+}
+fn test_gc_bypass_raft() {
+    let (cluster, leader, ctx) = must_new_cluster_mul(2);
+    cluster.pd_client.disable_default_operator();
+
+    let env = Arc::new(Environment::new(1));
+    let leader_store = leader.get_store_id();
+    let channel = ChannelBuilder::new(env).connect(&cluster.sim.rl().get_addr(leader_store));
+    let client = TikvClient::new(channel);
+
+    let pk = b"k1".to_vec();
+    let value = vec![b'x'; 300];
+    let engine = cluster.engines.get(&leader_store).unwrap();
+
+    for &start_ts in &[10, 20, 30, 40] {
+        let commit_ts = start_ts + 5;
+        let muts = vec![new_mutation(Op::Put, b"k1", &value)];
+
+        must_kv_prewrite(&client, ctx.clone(), muts, pk.clone(), start_ts);
+        let keys = vec![pk.clone()];
+        must_kv_commit(&client, ctx.clone(), keys, start_ts, commit_ts, commit_ts);
+
+        let key = Key::from_raw(b"k1").append_ts(start_ts.into());
+        let key = data_key(key.as_encoded());
+        assert!(engine.kv.get_value(&key).unwrap().is_some());
+
+        let key = Key::from_raw(b"k1").append_ts(commit_ts.into());
+        let key = data_key(key.as_encoded());
+        assert!(engine.kv.get_value_cf(CF_WRITE, &key).unwrap().is_some());
+    }
+
+    let node_ids = cluster.get_node_ids();
+    for store_id in node_ids {
+        let gc_sched = cluster.sim.rl().get_gc_worker(store_id).scheduler();
+
+        let mut region = cluster.get_region(b"a");
+        region.set_start_key(b"k1".to_vec());
+        region.set_end_key(b"k2".to_vec());
+        sync_gc(&gc_sched, region, 200.into()).unwrap();
+
+        let engine = cluster.engines.get(&store_id).unwrap();
+        for &start_ts in &[10, 20, 30] {
+            let commit_ts = start_ts + 5;
+            let key = Key::from_raw(b"k1").append_ts(start_ts.into());
+            let key = data_key(key.as_encoded());
+            assert!(engine.kv.get_value(&key).unwrap().is_none());
+
+            let key = Key::from_raw(b"k1").append_ts(commit_ts.into());
+            let key = data_key(key.as_encoded());
+            assert!(engine.kv.get_value_cf(CF_WRITE, &key).unwrap().is_none());
+        }
+    }
+}
+fn test_inspected_snapshot() {
+    let mut cluster = new_server_cluster(1, 3);
+    cluster.cfg.prefer_mem = false;
+    cluster.cfg.raft_store.raft_log_gc_tick_interval = ReadableDuration::millis(20);
+    cluster.cfg.raft_store.raft_log_gc_count_limit = Some(8);
+    cluster.cfg.raft_store.merge_max_log_gap = 3;
+    let pd_client = Arc::clone(&cluster.pd_client);
+    pd_client.disable_default_operator();
+
+    cluster.run();
+    cluster.must_transfer_leader(1, new_peer(1, 1));
+    cluster.stop_node(3);
+    (0..10).for_each(|_| cluster.must_put(b"k2", b"v2"));
+    // Sleep for a while to ensure all logs are compacted.
+    sleep_ms(100);
+
+    let stats = cluster
+        .io_rate_limiter
+        .as_ref()
+        .unwrap()
+        .statistics()
+        .unwrap();
+    assert_eq!(stats.fetch(IoType::Replication, IoOp::Read), 0);
+    assert_eq!(stats.fetch(IoType::Replication, IoOp::Write), 0);
+    // Make sure snapshot read hits disk
+    cluster.flush_data();
+    // Let store 3 inform leader to generate a snapshot.
+    cluster.run_node(3).unwrap();
+    must_get_equal(&cluster.get_engine(3), b"k2", b"v2");
+    assert_ne!(stats.fetch(IoType::Replication, IoOp::Read), 0);
+    assert_ne!(stats.fetch(IoType::Replication, IoOp::Write), 0);
+
+    pd_client.must_remove_peer(1, new_peer(2, 2));
+    must_get_none(&cluster.get_engine(2), b"k2");
+    assert_eq!(stats.fetch(IoType::LoadBalance, IoOp::Read), 0);
+    assert_eq!(stats.fetch(IoType::LoadBalance, IoOp::Write), 0);
+    pd_client.must_add_peer(1, new_peer(2, 2));
+    must_get_equal(&cluster.get_engine(2), b"k2", b"v2");
+    assert_ne!(stats.fetch(IoType::LoadBalance, IoOp::Read), 0);
+    assert_ne!(stats.fetch(IoType::LoadBalance, IoOp::Write), 0);
+}
+fn test_witness_leader_down() {
+    let mut cluster = new_server_cluster(0, 3);
+    cluster.run();
+    let nodes = Vec::from_iter(cluster.get_node_ids());
+
+    let pd_client = Arc::clone(&cluster.pd_client);
+    pd_client.disable_default_operator();
+
+    cluster.must_put(b"k0", b"v0");
+
+    let region = block_on(pd_client.get_region_by_id(1)).unwrap().unwrap();
+    let peer_on_store1 = find_peer(&region, nodes[0]).unwrap().clone();
+    cluster.must_transfer_leader(region.get_id(), peer_on_store1);
+
+    let peer_on_store2 = find_peer(&region, nodes[1]).unwrap().clone();
+    // nonwitness -> witness
+    cluster.pd_client.must_switch_witnesses(
+        region.get_id(),
+        vec![peer_on_store2.get_id()],
+        vec![true],
+    );
+
+    // the other follower is isolated
+    cluster.add_send_filter(IsolationFilterFactory::new(3));
+    for i in 1..10 {
+        cluster.must_put(format!("k{}", i).as_bytes(), format!("v{}", i).as_bytes());
+    }
+    // the leader is down
+    cluster.stop_node(1);
+
+    // witness would help to replicate the logs
+    cluster.clear_send_filters();
+
+    // forbid writes
+    let put = new_put_cmd(b"k3", b"v3");
+    must_get_error_is_witness(&mut cluster, &region, put);
+    // forbid reads
+    let get = new_get_cmd(b"k1");
+    must_get_error_is_witness(&mut cluster, &region, get);
+    // forbid read index
+    let read_index = new_read_index_cmd();
+    must_get_error_is_witness(&mut cluster, &region, read_index);
+
+    let peer_on_store3 = find_peer(&region, nodes[2]).unwrap().clone();
+    cluster.must_transfer_leader(region.get_id(), peer_on_store3);
+    cluster.must_put(b"k1", b"v1");
+    assert_eq!(
+        cluster.leader_of_region(region.get_id()).unwrap().store_id,
+        nodes[2],
+    );
+    assert_eq!(cluster.must_get(b"k9"), Some(b"v9".to_vec()));
+}
+fn test_decrease_pool() {
+    let mut cluster = new_node_cluster(0, 1);
+    cluster.pd_client.disable_default_operator();
+    cluster.cfg.raft_store.store_batch_system.pool_size = 2;
+    cluster.cfg.raft_store.apply_batch_system.pool_size = 2;
+    let _ = cluster.run_conf_change();
+
+    // Save current poller tids before shrinking
+    let original_poller_tids = get_poller_thread_ids();
+
+    // Request can be handled as usual
+    cluster.must_put(b"k1", b"v1");
+    must_get_equal(&cluster.get_engine(1), b"k1", b"v1");
+
+    {
+        let sim = cluster.sim.rl();
+        let cfg_controller = sim.get_cfg_controller().unwrap();
+        let change = {
+            let mut change = HashMap::new();
+            change.insert("raftstore.store_pool_size".to_owned(), "1".to_owned());
+            change.insert("raftstore.apply-pool-size".to_owned(), "1".to_owned());
+            change
+        };
+
+        // Update config, shrink from 2 to 1
+        cfg_controller.update(change).unwrap();
+        std::thread::sleep(std::time::Duration::from_secs(1));
+
+        assert_eq!(
+            cfg_controller
+                .get_current()
+                .raft_store
+                .apply_batch_system
+                .pool_size,
+            1
+        );
+        assert_eq!(
+            cfg_controller
+                .get_current()
+                .raft_store
+                .store_batch_system
+                .pool_size,
+            1
+        );
+    }
+
+    // Save current poller tids after scaling down
+    let current_poller_tids = get_poller_thread_ids();
+    // Compared with before shrinking, the thread num should be reduced by two
+    assert_eq!(current_poller_tids.len(), original_poller_tids.len() - 2);
+    // After shrinking, all the left tids must be there before
+    for tid in current_poller_tids {
+        assert!(original_poller_tids.contains(&tid));
+    }
+
+    // Request can be handled as usual
+    cluster.must_put(b"k2", b"v2");
+    must_get_equal(&cluster.get_engine(1), b"k2", b"v2");
+}
+fn test_leader_drop_with_pessimistic_lock() {
+    let mut cluster = new_server_cluster(0, 3);
+    cluster.run();
+    cluster.must_transfer_leader(1, new_peer(1, 1));
+
+    let txn_ext = cluster
+        .must_get_snapshot_of_region(1)
+        .ext()
+        .get_txn_ext()
+        .unwrap()
+        .clone();
+    txn_ext
+        .pessimistic_locks
+        .write()
+        .insert(vec![(
+            Key::from_raw(b"k1"),
+            PessimisticLock {
+                primary: b"k1".to_vec().into_boxed_slice(),
+                start_ts: 10.into(),
+                ttl: 1000,
+                for_update_ts: 10.into(),
+                min_commit_ts: 10.into(),
+                last_change_ts: 5.into(),
+                versions_to_last_change: 3,
+            },
+        )])
+        .unwrap();
+
+    // Isolate node 1, leader should be transferred to another node.
+    cluster.add_send_filter(IsolationFilterFactory::new(1));
+    cluster.must_put(b"k1", b"v1");
+    assert_ne!(cluster.leader_of_region(1).unwrap().id, 1);
+
+    // When peer 1 becomes leader again, the pessimistic locks should be cleared
+    // before.
+    cluster.clear_send_filters();
+    cluster.must_transfer_leader(1, new_peer(1, 1));
+    assert!(txn_ext.pessimistic_locks.read().is_empty());
+}
+fn test_infinite_lease() {
+    let mut cluster = new_node_cluster(0, 3);
+    // Avoid triggering the log compaction in this test case.
+    cluster.cfg.raft_store.raft_log_gc_threshold = 100;
+    // Increase the Raft tick interval to make this test case running reliably.
+    // Use large election timeout to make leadership stable.
+    configure_for_lease_read(&mut cluster.cfg, Some(50), Some(10_000));
+    // Override max leader lease to 2 seconds.
+    let max_lease = Duration::from_secs(2);
+    cluster.cfg.raft_store.raft_store_max_leader_lease = ReadableDuration(max_lease);
+
+    let peer = new_peer(1, 1);
+    cluster.pd_client.disable_default_operator();
+    let region_id = cluster.run_conf_change();
+
+    let key = b"k";
+    cluster.must_put(key, b"v0");
+    for id in 2..=cluster.engines.len() as u64 {
+        cluster.pd_client.must_add_peer(region_id, new_peer(id, id));
+        must_get_equal(&cluster.get_engine(id), key, b"v0");
+    }
+
+    // Force `peer` to become leader.
+    let region = cluster.get_region(key);
+    let region_id = region.get_id();
+    cluster.must_transfer_leader(region_id, peer.clone());
+
+    let detector = LeaseReadFilter::default();
+    cluster.add_send_filter(CloneFilterFactory(detector.clone()));
+
+    // Issue a read request and check the value on response.
+    must_read_on_peer(&mut cluster, peer.clone(), region.clone(), key, b"v0");
+    assert_eq!(detector.ctx.rl().len(), 0);
+
+    // Wait for the leader lease to expire.
+    thread::sleep(max_lease);
+
+    // Check if renew-lease-tick proposed a read index and renewed the leader lease.
+    assert_eq!(cluster.leader_of_region(region_id), Some(peer.clone()));
+    assert_eq!(detector.ctx.rl().len(), 1);
+    // Issue a read request to verify the lease.
+    must_read_on_peer(&mut cluster, peer.clone(), region, key, b"v0");
+    assert_eq!(cluster.leader_of_region(region_id), Some(peer));
+    assert_eq!(detector.ctx.rl().len(), 1);
+
+    // renew-lease-tick shouldn't propose any request if the leader lease is not
+    // expired.
+    for _ in 0..4 {
+        cluster.must_put(key, b"v0");
+        thread::sleep(max_lease / 4);
+    }
+    assert_eq!(detector.ctx.rl().len(), 1);
+}
