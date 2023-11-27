@@ -1,9 +1,0 @@
-pub fn stdout_str(&self) -> &str {
-        std::str::from_utf8(&self.stdout).unwrap()
-    }
-fn test_help_flag() {
-    let help_short = new_ucmd!().arg("-h").succeeds();
-    let help_long = new_ucmd!().arg("--help").succeeds();
-
-    assert_eq!(help_short.stdout_str(), help_long.stdout_str());
-}

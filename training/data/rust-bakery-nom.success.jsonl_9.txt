@@ -1,6 +1,0 @@
-fn esc(s: &str) -> IResult<&str, &str, (&str, ErrorKind)> {
-  escaped(digit1, '\\', one_of("\"n\\"))(s)
-}
-fn test_escaped() {
-  assert_eq!(esc("abcd"), Err(Err::Error(("abcd", ErrorKind::Escaped))));
-}

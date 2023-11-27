@@ -1,94 +1,101 @@
 """
-command to run the py file:
-    torchrun --nproc_per_node=4  ./training/codegen_rust.py
+torchrun --nproc_per_node=7  ./training/codegen_rust_lora.py
 """
-
-from transformers import AutoTokenizer, AutoModelForCausalLM,Trainer, TrainingArguments, AutoConfig
-from datasets import load_dataset
 import os
-import torch
-import torch.distributed as dist
+os.environ["CUDA_VISIBLE_DEVICES"]="0"
 import fire
-import jsonlines
-
-#clean CUDA cache and define using cuda
-torch.cuda.empty_cache()
+# import torch.distributed as dist
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM, Trainer, TrainingArguments
+from datasets import load_dataset
+from peft import LoraConfig, get_peft_model
 
 #define the gpu backend to launch training
-dist.init_process_group(backend="nccl")
+# dist.init_process_group(backend="nccl")
 
-#watch the memory change
-def print_memory_usage():
-    print(f"Allocated memory: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
-    print(f"Reserved memory:  {torch.cuda.memory_reserved() / 1024**3:.2f} GB")
+def encode(examples):
+    encoded_input = tokenizer(examples['code'], truncation=True, padding='max_length', max_length=256, return_tensors='pt')
+    encoded_labels = tokenizer(examples['test'], truncation=True, padding='max_length', max_length=256, return_tensors='pt')
+    return {
+        'input_ids': encoded_input['input_ids'].clone(),
+        'attention_mask': encoded_input['attention_mask'].clone(),
+        'labels': encoded_labels['input_ids'].clone()
+    }
 
-#train the models
 
-#load the model and tokenizer
-tokenizer = AutoTokenizer.from_pretrained("Salesforce/codegen-2B-multi")
+def prepare_data():
+    train_dataset = load_dataset('json', data_files='./training/data/train_dataset.txt')['train']
+    valid_dataset = load_dataset('json', data_files='./training/data/valid_dataset.txt')['train']
+    test_dataset = load_dataset('json', data_files='./training/data/test_dataset.txt')['train']
+
+    train_dataset = train_dataset.map(encode, batched=True)
+    valid_dataset = valid_dataset.map(encode, batched=True)
+    test_dataset = test_dataset.map(encode, batched=True)
+
+    train_dataset.set_format('torch', columns=['input_ids', 'attention_mask', 'labels'])
+    valid_dataset.set_format('torch', columns=['input_ids', 'attention_mask', 'labels'])
+    test_dataset.set_format('torch', columns=['input_ids', 'attention_mask', 'labels'])
+
+    return train_dataset, valid_dataset, test_dataset
+
+
+#loading the model
 model = AutoModelForCausalLM.from_pretrained("Salesforce/codegen-2B-multi")
-
-#stream loading data
-processed_data_folder = './training/source'
-
+tokenizer = AutoTokenizer.from_pretrained("Salesforce/codegen-2B-multi")
 #apply tokenizer
 tokenizer.add_special_tokens({'pad_token': '[PAD]'})
-def encode(examples):
-    encoded = tokenizer(examples, truncation=True, padding='max_length', max_length=512, return_tensors='pt')
-    encoded['labels'] = encoded['input_ids'].clone()
-    return encoded
 
-def load_data_in_batches(folder, batch_size):
-    batch_data = []
-    for filename in os.listdir(folder):
-        if filename.endswith('success.jsonl'):
-            file_path = os.path.join(folder, filename)
-            with jsonlines.open(file_path) as reader:          
-                for _, obj in enumerate(reader):
-                    content = obj['test'] + "\n" + obj['code']
-                    encoded = encode(content)
-                    batch_data.append(encoded)
-                    if len(batch_data) == batch_size:
-                        yield batch_data
-                        batch_data = []
-            if batch_data:
-                yield batch_data
+for param in model.parameters():
+  param.requires_grad = False  # freeze the model - train adapters later
+  if param.ndim == 1:
+    # cast the small parameters (e.g. layernorm) to fp32 for stability
+    param.data = param.data.to(torch.float32)
+
+model.gradient_checkpointing_enable()  # reduce number of stored activations
+model.enable_input_require_grads()
+
+config = LoraConfig(
+    r=16, #attention heads
+    lora_alpha=32, #alpha scaling
+    # target_modules=["q_proj", "v_proj"], #if you know the 
+    lora_dropout=0.05,
+    bias="none",
+    task_type="CAUSAL_LM"
+)
+
+model = get_peft_model(model, config)
+
 
 def main():
-    # Use yield to load data batch by batch
-    for batch in load_data_in_batches(processed_data_folder, batch_size=8):
-        training_args = TrainingArguments(
-            output_dir='./training/results',            
-            num_train_epochs=3,                         
-            per_device_train_batch_size=1,              
-            per_device_eval_batch_size=1,               
-            no_cuda=False,  
-            warmup_steps=500,                           
-            weight_decay=0.01,                          
-            logging_dir='./logs',                       
-            logging_steps=10,
-            local_rank=-1,
-            max_steps=10000
-        )
 
-        trainer = Trainer(
-            model=model,
-            args=training_args,
-            train_dataset=batch,
-            # eval_dataset=valid_dataset
-        )
+    train_dataset, valid_dataset, test_dataset = prepare_data()
 
-        trainer.train()
+    training_args = TrainingArguments(
+        output_dir='./results',            
+        num_train_epochs=5,                         
+        per_device_train_batch_size=8,              
+        per_device_eval_batch_size=8,               
+        no_cuda=False,  
+        warmup_steps=500,                           
+        weight_decay=0.01,                          
+        logging_dir='./logs',                       
+        logging_steps=10,
+        local_rank=-1,
+        fp16=True
+    )
 
-        #clean cache every batch
-        torch.cuda.empty_cache()
-        trainer.save_model("./training/saved_model")
-        print_memory_usage()
-    # results = trainer.evaluate(test_dataset)
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=train_dataset,
+        eval_dataset=valid_dataset
+    )
+
+    trainer.train()
+    trainer.evaluate()
+
+    trainer.save_model("./training/saved_model")
+    torch.cuda.empty_cache()
 
 if __name__ == "__main__":
     fire.Fire(main)
-
-#define in function style and change it to main ✅
-#using lora to solve bugs?
-#writing train method in conflunence

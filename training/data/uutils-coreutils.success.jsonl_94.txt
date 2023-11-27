@@ -1,7 +1,0 @@
-pub(crate) fn is_empty(&self) -> bool {
-        self.reads_complete == 0 && self.reads_partial == 0
-    }
-fn test_hostname_ip() {
-    let result = new_ucmd!().arg("-i").succeeds();
-    assert!(!result.stdout_str().trim().is_empty());
-}

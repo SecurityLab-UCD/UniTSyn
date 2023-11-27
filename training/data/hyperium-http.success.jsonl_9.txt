@@ -1,8 +1,0 @@
-fn is_none(&self) -> bool {
-        self.index == !0
-    }
-fn get_invalid() {
-    let mut headers = HeaderMap::new();
-    headers.insert("foo", "bar".parse().unwrap());
-    assert!(headers.get("Evil\r\nKey").is_none());
-}
