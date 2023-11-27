@@ -17,6 +17,8 @@ def check_metadata_decorator(func):
             ("name", str),
             ("url", str),
             ("isArchived", bool),
+            ("isFork", bool),
+            ("isMirror", bool),
             ("primaryLanguage", dict),
             ("pushedAt", str),
             ("stargazerCount", int),

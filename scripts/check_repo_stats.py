@@ -98,6 +98,8 @@ def check_requirements(
             name
             url
             isArchived
+            isFork
+            isMirror
             primaryLanguage {
                 name
             }
@@ -128,11 +130,17 @@ def check_requirements(
     if "errors" in metadata:
         sys.exit(f"Fetching repo metadata error: {metadata['errors']}")
 
-    print(f"{repo} metadata: {metadata}")
+    # print(f"{repo} metadata: {metadata}")
 
-    # If repo is archived, automatic fail
+    # If repo is archived, mirror, or fork, automatic fail
     if data["isArchived"]:
         print("Repo is archived")
+        return False
+    elif data["isFork"]:
+        print("Repo is fork")
+        return False
+    elif data["isMirror"]:
+        print("Repo is mirror")
         return False
 
     # Check requirements
@@ -147,7 +155,7 @@ def check_requirements(
             return False
 
     # Save metadata to file to avoid repeat queries for repos that pass checks
-    print("Saving metadata")
+    # print("Saving metadata")
     for key, value in data.items():
         if not os.path.exists(f"./data/repo_metadata/{key}.json"):
             f = open(f"./data/repo_metadata/{key}.json", "x")
