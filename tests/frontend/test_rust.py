@@ -47,6 +47,28 @@ fn encode_all_bytes_url() {
         name, _ = focal_call.unwrap()
         self.assertEqual(name, "STANDARD.encode_slice(&input, &mut vec)")
 
+    def test_no_focal_in_assert(self):
+        code = """
+#[test]
+fn test_1() {
+    let data = [];
+    let engine = utils::random_engine(data);
+    let encoded = engine.encode(data);
+    let decoded = engine.decode(&encoded).unwrap();
+    assert_eq!(data, decoded.as_slice());
+}
+"""
+
+        ast_util = ASTUtil(replace_tabs(code))
+        tree = ast_util.tree(RUST_LANGUAGE)
+        root_node = tree.root_node
+
+        test_func = get_test_functions(ast_util, root_node)[0]
+
+        focal_call = get_focal_call(ast_util, test_func)
+        name, _ = focal_call.unwrap()
+        self.assertEqual(name, "engine.decode(&encoded)")
+
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
