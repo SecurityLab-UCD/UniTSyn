@@ -1,8 +1,8 @@
-from typing import Iterable
+from typing import Iterable, Optional
 from tree_sitter.binding import Node
 from frontend.parser import RUST_LANGUAGE
 from frontend.parser.ast_util import ASTUtil, ASTLoc, flatten_postorder
-from returns.maybe import Maybe, Nothing, Some
+from returns.maybe import Maybe, Nothing, Some, maybe
 from unitsyncer.util import replace_tabs
 
 
@@ -41,6 +41,29 @@ def get_first_assert(ast_util: ASTUtil, test_func: Node) -> Maybe[Node]:
     return Nothing
 
 
+@maybe
+def get_first_valid_call(calls: list[Node], ast_util: ASTUtil) -> Optional[Node]:
+    """find first valid call not for focal
+
+    Args:
+        calls (list[Node]): a list of candidate call nodes
+        ast_util (ASTUtil): ast_util build with the source code
+
+    Returns:
+        Optional[Node]: first node that should not be skipped, check `do_skip` for detail
+    """
+
+    def do_skip(call_node: Node) -> bool:
+        skip_list = ["unwrap"]
+        call_node_name = ast_util.get_source_from_node(call_node)
+        return any(skip_str in call_node_name for skip_str in skip_list)
+
+    return next(
+        (call for call in calls if not do_skip(call)),
+        None,
+    )
+
+
 def get_focal_call(
     ast_util: ASTUtil, test_func: Node, is_fuzz: bool = False
 ) -> Maybe[tuple[str, ASTLoc]]:
@@ -66,11 +89,15 @@ def get_focal_call(
                 # todo: no call expression in assert macro,
                 # back track to find the last call before assert
                 return Nothing
-            case [call, *_]:
-                name = assert_ast_util.get_source_from_node(call)
-                lineno = call.start_point[0] + assert_macro.start_point[0]
-                col = call.start_point[1]
-                return Some((name, (lineno, col)))
+            case calls:
+
+                def to_result(node: Node) -> tuple[str, ASTLoc]:
+                    name = assert_ast_util.get_source_from_node(node)
+                    lineno = node.start_point[0] + assert_macro.start_point[0]
+                    col = node.start_point[1]
+                    return name, (lineno, col)
+
+                return get_first_valid_call(calls, assert_ast_util).map(to_result)
 
         return Nothing
 
@@ -83,10 +110,10 @@ def get_focal_call(
         match flatten_postorder(test_func, "call_expression"):
             case []:
                 return Nothing
-            case [call, *_]:
-                name = ast_util.get_source_from_node(call)
-                return Some((name, call.start_point))
-
+            case calls:
+                return get_first_valid_call(calls, ast_util).map(
+                    lambda n: (ast_util.get_source_from_node(n), n.start_point)
+                )
     return Nothing
 
 
