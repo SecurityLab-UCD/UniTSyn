@@ -29,7 +29,7 @@ import json
 def get_lsp_cmd(language: str) -> Optional[list[str]]:
     match language:
         case LANGUAGE_IDENTIFIER.PYTHON:
-            return ["python", "-m", "pylsp"]
+            return ["python3", "-m", "pylsp"]
         case LANGUAGE_IDENTIFIER.C | LANGUAGE_IDENTIFIER.CPP:
             return ["clangd"]
         case LANGUAGE_IDENTIFIER.JAVA:
