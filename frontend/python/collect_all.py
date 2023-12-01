@@ -1,5 +1,6 @@
 import frontend.python.collect_test as collect_test
-import frontend.python.collect_focal as collect_focal
+import frontend.python.collect_focal as collect_focal_new
+import frontend.python.collect_focal_org as collect_focal_org
 import fire
 
 
@@ -10,6 +11,7 @@ def main(
     focal_root: str = "data/focal",
     timeout: int = 300,
     nprocs: int = 0,
+    original_collect_focal: bool = False,
     limits: int = -1,
 ):
     collect_test.main(
@@ -20,6 +22,7 @@ def main(
         nprocs=nprocs,
         limits=limits,
     )
+    collect_focal = collect_focal_org if original_collect_focal else collect_focal_new
     collect_focal.main(
         repo_id=repo_id,
         test_root=test_root,
