@@ -54,7 +54,7 @@ def get_first_valid_call(calls: list[Node], ast_util: ASTUtil) -> Optional[Node]
     """
 
     def do_skip(call_node: Node) -> bool:
-        skip_list = ["unwrap"]
+        skip_list = ["unwrap", "len", "as_slice", "into_iter"]
         call_node_name = ast_util.get_source_from_node(call_node)
         return any(skip_str in call_node_name for skip_str in skip_list)
 
@@ -101,17 +101,17 @@ def get_focal_call(
 
         return Nothing
 
-    first_assert = get_first_assert(ast_util, test_func)
-    if first_assert != Nothing:
-        return first_assert.bind(expand_assert_and_get_call)
+    focal_in_assert = get_first_assert(ast_util, test_func).bind(
+        expand_assert_and_get_call
+    )
+    if focal_in_assert != Nothing:
+        return focal_in_assert
     else:
-        if not is_fuzz:
-            return Nothing
         match flatten_postorder(test_func, "call_expression"):
             case []:
                 return Nothing
             case calls:
-                return get_first_valid_call(calls, ast_util).map(
+                return get_first_valid_call(calls[::-1], ast_util).map(
                     lambda n: (ast_util.get_source_from_node(n), n.start_point)
                 )
     return Nothing
@@ -120,17 +120,12 @@ def get_focal_call(
 def main():
     code = """
 #[test]
-fn encode_all_bytes_url() {
-    let bytes: Vec<u8> = (0..=255).collect();
-
-    assert_eq!(
-        "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0\
-         -P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn\
-         -AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq\
-         -wsbKztLW2t7i5uru8vb6_wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t_g4eLj5OXm5-jp6uvs7e7v8PHy\
-         8_T19vf4-fr7_P3-_w==",
-        &engine::GeneralPurpose::new(&URL_SAFE, PAD).encode(bytes)
-    );
+fn test_1() {
+    let data = [];
+    let engine = utils::random_engine(data);
+    let encoded = engine.encode(data);
+    let decoded = engine.decode(&encoded).unwrap();
+    assert_eq!(data, decoded.as_slice());
 }
 """
     ast_util = ASTUtil(replace_tabs(code))
