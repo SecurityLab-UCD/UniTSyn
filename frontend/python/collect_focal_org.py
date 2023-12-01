@@ -187,7 +187,7 @@ def collect_from_repo_with_timeout(*args, timeout: int = -1, **kwargs):
 
 
 def main(
-    repo_id_list: str = "ageitgey/face_recognition",
+    repo_id: str = "ageitgey/face_recognition",
     test_root: str = "data/tests",
     repo_root: str = "data/repos",
     focal_root: str = "data/focal",
@@ -196,9 +196,9 @@ def main(
     limits: int = -1,
 ):
     try:
-        repo_id_list = [l.strip() for l in open(repo_id_list, "r").readlines()]
+        repo_id_list = [l.strip() for l in open(repo_id, "r").readlines()]
     except:
-        repo_id_list = [repo_id_list]
+        repo_id_list = [repo_id]
     if limits > 0:
         repo_id_list = repo_id_list[:limits]
     print(f"Loaded {len(repo_id_list)} repos to be processed")
