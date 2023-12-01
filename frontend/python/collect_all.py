@@ -1,5 +1,6 @@
 import frontend.python.collect_test as collect_test
 import frontend.python.collect_focal as collect_focal
+import frontend.python.collect_focal_org as collect_focal_org
 import fire
 
 
@@ -20,8 +21,8 @@ def main(
         nprocs=nprocs,
         limits=limits,
     )
-    collect_focal.main(
-        repo_id=repo_id,
+    collect_focal_org.main(
+        repo_id_list=repo_id,
         test_root=test_root,
         repo_root=repo_root,
         focal_root=focal_root,
