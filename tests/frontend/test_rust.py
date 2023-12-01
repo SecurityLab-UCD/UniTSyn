@@ -69,6 +69,25 @@ fn test_1() {
         name, _ = focal_call.unwrap()
         self.assertEqual(name, "engine.decode(&encoded)")
 
+    def test_focal_no_assert(self):
+        code = """
+#[test]
+fn test_23() {
+    let data = [];
+    let engine = utils::random_engine(data);
+    let _ = engine.decode(data);
+}
+"""
+        ast_util = ASTUtil(replace_tabs(code))
+        tree = ast_util.tree(RUST_LANGUAGE)
+        root_node = tree.root_node
+
+        test_func = get_test_functions(ast_util, root_node)[0]
+
+        focal_call = get_focal_call(ast_util, test_func)
+        name, _ = focal_call.unwrap()
+        self.assertEqual(name, "engine.decode(data)")
+
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
