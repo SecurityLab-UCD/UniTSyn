@@ -22,7 +22,7 @@ def clean_workspace(workspace_dir: str):
 
 
 def init_workspace(workspace_dir: str):
-    cov_script_path = f"{UNITSYNCER_HOME}/evaluate/rust/rust_test_coverage.sh"
+    cov_script_path = f"{UNITSYNCER_HOME}/evaluation/rust/rust_test_coverage.sh"
     subprocess.run(["cp", cov_script_path, workspace_dir])
 
 
