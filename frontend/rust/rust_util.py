@@ -1,8 +1,8 @@
-from typing import Iterable
+from typing import Iterable, Optional
 from tree_sitter.binding import Node
 from frontend.parser import RUST_LANGUAGE
 from frontend.parser.ast_util import ASTUtil, ASTLoc, flatten_postorder
-from returns.maybe import Maybe, Nothing, Some
+from returns.maybe import Maybe, Nothing, Some, maybe
 from unitsyncer.util import replace_tabs
 
 
@@ -41,6 +41,29 @@ def get_first_assert(ast_util: ASTUtil, test_func: Node) -> Maybe[Node]:
     return Nothing
 
 
+@maybe
+def get_first_valid_call(calls: list[Node], ast_util: ASTUtil) -> Optional[Node]:
+    """find first valid call not for focal
+
+    Args:
+        calls (list[Node]): a list of candidate call nodes
+        ast_util (ASTUtil): ast_util build with the source code
+
+    Returns:
+        Optional[Node]: first node that should not be skipped, check `do_skip` for detail
+    """
+
+    def do_skip(call_node: Node) -> bool:
+        skip_list = ["unwrap", "len", "as_slice", "into_iter"]
+        call_node_name = ast_util.get_source_from_node(call_node)
+        return any(skip_str in call_node_name for skip_str in skip_list)
+
+    return next(
+        (call for call in calls if not do_skip(call)),
+        None,
+    )
+
+
 def get_focal_call(
     ast_util: ASTUtil, test_func: Node, is_fuzz: bool = False
 ) -> Maybe[tuple[str, ASTLoc]]:
@@ -66,44 +89,43 @@ def get_focal_call(
                 # todo: no call expression in assert macro,
                 # back track to find the last call before assert
                 return Nothing
-            case [call, *_]:
-                name = assert_ast_util.get_source_from_node(call)
-                lineno = call.start_point[0] + assert_macro.start_point[0]
-                col = call.start_point[1]
-                return Some((name, (lineno, col)))
+            case calls:
+
+                def to_result(node: Node) -> tuple[str, ASTLoc]:
+                    name = assert_ast_util.get_source_from_node(node)
+                    lineno = node.start_point[0] + assert_macro.start_point[0]
+                    col = node.start_point[1]
+                    return name, (lineno, col)
+
+                return get_first_valid_call(calls, assert_ast_util).map(to_result)
 
         return Nothing
 
-    first_assert = get_first_assert(ast_util, test_func)
-    if first_assert != Nothing:
-        return first_assert.bind(expand_assert_and_get_call)
+    focal_in_assert = get_first_assert(ast_util, test_func).bind(
+        expand_assert_and_get_call
+    )
+    if focal_in_assert != Nothing:
+        return focal_in_assert
     else:
-        if not is_fuzz:
-            return Nothing
         match flatten_postorder(test_func, "call_expression"):
             case []:
                 return Nothing
-            case [call, *_]:
-                name = ast_util.get_source_from_node(call)
-                return Some((name, call.start_point))
-
+            case calls:
+                return get_first_valid_call(calls[::-1], ast_util).map(
+                    lambda n: (ast_util.get_source_from_node(n), n.start_point)
+                )
     return Nothing
 
 
 def main():
     code = """
 #[test]
-fn encode_all_bytes_url() {
-    let bytes: Vec<u8> = (0..=255).collect();
-
-    assert_eq!(
-        "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0\
-         -P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn\
-         -AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq\
-         -wsbKztLW2t7i5uru8vb6_wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t_g4eLj5OXm5-jp6uvs7e7v8PHy\
-         8_T19vf4-fr7_P3-_w==",
-        &engine::GeneralPurpose::new(&URL_SAFE, PAD).encode(bytes)
-    );
+fn test_1() {
+    let data = [];
+    let engine = utils::random_engine(data);
+    let encoded = engine.encode(data);
+    let decoded = engine.decode(&encoded).unwrap();
+    assert_eq!(data, decoded.as_slice());
 }
 """
     ast_util = ASTUtil(replace_tabs(code))

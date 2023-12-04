@@ -113,7 +113,7 @@ def collect_from_repo(
 
 
 def main(
-    repo_id: str = "astral-sh/ruff",
+    repo_id: str = "marshallpierce/rust-base64",
     repo_root: str = "data/repos/",
     test_root: str = "data/tests/",
     focal_root: str = "data/focal/",
