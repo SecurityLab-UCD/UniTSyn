@@ -43,7 +43,8 @@ def get_coverage(
 
     try:
         cov_path = f"{workspace_dir}/target/debug/coverage/{test_target}/coverage.json"
-        cov_obj = json.load(open(cov_path))
+        with open(cov_path) as f:
+            cov_obj = json.load(f)
     except FileNotFoundError:
         return Nothing
 
