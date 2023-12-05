@@ -16,13 +16,30 @@ from multiprocessing import Pool
 from frontend.util import wrap_repo
 
 
-def decompress(task):
+def decompress(task: tuple[str, str], optimize_storage: bool = True):
+    """decompress tar.gz file
+
+    Args:
+        task (tuple[str, str]): input tar path, output path
+        optimize_storage (bool, optional): ignore some file extensions. Defaults to True.
+            NOTE: this might affect efficiency
+
+    Returns:
+        int: extract status, 0 if success, 1 if input file not found, 2 if error
+    """
     ipath, opath = task
     if not os.path.exists(ipath):
         return 1
     # if os.path.exists(opath): return 2
     try:
-        tarfile.open(ipath).extractall(opath)
+        if optimize_storage:
+            exclude_extensions = {".png", ".jpg", ".JPEG", ".jpeg", ".bin", ".pkl"}
+            with tarfile.open(ipath, "r:gz") as tar:
+                for member in tar.getmembers():
+                    if not any(member.name.endswith(ext) for ext in exclude_extensions):
+                        tar.extract(member, path=opath)
+        else:
+            tarfile.open(ipath).extractall(opath)
     except:
         return 2
     return 0
