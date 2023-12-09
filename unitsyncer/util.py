@@ -3,6 +3,8 @@ from returns.maybe import Maybe, Nothing, Some
 from pathos.multiprocessing import ProcessPool
 import sys
 import io
+from itertools import chain
+from typing import Callable, Iterable, TypeVar, Iterator
 
 
 class ReadPipe(threading.Thread):
@@ -62,3 +64,21 @@ def silence(func):
             sys.stdout = original_stdout
 
     return wrapper
+
+
+T = TypeVar("T")
+U = TypeVar("U")
+
+
+def concatMap(func: Callable[[T], Iterable[U]], iterable: Iterable[T]) -> Iterator[U]:
+    """creates a list from a list generating function by application of this function
+    on all elements in a list passed as the second argument
+
+
+    Args:
+        func: T -> [U]
+        iterable: [T]
+
+    Returns: [U]
+    """
+    return chain.from_iterable(map(func, iterable))

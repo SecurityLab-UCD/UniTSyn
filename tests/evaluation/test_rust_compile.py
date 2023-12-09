@@ -7,7 +7,7 @@ from frontend.parser import RUST_LANGUAGE
 from frontend.parser.ast_util import ASTUtil
 from unitsyncer.util import replace_tabs
 import json
-from evaluation.rust.compile import flatten_use_delc
+from evaluation.rust.compile import flatten_use_delc, construct_use_delcs
 import unittest
 import os
 import logging
@@ -68,6 +68,35 @@ use base64::{
             "use base64::*;",
         ]
         self.assertEqual(flatten_use_delc(code), expected)
+
+    def test_construct_use_lists(self):
+        workspace_dir = os.path.abspath(
+            "data/repos/marshallpierce-rust-base64/marshallpierce-rust-base64-4ef33cc"
+        )
+
+        tests_expected = {
+            "use base64::alphabet::URL_SAFE;",
+            "use base64::engine::general_purpose::PAD;",
+            "use base64::engine::general_purpose::STANDARD;",
+            "use base64::*;",
+            "use rand::Rng;",
+            "use rand::SeedableRng;",
+            "use base64::engine::Engine;",
+            "use base64::engine::general_purpose::GeneralPurpose;",
+            "use base64::engine::general_purpose::NO_PAD;",
+        }
+
+        self.assertEqual(construct_use_delcs(workspace_dir, "tests"), tests_expected)
+
+        fuzz_expected = {
+            "use base64::Engine as _;",
+            "use base64::engine::general_purpose::STANDARD;",
+            "use self::rand::SeedableRng;",
+            "use self::rand::Rng;",
+            "use base64::*;",
+            "use base64::alphabet;",
+        }
+        self.assertEqual(construct_use_delcs(workspace_dir, "fuzz"), fuzz_expected)
 
 
 if __name__ == "__main__":
