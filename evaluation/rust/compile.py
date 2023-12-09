@@ -5,15 +5,13 @@ import os
 from tree_sitter.binding import Node
 from frontend.parser import RUST_LANGUAGE
 from frontend.parser.ast_util import ASTUtil
-from unitsyncer.util import replace_tabs
 import json
 import subprocess
 from unitsyncer.common import UNITSYNCER_HOME
 from returns.maybe import Maybe, Some, Nothing
-from frontend.rust.rust_util import get_test_functions
-from frontend.rust.collect_all import collect_test_files
 from functools import reduce
 from operator import add
+from unitsyncer.util import concatMap
 
 
 def flatten_use_delc(use_delc_code: str) -> list[str]:
@@ -78,9 +76,56 @@ def flatten_use_delc(use_delc_code: str) -> list[str]:
             return []
 
 
+def collect_rs_files(root: str):
+    """Get all files end with .rs in the given root directory
+
+    Args:
+        root (str): path to repo root
+    """
+    for dirpath, _, filenames in os.walk(root):
+        for filename in filenames:
+            if filename.endswith(".rs"):
+                yield os.path.join(dirpath, filename)
+
+
+def construct_use_delcs(workspace_dir: str, type: str) -> set[str]:
+    """construct a set of unique use_list for a project from all use declarations in
+    a subdirectory to
+
+        1. solve generated tests' dependency error
+        2. avoid compile error caused by duplicated imports
+
+    Args:
+        workspace_dir (str): path to project's workdir
+        type (str): tests or fuzz to collect use_delcs.
+
+    Returns:
+        set[str]: set of use declarations to write to generated test files
+    """
+    subdir = os.path.join(workspace_dir, type)
+
+    def get_use_list_from_file(fpath: str) -> Iterable[str]:
+        with open(fpath) as f:
+            code = f.read()
+        ast_util = ASTUtil(code)
+        tree = ast_util.tree(RUST_LANGUAGE)
+        use_list_nodes = ast_util.get_all_nodes_of_type(
+            tree.root_node, "use_declaration"
+        )
+        return map(ast_util.get_source_from_node, use_list_nodes)
+
+    use_lists = concatMap(get_use_list_from_file, collect_rs_files(subdir))
+
+    # flatten and remove duplicate
+    return set(concatMap(flatten_use_delc, use_lists))
+
+
 def main():
-    code = "use base64::{engine::general_purpose::STANDARD, Engine as _};"
-    print(flatten_use_delc(code))
+    workspace_dir = os.path.abspath(
+        "data/repos/marshallpierce-rust-base64/marshallpierce-rust-base64-4ef33cc"
+    )
+
+    print(construct_use_delcs(workspace_dir, "tests"))
 
 
 if __name__ == "__main__":

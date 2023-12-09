@@ -4,6 +4,8 @@ from returns.maybe import Maybe, Nothing, Some
 from pathos.multiprocessing import ProcessPool
 import sys
 import io
+from itertools import chain
+from typing import Callable, Iterable, TypeVar, Iterator
 
 from frontend.parser.ast_util import ASTUtil
 from tree_sitter.binding import Node
@@ -82,3 +84,21 @@ def get_cpp_func_name(ast_util: ASTUtil, node: Node) -> Maybe[str]:
             return Some(func_name)
 
     return Nothing
+
+
+T = TypeVar("T")
+U = TypeVar("U")
+
+
+def concatMap(func: Callable[[T], Iterable[U]], iterable: Iterable[T]) -> Iterator[U]:
+    """creates a list from a list generating function by application of this function
+    on all elements in a list passed as the second argument
+
+
+    Args:
+        func: T -> [U]
+        iterable: [T]
+
+    Returns: [U]
+    """
+    return chain.from_iterable(map(func, iterable))
