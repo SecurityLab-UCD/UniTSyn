@@ -48,10 +48,8 @@ def flatten_use_delc(use_delc_code: str) -> list[str]:
             return [use_delc_code]
         return []
 
-    node = scoped_use_list_nodes[0]
-
     def fold_nodes(nodes: list[Node]) -> str:
-        return reduce(add, map(ast_util.get_source_from_node, nodes))
+        return concatMap(ast_util.get_source_from_node, nodes)
 
     def get_use_src(node: Node) -> str | None:
         match node.type:
@@ -62,6 +60,7 @@ def flatten_use_delc(use_delc_code: str) -> list[str]:
             case _:
                 return None
 
+    node = scoped_use_list_nodes[0]
     match node.children:
         case []:
             return []
@@ -112,7 +111,7 @@ def construct_use_delcs(workspace_dir: str, type: str) -> set[str]:
         use_list_nodes = ast_util.get_all_nodes_of_type(
             tree.root_node, "use_declaration"
         )
-        return map(ast_util.get_source_from_node, use_list_nodes)
+        return list(map(ast_util.get_source_from_node, use_list_nodes))
 
     use_lists = concatMap(get_use_list_from_file, collect_rs_files(subdir))
 
