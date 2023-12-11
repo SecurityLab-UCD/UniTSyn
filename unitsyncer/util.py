@@ -4,7 +4,9 @@ from pathos.multiprocessing import ProcessPool
 import sys
 import io
 from itertools import chain
-from typing import Callable, Iterable, TypeVar, Iterator
+from typing import Callable, Iterable, TypeVar, overload
+from functools import reduce
+from operator import add
 
 
 class ReadPipe(threading.Thread):
@@ -70,7 +72,21 @@ T = TypeVar("T")
 U = TypeVar("U")
 
 
-def concatMap(func: Callable[[T], Iterable[U]], iterable: Iterable[T]) -> Iterator[U]:
+# NOTE: use @overload to work around type checking
+# since `str` is a Iterable, but not compatible with `Iterable[U]` type
+# `type String = List[Char]` is not valid in Python since there is no `Char`
+# the type checker would then infer it as `Iterable[str]`, which != `str`
+@overload
+def concatMap(func: Callable[[T], str], iterable: Iterable[T]) -> str:
+    return reduce(add, map(func, iterable))
+
+
+@overload
+def concatMap(func: Callable[[T], Iterable[U]], iterable: Iterable[T]) -> Iterable[U]:
+    ...
+
+
+def concatMap(func: Callable[[T], Iterable[U]], iterable: Iterable[T]) -> Iterable[U]:
     """creates a list from a list generating function by application of this function
     on all elements in a list passed as the second argument
 
@@ -81,4 +97,4 @@ def concatMap(func: Callable[[T], Iterable[U]], iterable: Iterable[T]) -> Iterat
 
     Returns: [U]
     """
-    return chain.from_iterable(map(func, iterable))
+    return reduce(add, map(func, iterable))
