@@ -98,7 +98,7 @@ U = TypeVar("U")
 # the type checker would then infer it as `Iterable[str]`, which != `str`
 @overload
 def concatMap(func: Callable[[T], str], iterable: Iterable[T]) -> str:
-    return reduce(add, map(func, iterable))
+    ...
 
 
 @overload
