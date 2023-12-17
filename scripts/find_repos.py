@@ -47,6 +47,8 @@ def search_by_last_push(
     while True:
         if "errors" in repos:
             sys.exit(f"Fetching repo metadata error: {repos['errors']}")
+        elif int(stars_query) < 10:
+            sys.exit("No more repos")
         # Keep searching until there are repos in the search result
         elif repos["data"]["search"]["repositoryCount"] != 0:
             break
@@ -135,6 +137,12 @@ def find_repos(
             pushed_date = ""
             last_pushed_date = ""
 
+    try:
+        with open("./count.txt", "r") as f:
+            repo_count = int(f.read())
+    except:
+        repo_count = 0
+
     bulk_size = 100  # How many repos to get at a time
     # Set cursor if it exists
     if cursor != "":
@@ -157,6 +165,7 @@ def find_repos(
     repos_to_save = []
     edges = repos["data"]["search"]["edges"]
     for repo in edges:
+        repo_count += 1
         repo_data = repo["node"]
         repo_name = f"{repo_data['owner']['login']}/{repo_data['name']}"
         if check_requirements(repo_name, requirements, reqs, repo_data):
@@ -206,6 +215,9 @@ def find_repos(
         f.write(
             f"{new_cursor}|{stars_query}|{last_stargazerCount}|{pushed_date}|{last_pushed_date}"
         )
+
+    with open(f"./count.txt", "w") as f:
+        f.write(str(repo_count))
 
     return int(repos["data"]["rateLimit"]["remaining"])
 
