@@ -88,7 +88,7 @@ void catalogLoads() {
 }"""
 
         name, loc = self.__test_focal_helper(code).unwrap()
-        self.assertEqual(name, 'getFirst')
+        self.assertEqual(name, "getFirst")
         self.assertEqual(loc, (6, 43))
 
         code = """
@@ -106,6 +106,41 @@ void testAdd() {
 
         code = "@Test\nvoid testNothing() {\n}"
         self.assertEqual(self.__test_focal_helper(code), Nothing)
+
+    def test_focal_in_branch(self):
+        code = """
+@Test
+public void testInputParts(ServiceTransformationEngine transformationEngine, @All ServiceManager serviceManager) throws Exception {
+
+    //check and import services
+    checkAndImportServices(transformationEngine, serviceManager);
+
+    URI op = findServiceURI(serviceManager, "serv1323166560");
+    String[] expected = {"con241744282", "con1849951292", "con1653328292"};
+    if (op != null) {
+        Set<URI> ops = serviceManager.listOperations(op);
+        Set<URI> inputs = serviceManager.listInputs(ops.iterator().next());
+        Set<URI> parts = new HashSet<URI>(serviceManager.listMandatoryParts(inputs.iterator().next()));
+        assertTrue(parts.size() == 3);
+        for (URI part : parts) {
+            boolean valid = false;
+            for (String expectedInput : expected) {
+                if (part.toASCIIString().contains(expectedInput)) {
+                    valid = true;
+                    break;
+                }
+            }
+            assertTrue(valid);
+        }
+    } else {
+        fail();
+    }
+
+    serviceManager.shutdown();
+}"""
+        name, loc = self.__test_focal_helper(code).unwrap()
+        self.assertEqual(name, "size")
+        self.assertEqual(loc, (13, 25))
 
 
 if __name__ == "__main__":
