@@ -2,7 +2,7 @@
 import ast
 from typing import Optional
 from pylspclient.lsp_structs import LANGUAGE_IDENTIFIER, Location as PyLSPLoc
-from sansio_lsp_client import Location as SansioLoc  # pylint: disable=import-error
+from sansio_lsp_client import Location as SansioLoc
 from unitsyncer.util import replace_tabs, uri2path
 from returns.maybe import Maybe, Nothing, Some
 from frontend.parser.ast_util import ASTUtil

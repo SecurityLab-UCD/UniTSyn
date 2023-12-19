@@ -14,7 +14,7 @@ import logging
 from unitsyncer.util import path2uri, replace_tabs, uri2path
 from unitsyncer.source_code import get_function_code
 
-import sansio_lsp_client as lsp  # pylint: disable=import-error
+import sansio_lsp_client as lsp
 
 # ============================utils ========================
 # from https://github.com/PurpleMyst/sansio-lsp-client/blob/master/tests/test_actual_langservers.py
