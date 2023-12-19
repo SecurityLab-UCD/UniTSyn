@@ -1,7 +1,8 @@
+"""fetching source code from repo dir"""
 import ast
 from typing import Optional
 from pylspclient.lsp_structs import LANGUAGE_IDENTIFIER, Location as PyLSPLoc
-from sansio_lsp_client import Location as SansioLoc
+from sansio_lsp_client import Location as SansioLoc  # pylint: disable=import-error
 from unitsyncer.util import replace_tabs, uri2path
 from returns.maybe import Maybe, Nothing, Some
 from frontend.parser.ast_util import ASTUtil
@@ -30,9 +31,9 @@ def get_function_code(
         Maybe[tuple[str, str | None, str | None]]: source code of function, its docstring, code_id
     """
     lineno = func_location.range.start.line
-    col_offset = func_location.range.start.character
+    col_offset = func_location.range.start.character  # pylint: disable=unused-variable
 
-    def get_function_code(file_path) -> Maybe[tuple[str, str | None, str | None]]:
+    def _get_function_code(file_path) -> Maybe[tuple[str, str | None, str | None]]:
         with open(file_path, "r", errors="replace") as file:
             code = file.read()
 
@@ -92,7 +93,7 @@ def get_function_code(
             case _:
                 return Nothing
 
-    return uri2path(func_location.uri).bind(get_function_code)
+    return uri2path(func_location.uri).bind(_get_function_code)
 
 
 def py_get_def(node: ast.AST, lineno: int) -> Maybe[ast.FunctionDef]:

@@ -1,3 +1,4 @@
+"""script to build languages.so lib with UniTSyncer supported languages"""
 from tree_sitter import Language, Parser
 import subprocess
 import os

@@ -1,3 +1,4 @@
+"""find focal call in Java test functions"""
 from typing import Optional
 import fire
 import re
@@ -30,7 +31,6 @@ def get_focal_call(ast_util: ASTUtil, func: Node) -> Maybe[tuple[str, ASTLoc]]:
     """
 
     # todo: find better heuristic to match object on imports
-    """get the focal call from the given function"""
     calls = flatten_postorder(func, "method_invocation")
 
     # reverse for postorder
@@ -43,7 +43,7 @@ def get_focal_call(ast_util: ASTUtil, func: Node) -> Maybe[tuple[str, ASTLoc]]:
             break
         calls_before_assert.append(call)
 
-    if not has_assert or calls_before_assert == []:
+    if not has_assert or not calls_before_assert:
         return Nothing
 
     def get_loc(call: str) -> tuple[str, ASTLoc]:
@@ -51,7 +51,7 @@ def get_focal_call(ast_util: ASTUtil, func: Node) -> Maybe[tuple[str, ASTLoc]]:
         node = calls[idx]
         lineno, col = node.start_point
         match call.split("."):
-            case [obj_name, *_, method_name]:
+            case [obj_name, *_, method_name]:  # pylint: disable=unused-variable
                 offset = len(call) - len(method_name)
                 return method_name, (lineno, col + offset)
             case _:
@@ -61,7 +61,7 @@ def get_focal_call(ast_util: ASTUtil, func: Node) -> Maybe[tuple[str, ASTLoc]]:
 
 
 def main():
-    test_f = "data/repos/spring-cloud-spring-cloud-netflix/spring-cloud-spring-cloud-netflix-630151f/spring-cloud-netflix-eureka-client-tls-tests/src/test/java/org/springframework/cloud/netflix/eureka/BaseCertTest.java"
+    test_f = "data/repos/spring-cloud-spring-cloud-netflix/spring-cloud-spring-cloud-netflix-630151f/spring-cloud-netflix-eureka-client-tls-tests/src/test/java/org/springframework/cloud/netflix/eureka/BaseCertTest.java"  # pylint: disable=line-too-long
     with open(test_f) as f:
         code = f.read()
     ast_util = ASTUtil(code)

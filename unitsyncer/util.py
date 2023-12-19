@@ -1,3 +1,4 @@
+"""util functions for UniTSyncer backend"""
 import threading
 from returns.maybe import Maybe, Nothing, Some
 from pathos.multiprocessing import ProcessPool

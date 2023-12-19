@@ -1,3 +1,4 @@
+"""definition for general Synchronizer and LSPSynchronizer based on pylspclient"""
 import pylspclient
 import subprocess
 import sys
@@ -76,6 +77,8 @@ class LSPSynchronizer(Synchronizer):
         self.root_uri = path2uri(self.workspace_dir)
         workspace_name = os.path.basename(self.workspace_dir)
         self.workspace_folders = [{"name": workspace_name, "uri": self.root_uri}]
+        self.lsp_proc: subprocess.Popen
+        self.lsp_client: pylspclient.LspClient
 
     @silence
     def start_lsp_server(self, timeout: int = 10):
@@ -123,7 +126,8 @@ class LSPSynchronizer(Synchronizer):
             str: uri of the opened file
         """
         uri = path2uri(file_path)
-        text = replace_tabs(open(file_path, "r", errors="replace").read())
+        with open(file_path, "r", errors="replace") as f:
+            text = replace_tabs(f.read())
         version = 1
         self.lsp_client.didOpen(
             pylspclient.lsp_structs.TextDocumentItem(uri, self.langID, version, text)
@@ -150,7 +154,7 @@ class LSPSynchronizer(Synchronizer):
         """
         try:
             uri = self.open_file(file_path)
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             return Failure(str(e))
 
         try:
@@ -162,7 +166,7 @@ class LSPSynchronizer(Synchronizer):
                 TextDocumentIdentifier(uri),
                 Position(line, col),
             )
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             return Failure(str(e))
 
         def_location: Location

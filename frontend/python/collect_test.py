@@ -15,13 +15,16 @@ from pathlib import Path
 from collections import Counter
 from typing import List, Optional
 
-from ..util import run_with_timeout, wrap_repo, mp_map_repos, TimeoutException
+from frontend.util import run_with_timeout, wrap_repo, mp_map_repos, TimeoutException
 from navigate import ModuleNavigator, dump_ast_func
 
 
 def collect_test_files(root: str):
     """collect all files in the root folder recursively and filter to match the given patterns"""
-    patterns = [".*_test\.py", "test_.*\.py"]
+    patterns = [
+        ".*_test\.py",  # pylint: disable=anomalous-backslash-in-string
+        "test_.*\.py",  # pylint: disable=anomalous-backslash-in-string
+    ]
     test_files = []
     for parent, _, files in os.walk(root):
         for file in files:
@@ -136,7 +139,7 @@ def collect_from_repo(repo_id: str, repo_root: str, test_root: str):
             funcs = collect_test_funcs(f)
         except TimeoutException:
             raise
-        except:
+        except:  # pylint: disable=bare-except
             funcs = None
         if funcs is None or len(funcs) == 0:
             continue
@@ -168,7 +171,7 @@ def main(
     # otherwise it is the id of a specific repo
     try:
         repo_id_list = [l.strip() for l in open(repo_id, "r").readlines()]
-    except:
+    except FileNotFoundError:
         repo_id_list = [repo_id]
     if limits > 0:
         repo_id_list = repo_id_list[:limits]

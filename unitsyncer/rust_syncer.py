@@ -1,3 +1,4 @@
+"""Replacement Synchronizer for Rust"""
 from typing import Optional
 from pip._vendor import tomli
 from os.path import join as pjoin, isfile, isdir, abspath
@@ -13,7 +14,6 @@ from unitsyncer.source_code import get_function_code
 from unitsyncer.util import path2uri, uri2path
 from returns.converters import maybe_to_result
 from unitsyncer.sync import Synchronizer
-from pylspclient.lsp_structs import LANGUAGE_IDENTIFIER
 from fuzzywuzzy import process
 from functools import partial
 
@@ -25,7 +25,7 @@ class RustSynchronizer(Synchronizer):
 
     def initialize(self, timeout: int = 10):
         """index all files and functions in the workdir/src"""
-        for root, dirs, files in os.walk(self.workspace_dir):
+        for root, _, files in os.walk(self.workspace_dir):
             for file in files:
                 if file.endswith(".rs"):
                     file_path = pjoin(root, file)
@@ -41,7 +41,8 @@ class RustSynchronizer(Synchronizer):
         Returns:
             list[tuple[str, Node]]: [(function_name, function_node)]
         """
-        ast_util = ASTUtil(open(file_path).read())
+        with open(file_path) as code_file:
+            ast_util = ASTUtil(code_file.read())
         tree = ast_util.tree(RUST_LANGUAGE)
         nodes = ast_util.get_all_nodes_of_type(tree.root_node, "function_item")
         names = [ast_util.get_name(node).value_or("") for node in nodes]
@@ -97,7 +98,7 @@ class RustSynchronizer(Synchronizer):
             case [obj_name, *xs, method_name]:
                 include_name = obj_name
 
-                # if method_name is unwrap, use the previous splited name as method_name
+                # if method_name is unwrap, use the previous splitted name as method_name
                 if "unwrap" in method_name:
                     method_name = obj_name if len(xs) == 0 else xs[-1]
                 base_name = method_name.split("(")[0]
@@ -148,8 +149,6 @@ def main():
     workdir = "data/repos/marshallpierce-rust-base64/marshallpierce-rust-base64-4ef33cc"
     lsp = RustSynchronizer(workdir)
     lsp.initialize()
-
-    file = f"{workdir}/tests/encode.rs"
 
     print(
         lsp.get_source_of_call(

@@ -1,3 +1,4 @@
+"""script for rust fuzzing and transforming test_template"""
 import logging
 from typing import Optional
 import fire
@@ -115,7 +116,7 @@ def substitute_one_repo(repo: str, targets: list[str], n_fuzz):
                 f_template.write("\n".join(tests))
 
             # format generated tests
-            subprocess.run(["rustfmt", str(generated_test_path)])
+            subprocess.run(["rustfmt", str(generated_test_path)], check=False)
         except FileNotFoundError:
             logging.debug(f"Template {template_path} not found")
 
@@ -165,7 +166,7 @@ def main(
         repo_root (str, optional): directory contains all the repos. Defaults to "data/rust_repos/".
         timeout (int, optional): max_total_time to fuzz. Defaults to 60.
         jobs (int, optional): number of parallel jobs to use. Defaults to CORES.
-        limits (Optional[int], optional): number of repos to process, None if use all of them. Defaults to None.
+        limits (Optional[int], optional): number of repos to process, None if use all of them.
         pipeline (str, optional): what to do. Defaults to "transform".
         n_fuzz (int, optional): number of fuzz data to use. Defaults to 100.
     """
@@ -173,7 +174,7 @@ def main(
         repo_id_list = [
             ll for line in open(repo_id, "r").readlines() if len(ll := line.strip()) > 0
         ]
-    except:
+    except FileNotFoundError:
         repo_id_list = [repo_id]
     if limits is not None:
         repo_id_list = repo_id_list[:limits]

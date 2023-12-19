@@ -1,3 +1,4 @@
+"""util functions for JS frontend"""
 from typing import Iterable
 from tree_sitter.binding import Node
 from frontend.parser import JAVASCRIPT_LANGUAGE
@@ -28,7 +29,7 @@ def js_get_test_args(
 
     # a call to `describe` has the following structure:
     # describe(test_name, test_func)
-    # args_node.childre should be a list of 5 nodes:
+    # args_node.children should be a list of 5 nodes:
     # "(", "test_name", ",", "test_func", ")
     args = args_node.children
     if len(args) != 5 or args[1].type != "string" or args[3].type != "function":
@@ -59,7 +60,7 @@ def get_focal_call(ast_util: ASTUtil, test_func: Node) -> Maybe[tuple[str, ASTLo
         node = calls[idx]
         lineno, col = node.start_point
         match call.split("."):
-            case [obj_name, *_, method_name]:
+            case [*_, method_name]:
                 offset = len(call) - len(method_name)
                 method_name = method_name.split("(")[0]
                 return method_name, (lineno, col + offset)

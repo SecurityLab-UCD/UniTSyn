@@ -1,3 +1,4 @@
+"""Main script for Rust frontend"""
 from typing import Iterable
 import fire
 import os
@@ -50,15 +51,13 @@ def collect_test_funcs(ast_util: ASTUtil) -> Iterable[Node]:
     return get_test_functions(ast_util, root_node)
 
 
-def collect_test_n_focal(file_path: str, is_fuzz: bool = False):
+def collect_test_n_focal(file_path: str):
     with open(file_path, "r", errors="replace") as f:
         ast_util = ASTUtil(replace_tabs(f.read()))
 
     def get_focal_for_test(test_func: Node):
         test_name = ast_util.get_name(test_func).value_or(None)
-        focal, focal_loc = get_focal_call(ast_util, test_func, is_fuzz).value_or(
-            (None, None)
-        )
+        focal, focal_loc = get_focal_call(ast_util, test_func).value_or((None, None))
         return {
             "test_id": test_name,
             "test_loc": test_func.start_point,
@@ -73,7 +72,7 @@ def collect_test_n_focal(file_path: str, is_fuzz: bool = False):
 @run_with_timeout
 def collect_from_repo(
     repo_id: str, repo_root: str, test_root: str, focal_root: str, fuzz: bool
-):
+):  # pylint: disable=unused-argument
     """collect all test functions in the given project
     return (status, nfile, ntest)
     status can be 0: success, 1: repo not found, 2: test not found, 3: skip when output file existed
@@ -81,7 +80,6 @@ def collect_from_repo(
     repo_path = os.path.join(repo_root, wrap_repo(repo_id))
     if not os.path.exists(repo_path) or not os.path.isdir(repo_path):
         return 1, 0, 0
-    test_path = os.path.join(test_root, wrap_repo(repo_id) + ".txt")
     focal_path = os.path.join(focal_root, wrap_repo(repo_id) + ".jsonl")
     # skip if exist
     if os.path.exists(focal_path):
@@ -90,7 +88,7 @@ def collect_from_repo(
     all_files = collect_test_files(repo_path, fuzz)
     tests = {}
     for f in all_files:
-        funcs = collect_test_n_focal(f, is_fuzz=fuzz)
+        funcs = collect_test_n_focal(f)
         tests[f] = funcs
     if len(tests.keys()) == 0:
         return 2, 0, sum(len(list(v)) for v in tests.values())
@@ -98,8 +96,8 @@ def collect_from_repo(
     n_test_func = 0
     n_focal_func = 0
     with open(focal_path, "w") as outfile:
-        for k in tests.keys():
-            for d in tests[k]:
+        for k, ds in tests.items():
+            for d in ds:
                 if d is None:
                     continue
                 test_id = f"{k.removeprefix(repo_root)}::{d['test_id']}"
@@ -124,7 +122,7 @@ def main(
 ):
     try:
         repo_id_list = [l.strip() for l in open(repo_id, "r").readlines()]
-    except:
+    except FileNotFoundError:
         repo_id_list = [repo_id]
     if limits > 0:
         repo_id_list = repo_id_list[:limits]
@@ -148,7 +146,9 @@ def main(
     status, ntest, nfocal = zip(*filtered_results)
     status = Counter(status)
     print(
-        f"Processed {sum(status.values())} repos with {status[3]} skipped, {status[1]} not found, and {status[2]} failed to locate any focal functions"
+        f"Processed {sum(status.values())} repos with",
+        f"{status[3]} skipped, {status[1]} not found,",
+        f"and {status[2]} failed to locate any focal functions",
     )
     print(f"Collected {sum(nfocal)} focal functions for {sum(ntest)} tests")
     print("Done!")

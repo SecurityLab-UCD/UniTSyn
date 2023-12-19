@@ -1,3 +1,4 @@
+"""find focal call in Golang test function"""
 import fire
 import re
 from tree_sitter.binding import Node
@@ -18,7 +19,7 @@ def get_focal_call(ast_util: ASTUtil, func: Node) -> Maybe[tuple[str, ASTLoc]]:
     """
 
     # todo: find better heuristic to match object on imports
-    """get the focal call from the given function"""
+    # get the focal call from the given function
 
     calls = flatten_postorder(func, "call_expression")
 
@@ -37,7 +38,7 @@ def get_focal_call(ast_util: ASTUtil, func: Node) -> Maybe[tuple[str, ASTLoc]]:
         full_name = ast_util.get_source_from_node(call).split("(")[0]
         calls_before_assert.append((full_name, call))
 
-    if not has_assert or calls_before_assert == []:
+    if not has_assert or not calls_before_assert:
         return Nothing
 
     # todo: check if focal is imported from workdir package
@@ -45,7 +46,7 @@ def get_focal_call(ast_util: ASTUtil, func: Node) -> Maybe[tuple[str, ASTLoc]]:
         full_name, node = n
         lineno, col = node.start_point
         match full_name.split("."):
-            case [obj_name, *_, method_name]:
+            case [obj_name, *_, method_name]:  # pylint: disable=unused-variable
                 offset = len(full_name) - len(method_name)
                 return method_name, (lineno, col + offset)
             case _:

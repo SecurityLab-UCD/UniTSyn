@@ -1,3 +1,4 @@
+"""tests for rust coverage module"""
 import json
 from typing import Iterable
 import fire
@@ -6,10 +7,8 @@ from tree_sitter.binding import Node
 from frontend.parser import RUST_LANGUAGE
 from frontend.parser.ast_util import ASTUtil
 from unitsyncer.util import replace_tabs
-import json
 from evaluation.rust.coverage import get_testcase_coverages
 import unittest
-import os
 import logging
 
 
