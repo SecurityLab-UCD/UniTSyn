@@ -26,3 +26,4 @@ jobs:
           mypy unitsyncer main.py 
           mypy frontend/*.py frontend/parser frontend/java frontend/go frontend/javascript frontend/rust
           mypy evaluation
+          mypy scripts
