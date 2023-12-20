@@ -1,6 +1,6 @@
 """fetching source code from repo dir"""
 import ast
-from typing import Optional
+from typing import Optional, TypeAlias
 from pylspclient.lsp_structs import LANGUAGE_IDENTIFIER, Location as PyLSPLoc
 from sansio_lsp_client import Location as SansioLoc
 from unitsyncer.util import replace_tabs, uri2path
@@ -15,7 +15,7 @@ from frontend.parser import (
 from tree_sitter.binding import Node
 from frontend.parser.ast_util import remove_leading_spaces
 
-Location = PyLSPLoc | SansioLoc
+Location: TypeAlias = PyLSPLoc | SansioLoc
 
 
 def get_function_code(

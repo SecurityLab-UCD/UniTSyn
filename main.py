@@ -33,7 +33,7 @@ def java_workdir_dict(objs: list[dict]) -> dict[str, list[dict]]:
     Returns:
         dict[str, list[dict]]: {workdir: [corresponding focal objects, ...], ...}
     """
-    workdir_dict = {}
+    workdir_dict: dict[str, list[dict]] = {}
     for obj in objs:
         test_id = obj["test_id"]
         file_path = id2path(test_id)

@@ -144,11 +144,11 @@ def main(
     if len(filtered_results) < len(status_ntest_nfocal):
         print(f"{len(status_ntest_nfocal) - len(filtered_results)} repos timeout")
     status, ntest, nfocal = zip(*filtered_results)
-    status = Counter(status)
+    status_counter: Counter[int] = Counter(status)
     print(
-        f"Processed {sum(status.values())} repos with",
-        f"{status[3]} skipped, {status[1]} not found,",
-        f"and {status[2]} failed to locate any focal functions",
+        f"Processed {sum(status_counter.values())} repos with",
+        f"{status_counter[3]} skipped, {status_counter[1]} not found,",
+        f"and {status_counter[2]} failed to locate any focal functions",
     )
     print(f"Collected {sum(nfocal)} focal functions for {sum(ntest)} tests")
     print("Done!")

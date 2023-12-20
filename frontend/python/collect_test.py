@@ -190,7 +190,7 @@ def main(
     if len(filtered_results) < len(status_nfile_ntest):
         print(f"{len(status_nfile_ntest) - len(filtered_results)} repos timeout")
     status, nfile, ntest = zip(*filtered_results)
-    status = Counter(status)
+    status_counter: Counter[int] = Counter(status)
     print(
         f"Processed {sum(status.values())} repos with {status[3]} skipped, {status[1]} not found, and {status[2]} failed to mine any testing functions"
     )

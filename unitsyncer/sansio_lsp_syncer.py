@@ -65,8 +65,8 @@ class ThreadedServer:
         self._pout = process.stdout
         self._pin = process.stdin
 
-        self._read_q = queue.Queue()
-        self._send_q = queue.Queue()
+        self._read_q: queue.Queue[bytes] = queue.Queue()
+        self._send_q: queue.Queue[bytes | None] = queue.Queue()
 
         self.reader_thread = threading.Thread(
             target=self._read_loop, name="lsp-reader", daemon=True
@@ -222,8 +222,8 @@ class SansioLSPSynchronizer(Synchronizer):
     def __init__(self, workspace_dir: str, language: str) -> None:
         super().__init__(workspace_dir, language)
 
-        self.workspace_dir = pathlib.Path(self.workspace_dir)
-        self.root_uri = self.workspace_dir.as_uri()
+        self.workspace_path: pathlib.Path = pathlib.Path(self.workspace_dir)
+        self.root_uri = self.workspace_path.as_uri()
 
         self.lsp_proc: subprocess.Popen
         self.lsp_server: ThreadedServer
