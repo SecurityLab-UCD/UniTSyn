@@ -1,4 +1,4 @@
-git+https://github.com/yeger00/pylspclient.git # pypi does not holds the newest version
+git+https://github.com/yeger00/pylspclient.git@bd58ae7ee5773fd3b4df8c28480a8df9279cd59a # use older version to avoid conflict with sansio-lsp-server
 python-lsp-server>=1.8.2
 jedi>=0.19.1
 returns>=0.16.1
