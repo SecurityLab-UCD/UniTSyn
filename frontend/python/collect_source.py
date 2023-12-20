@@ -60,7 +60,7 @@ def main(
 ):
     try:
         repo_id_list = [l.strip() for l in open(repo_id_list, "r").readlines()]
-    except:
+    except FileNotFoundError:
         repo_id_list = [repo_id_list]
     if limits > 0:
         repo_id_list = repo_id_list[:limits]

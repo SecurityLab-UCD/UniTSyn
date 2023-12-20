@@ -1,5 +1,6 @@
+"""fetching source code from repo dir"""
 import ast
-from typing import Optional
+from typing import Optional, TypeAlias
 from pylspclient.lsp_structs import LANGUAGE_IDENTIFIER, Location as PyLSPLoc
 from sansio_lsp_client import Location as SansioLoc
 from unitsyncer.util import replace_tabs, uri2path
@@ -14,7 +15,7 @@ from frontend.parser import (
 from tree_sitter.binding import Node
 from frontend.parser.ast_util import remove_leading_spaces
 
-Location = PyLSPLoc | SansioLoc
+Location: TypeAlias = PyLSPLoc | SansioLoc
 
 
 def get_function_code(
@@ -30,9 +31,9 @@ def get_function_code(
         Maybe[tuple[str, str | None, str | None]]: source code of function, its docstring, code_id
     """
     lineno = func_location.range.start.line
-    col_offset = func_location.range.start.character
+    col_offset = func_location.range.start.character  # pylint: disable=unused-variable
 
-    def get_function_code(file_path) -> Maybe[tuple[str, str | None, str | None]]:
+    def _get_function_code(file_path) -> Maybe[tuple[str, str | None, str | None]]:
         with open(file_path, "r", errors="replace") as file:
             code = file.read()
 
@@ -92,7 +93,7 @@ def get_function_code(
             case _:
                 return Nothing
 
-    return uri2path(func_location.uri).bind(get_function_code)
+    return uri2path(func_location.uri).bind(_get_function_code)
 
 
 def py_get_def(node: ast.AST, lineno: int) -> Maybe[ast.FunctionDef]:
@@ -115,7 +116,7 @@ def py_get_def(node: ast.AST, lineno: int) -> Maybe[ast.FunctionDef]:
 def java_get_def(node: Node, lineno: int, ast_util: ASTUtil) -> Maybe[Node]:
     def in_modifier_range(method_node: Node, lineno: int) -> bool:
         n_modifier = ast_util.get_method_modifiers(method_node).map(len).value_or(0)
-        defn_lineno = method_node.start_point[0]
+        defn_lineno: int = method_node.start_point[0]
         return defn_lineno + n_modifier >= lineno
 
     for defn in ast_util.get_all_nodes_of_type(node, "method_declaration"):

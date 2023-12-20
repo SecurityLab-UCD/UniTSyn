@@ -1,3 +1,4 @@
+"""Util functions for rust frontend"""
 from typing import Iterable, Optional
 from tree_sitter.binding import Node
 from frontend.parser import RUST_LANGUAGE
@@ -64,17 +65,13 @@ def get_first_valid_call(calls: list[Node], ast_util: ASTUtil) -> Optional[Node]
     )
 
 
-def get_focal_call(
-    ast_util: ASTUtil, test_func: Node, is_fuzz: bool = False
-) -> Maybe[tuple[str, ASTLoc]]:
+def get_focal_call(ast_util: ASTUtil, test_func: Node) -> Maybe[tuple[str, ASTLoc]]:
     """Get the focal call from the given test function
 
     Heuristic:
         1. find the first assert macro
         2. expand the macro and find the first call expression in the macro
         3. if no call expression in the macro, back track to find the last call before assert
-
-        if is_fuzz but has no assert, then find the last call in the test function instead of assert
     """
 
     def expand_assert_and_get_call(assert_macro: Node) -> Maybe[tuple[str, ASTLoc]]:
@@ -106,14 +103,16 @@ def get_focal_call(
     )
     if focal_in_assert != Nothing:
         return focal_in_assert
-    else:
-        match flatten_postorder(test_func, "call_expression"):
-            case []:
-                return Nothing
-            case calls:
-                return get_first_valid_call(calls[::-1], ast_util).map(
-                    lambda n: (ast_util.get_source_from_node(n), n.start_point)
-                )
+
+    match flatten_postorder(test_func, "call_expression"):
+        case []:
+            return Nothing
+        case calls:
+
+            def to_name_loc(n: Node):
+                return (ast_util.get_source_from_node(n), n.start_point)
+
+            return get_first_valid_call(calls[::-1], ast_util).map(to_name_loc)
     return Nothing
 
 

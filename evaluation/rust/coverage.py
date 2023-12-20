@@ -1,3 +1,4 @@
+"""Functions for running cargo-fuzz and get coverage for test cases"""
 import json
 from typing import Iterable
 import fire
@@ -6,7 +7,6 @@ from tree_sitter.binding import Node
 from frontend.parser import RUST_LANGUAGE
 from frontend.parser.ast_util import ASTUtil
 from unitsyncer.util import replace_tabs
-import json
 import subprocess
 from unitsyncer.common import UNITSYNCER_HOME
 from returns.maybe import Maybe, Some, Nothing

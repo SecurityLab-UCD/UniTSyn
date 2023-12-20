@@ -1,3 +1,4 @@
+"""Helper Class and Functions for tree-sitter AST"""
 from tree_sitter import Language, Parser, Tree
 from tree_sitter.binding import Node
 from returns.maybe import Maybe, Nothing, Some
@@ -8,6 +9,8 @@ ASTLoc = tuple[int, int]
 
 
 class ASTUtil:
+    """Helper Class to build/read/manipulate AST with tree-sitter"""
+
     def __init__(self, source_code: str) -> None:
         self.src = source_code
 
@@ -71,7 +74,7 @@ class ASTUtil:
         Returns:
             list[Node]: collected nodes
         """
-        nodes = []
+        nodes: list[Node] = []
         if max_level == 0:
             return nodes
 
@@ -103,7 +106,7 @@ def flatten_postorder(
     Returns:
         list[Node]: flattened tree
     """
-    nodes = []
+    nodes: list[Node] = []
     if max_level == 0:
         return nodes
 

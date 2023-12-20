@@ -1,3 +1,4 @@
+"""util functions for UniTSyncer frontend"""
 import os
 import sys
 import ast
@@ -15,7 +16,6 @@ from typing import (
     Any,
     Dict,
     Iterable,
-    Optional,
     Set,
     Tuple,
     TypeVar,
@@ -47,7 +47,7 @@ class Timing:
         print(f"Elapsed {datetime.timedelta(seconds=time.time() - start_at)}")
 
 
-def log_or_skip(path: Optional[str] = None, handler=lambda x: json.dumps(x), **kwargs):
+def log_or_skip(path: Optional[str] = None, handler=json.dumps, **kwargs):
     """log kwargs if path is provided with handler for preprocessing"""
     if not path:
         return
@@ -64,7 +64,9 @@ def wrap_repo(name: str):
 
 
 class TimeoutException(Exception):
-    pass
+    """Wrapper Exception for Frontend Timeout"""
+
+    pass  # pylint: disable=unnecessary-pass
 
 
 @contextlib.contextmanager
@@ -143,7 +145,7 @@ __R = TypeVar("__R")
 
 
 def parallel_subprocess(
-    iter: Iterable[__T],
+    iterable: Iterable[__T],
     jobs: int,
     subprocess_creator: Callable[[__T], subprocess.Popen],
     on_exit: Optional[Callable[[subprocess.Popen], __R]] = None,
@@ -163,9 +165,9 @@ def parallel_subprocess(
     ret = {}
     processes: Set[Tuple[subprocess.Popen, __T]] = set()
     if use_tqdm:
-        iter = tqdm(iter, leave=tqdm_leave, desc=tqdm_msg)
-    for input in iter:
-        processes.add((subprocess_creator(input), input))
+        iterable = tqdm(iterable, leave=tqdm_leave, desc=tqdm_msg)
+    for _input in iterable:
+        processes.add((subprocess_creator(_input), _input))
         if len(processes) >= jobs:
             # wait for a child process to exit
             os.wait()

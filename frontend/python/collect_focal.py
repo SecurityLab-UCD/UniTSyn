@@ -1,3 +1,4 @@
+"""script to collect focal with cursor location"""
 import os
 import sys
 import ast
@@ -11,30 +12,15 @@ from tqdm import tqdm
 from typing import Optional
 from collections import Counter
 
-from ..util import wrap_repo, mp_map_repos, run_with_timeout, TimeoutException
+from frontend.util import wrap_repo, mp_map_repos, run_with_timeout, TimeoutException
 from navigate import ModuleNavigator, load_ast_func, dump_ast_func, is_assert
-
-
-class NotFoundException(Exception):
-    pass
-
-
-def parse_func_name(node: ast.AST):
-    """recursively get the full name of a called function
-    TODO: use astunparse instead for now
-    """
-    return astunparse.unparse(node).strip()
-    if isinstance(node, ast.Name):
-        return node.id
-    return f"{parse_func_name(node.value)}.{node.attr}"
-
-
-def is_subpath(anchor: pathlib.Path, target: pathlib.Path):
-    try:
-        target.relative_to(anchor)
-        return True
-    except ValueError:
-        return False
+from frontend.python.collect_focal_org import (
+    NotFoundException,
+    parse_func_name,
+    is_subpath,
+    jedi2ast,
+    collect_from_repo,
+)
 
 
 def parse_focal_call(test_func: ast.AST, module: ModuleNavigator, repo: jedi.Project):
@@ -44,7 +30,8 @@ def parse_focal_call(test_func: ast.AST, module: ModuleNavigator, repo: jedi.Pro
     2. if found focal class by removing "Test" in name,
     """
     script = jedi.Script(path=module.path, project=repo)
-    last_call, calls_before_assert, found_assert = None, [], False
+    last_call = None  # pylint: disable=unused-variable
+    calls_before_assert, found_assert = [], False
     for node in module.postorder(root=test_func):
         found_assert |= is_assert(node)
         if isinstance(node, ast.Call):
@@ -56,7 +43,8 @@ def parse_focal_call(test_func: ast.AST, module: ModuleNavigator, repo: jedi.Pro
         # col_offset should be shifted to get the definition of the target function
         # say we have the function being called is api.load_image_file
         # and the lineno and col_offset of it is x and y
-        # if we call script.got(x, y), jedi will try to find the definition of api rather than load_image_file
+        # if we call script.got(x, y),
+        #   jedi will try to find the definition of api rather than load_image_file
         # so we need to split api.load_image_file into (api, load_image_file)
         # then drop the last item to get (api,)
         # after that, shifted_col_offset is computed as col_offset + len(api)
@@ -80,28 +68,6 @@ def parse_focal_call(test_func: ast.AST, module: ModuleNavigator, repo: jedi.Pro
     return None
 
 
-def jedi2ast(jedi_node: jedi.api.classes.Name):
-    """convert a jedi node into an ast"""
-    module_path = jedi_node.module_path
-    module = ModuleNavigator(module_path)
-    module_name = module_path.stem
-    node_ids = jedi_node.full_name.split(".")
-    if module_name not in node_ids:
-        return None
-    node_ids = node_ids[node_ids.index(module_name) + 1 :]
-    node = None
-    while node_ids:
-        try:
-            node = module.find_by_name(node_ids.pop(0), root=node)
-        except TimeoutException:
-            raise
-        except:
-            return None
-    if not node:
-        return None
-    return node, module
-
-
 def collect_focal_func(
     repo_id: str = "ageitgey/face_recognition",
     test_id: str = "ageitgey-face_recognition/ageitgey-face_recognition-59cff93/tests/test_face_recognition.py::Test_face_recognition::test_load_image_file",
@@ -116,7 +82,12 @@ def collect_focal_func(
     # find call to to the potential focal function
     result = parse_focal_call(test_func, test_mod, repo)
     if result is not None:
-        focal_call, focal_func_jedi, line, col = result
+        (
+            focal_call,  # pylint: disable=unused-variable
+            focal_func_jedi,
+            line,
+            col,
+        ) = result
     else:
         raise NotFoundException(f"Failed to find potential focal call in {test_id}")
     # convert focal_func from jedi Name to ast object
@@ -133,67 +104,6 @@ def collect_focal_func(
     return focal_id, (line, col), (test_func.lineno, test_func.col_offset)
 
 
-@run_with_timeout
-def collect_from_repo(
-    repo_id: str = "ageitgey/face_recognition",
-    repo_root: str = "data/repos",
-    test_root: str = "data/tests",
-    focal_root: str = "data/focal",
-):
-    """collect all focal func from a repo
-    this is implemented to support multiprocessing
-    return (status, #tests, #focals)
-    status can be 0: success, 1: repo or test not found, 2: repo exist but no focal found, 3: skip if output file existed
-    """
-    repo_path = os.path.join(repo_root, wrap_repo(repo_id))
-    if not os.path.exists(repo_path) or not os.path.isdir(repo_path):
-        return 1, 0, 0
-    test_path = os.path.join(test_root, wrap_repo(repo_id) + ".txt")
-    if not os.path.exists(test_path):
-        return 1, 0, 0
-    focal_path = os.path.join(focal_root, wrap_repo(repo_id) + ".jsonl")
-    if os.path.exists(focal_path):
-        return 3, 0, 0
-    # build jedi project
-    repo = jedi.Project(path=repo_path)
-    # load test func id to be parsed
-    test_ids, focal_ids = [l.strip() for l in open(test_path, "r").readlines()], []
-    failed = 0
-    test_locs = []
-    focal_locs = []
-    for test_id in test_ids:
-        try:
-            focal_id, focal_loc, test_loc = collect_focal_func(
-                repo_id, test_id, repo_root, repo
-            )
-            focal_ids.append(focal_id)
-            test_locs.append(test_loc)
-            focal_locs.append(focal_loc)
-        except TimeoutException:
-            raise
-        except Exception as e:
-            focal_ids.append(str(e))
-            failed += 1
-    if len(test_ids) == failed:
-        return 2, len(test_ids), len(test_ids) - failed
-    # save to disk
-    with open(focal_path, "w") as ofile:
-        for (
-            test_id,
-            test_loc,
-            focal_id,
-            focal_loc,
-        ) in zip(test_ids, test_locs, focal_ids, focal_locs):
-            d = {
-                "test_id": test_id,
-                "test_loc": test_loc,
-                "focal_id": focal_id,
-                "focal_loc": focal_loc,
-            }
-            ofile.write(json.dumps(d) + "\n")
-    return 0, len(test_ids), len(test_ids) - failed
-
-
 def main(
     repo_id: str = "ageitgey/face_recognition",
     test_root: str = "data/tests",
@@ -205,7 +115,7 @@ def main(
 ):
     try:
         repo_id_list = [l.strip() for l in open(repo_id, "r").readlines()]
-    except:
+    except FileNotFoundError:
         repo_id_list = [repo_id]
     if limits > 0:
         repo_id_list = repo_id_list[:limits]
@@ -226,9 +136,11 @@ def main(
     if len(filtered_results) < len(status_ntest_nfocal):
         print(f"{len(status_ntest_nfocal) - len(filtered_results)} repos timeout")
     status, ntest, nfocal = zip(*filtered_results)
-    status = Counter(status)
+    status_counter: Counter[int] = Counter(status)
     print(
-        f"Processed {sum(status.values())} repos with {status[3]} skipped, {status[1]} not found, and {status[2]} failed to locate any focal functions"
+        f"Processed {sum(status_counter.values())} repos with",
+        f"{status_counter[3]} skipped, {status_counter[1]} not found,",
+        f"and {status_counter[2]} failed to locate any focal functions",
     )
     print(f"Collected {sum(nfocal)} focal functions for {sum(ntest)} tests")
     print("Done!")

@@ -1,3 +1,4 @@
+"""main script for Python frontend"""
 import frontend.python.collect_test as collect_test
 import frontend.python.collect_focal as collect_focal_new
 import frontend.python.collect_focal_org as collect_focal_org

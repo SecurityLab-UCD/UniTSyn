@@ -1,3 +1,4 @@
+"""script to collect focal call and its file path using Jedi language server"""
 import os
 import sys
 import ast
@@ -16,15 +17,16 @@ from navigate import ModuleNavigator, load_ast_func, dump_ast_func, is_assert
 
 
 class NotFoundException(Exception):
-    pass
+    """Exception wrapper for not found focal call"""
+
+    pass  # pylint: disable=unnecessary-pass
 
 
 def parse_func_name(node: ast.AST):
-    """recursively get the full name of a called function
-    TODO: use astunparse instead for now
-    """
+    """recursively get the full name of a called function"""
+    # TODO: use unparse from build-in ast module
     return astunparse.unparse(node).strip()
-    if isinstance(node, ast.Name):
+    if isinstance(node, ast.Name):  # pylint: disable=unreachable
         return node.id
     return f"{parse_func_name(node.value)}.{node.attr}"
 
@@ -44,7 +46,8 @@ def parse_focal_call(test_func: ast.AST, module: ModuleNavigator, repo: jedi.Pro
     2. if found focal class by removing "Test" in name,
     """
     script = jedi.Script(path=module.path, project=repo)
-    last_call, calls_before_assert, found_assert = None, [], False
+    last_call = None  # pylint: disable=unused-variable
+    calls_before_assert, found_assert = [], False
     for node in module.postorder(root=test_func):
         found_assert |= is_assert(node)
         if isinstance(node, ast.Call):
@@ -56,7 +59,8 @@ def parse_focal_call(test_func: ast.AST, module: ModuleNavigator, repo: jedi.Pro
         # col_offset should be shifted to get the definition of the target function
         # say we have the function being called is api.load_image_file
         # and the lineno and col_offset of it is x and y
-        # if we call script.got(x, y), jedi will try to find the definition of api rather than load_image_file
+        # if we call script.got(x, y),
+        #   jedi will try to find the definition of api rather than load_image_file
         # so we need to split api.load_image_file into (api, load_image_file)
         # then drop the last item to get (api,)
         # after that, shifted_col_offset is computed as col_offset + len(api)
@@ -95,7 +99,7 @@ def jedi2ast(jedi_node: jedi.api.classes.Name):
             node = module.find_by_name(node_ids.pop(0), root=node)
         except TimeoutException:
             raise
-        except:
+        except:  # pylint: disable=bare-except
             return None
     if not node:
         return None
@@ -116,7 +120,7 @@ def collect_focal_func(
     # find call to to the potential focal function
     result = parse_focal_call(test_func, test_mod, repo)
     if result is not None:
-        focal_call, focal_func_jedi = result
+        focal_call, focal_func_jedi = result  # pylint: disable=unused-variable
     else:
         raise NotFoundException(f"Failed to find potential focal call in {test_id}")
     # convert focal_func from jedi Name to ast object
@@ -142,7 +146,11 @@ def collect_from_repo(
     """collect all focal func from a repo
     this is implemented to support multiprocessing
     return (status, #tests, #focals)
-    status can be 0: success, 1: repo or test not found, 2: repo exist but no focal found, 3: skip if output file existed
+    status can be
+        0: success,
+        1: repo or test not found,
+        2: repo exist but no focal found,
+        3: skip if output file existed
     """
     repo_path = os.path.join(repo_root, wrap_repo(repo_id))
     if not os.path.exists(repo_path) or not os.path.isdir(repo_path):
@@ -163,7 +171,7 @@ def collect_from_repo(
             focal_ids.append(collect_focal_func(repo_id, test_id, repo_root, repo))
         except TimeoutException:
             raise
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             focal_ids.append(str(e))
             failed += 1
     if len(test_ids) == failed:
@@ -194,10 +202,10 @@ def main(
     timeout: int = 300,
     nprocs: int = 0,
     limits: int = -1,
-):
+):  # pylint: disable=too-many-arguments
     try:
         repo_id_list = [l.strip() for l in open(repo_id, "r").readlines()]
-    except:
+    except FileNotFoundError:
         repo_id_list = [repo_id]
     if limits > 0:
         repo_id_list = repo_id_list[:limits]
@@ -218,9 +226,11 @@ def main(
     if len(filtered_results) < len(status_ntest_nfocal):
         print(f"{len(status_ntest_nfocal) - len(filtered_results)} repos timeout")
     status, ntest, nfocal = zip(*filtered_results)
-    status = Counter(status)
+    status_counter: Counter[int] = Counter(status)
     print(
-        f"Processed {sum(status.values())} repos with {status[3]} skipped, {status[1]} not found, and {status[2]} failed to locate any focal functions"
+        f"Processed {sum(status_counter.values())} repos with",
+        f"{status_counter[3]} skipped, {status_counter[1]} not found,",
+        f"and {status_counter[2]} failed to locate any focal functions",
     )
     print(f"Collected {sum(nfocal)} focal functions for {sum(ntest)} tests")
     print("Done!")

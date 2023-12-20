@@ -1,3 +1,4 @@
+"""Synchronizer Based on sansio_lsp"""
 from unitsyncer.sync import Synchronizer, get_lsp_cmd
 import pprint
 import pathlib
@@ -64,8 +65,8 @@ class ThreadedServer:
         self._pout = process.stdout
         self._pin = process.stdin
 
-        self._read_q = queue.Queue()
-        self._send_q = queue.Queue()
+        self._read_q: queue.Queue[bytes] = queue.Queue()
+        self._send_q: queue.Queue[bytes | None] = queue.Queue()
 
         self.reader_thread = threading.Thread(
             target=self._read_loop, name="lsp-reader", daemon=True
@@ -89,7 +90,7 @@ class ThreadedServer:
                     break
 
                 self._read_q.put(data)
-        except Exception as ex:
+        except Exception as ex:  # pylint: disable=broad-exception-caught
             self.exception = ex
         self._send_q.put_nowait(None)  # stop send loop
 
@@ -104,7 +105,7 @@ class ThreadedServer:
                 # print(f"\nsending: {buf}\n")
                 self.process.stdin.write(chunk)
                 self.process.stdin.flush()
-        except Exception as ex:
+        except Exception as ex:  # pylint: disable=broad-exception-caught
             self.exception = ex
 
     def _queue_data_to_send(self):
@@ -152,7 +153,7 @@ class ThreadedServer:
 
             time.sleep(0.2)
 
-        raise Exception(
+        raise Exception(  # pylint: disable=broad-exception-raised
             f"Didn't receive {type_} in time; have: " + pprint.pformat(self.msgs)
         )
 
@@ -170,7 +171,9 @@ class ThreadedServer:
         self._queue_data_to_send()
         self._read_data_received()
 
-    def do_method(self, text, file_uri, method, pos, response_type=None):
+    def do_method(
+        self, text, file_uri, method, pos, response_type=None
+    ):  # pylint: disable=unused-argument, too-many-arguments
         def doc_pos():
             return lsp.TextDocumentPosition(
                 textDocument=lsp.TextDocumentIdentifier(uri=file_uri),
@@ -219,10 +222,14 @@ class SansioLSPSynchronizer(Synchronizer):
     def __init__(self, workspace_dir: str, language: str) -> None:
         super().__init__(workspace_dir, language)
 
-        self.workspace_dir = pathlib.Path(self.workspace_dir)
-        self.root_uri = self.workspace_dir.as_uri()
+        self.workspace_path: pathlib.Path = pathlib.Path(self.workspace_dir)
+        self.root_uri = self.workspace_path.as_uri()
 
-    def start_lsp_server(self, timeout: int = 10):
+        self.lsp_proc: subprocess.Popen
+        self.lsp_server: ThreadedServer
+        self.lsp_client: lsp.Client
+
+    def start_lsp_server(self):
         lsp_cmd = get_lsp_cmd(self.langID)
         if lsp_cmd is None:
             sys.stderr.write("Language {language} is not supported\n")
@@ -238,7 +245,7 @@ class SansioLSPSynchronizer(Synchronizer):
         self.lsp_client = self.lsp_server.lsp_client
 
     def initialize(self, timeout: int = 20):
-        self.start_lsp_server(timeout)
+        self.start_lsp_server()
         self.lsp_server.wait_for_message_of_type(lsp.Initialized, timeout=timeout)
 
     def open_file(self, file_path: str) -> str:
@@ -251,7 +258,8 @@ class SansioLSPSynchronizer(Synchronizer):
             str: uri of the opened file
         """
         uri = path2uri(file_path)
-        text = replace_tabs(open(file_path, "r", errors="replace").read())
+        with open(file_path, "r", errors="replace") as f:
+            text = replace_tabs(f.read())
         file_item = lsp.TextDocumentItem(
             uri=uri, languageId=self.langID, text=text, version=0
         )
@@ -275,8 +283,8 @@ class SansioLSPSynchronizer(Synchronizer):
                 METHOD_DEFINITION,
                 pos,
             )
-        except Exception as e:
-            return Failure("GoDef Request Failed")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            return Failure(f"GoDef Request Failed: {e}")
 
         logging.debug(defn_response)
 

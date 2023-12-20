@@ -1,3 +1,4 @@
+"""main script for UniTSyncer backend"""
 from tqdm import tqdm
 from unitsyncer.sync import Synchronizer, LSPSynchronizer
 from unitsyncer.rust_syncer import RustSynchronizer
@@ -18,8 +19,8 @@ import fire
 from itertools import groupby
 
 
-def id2path(id):
-    return id.split("::")[0]
+def id2path(func_id: str) -> str:
+    return func_id.split("::")[0]
 
 
 def java_workdir_dict(objs: list[dict]) -> dict[str, list[dict]]:
@@ -32,12 +33,12 @@ def java_workdir_dict(objs: list[dict]) -> dict[str, list[dict]]:
     Returns:
         dict[str, list[dict]]: {workdir: [corresponding focal objects, ...], ...}
     """
-    workdir_dict = {}
+    workdir_dict: dict[str, list[dict]] = {}
     for obj in objs:
         test_id = obj["test_id"]
         file_path = id2path(test_id)
         workdir = file_path.split("/test")[0]
-        if workdir not in workdir_dict.keys():
+        if workdir not in workdir_dict:
             workdir_dict[workdir] = []
         workdir_dict[workdir].append(obj)
     return workdir_dict
@@ -49,7 +50,7 @@ def focal2result(syncer: Synchronizer, repos_root, obj):
     src_lineno, src_col_offset = obj["focal_loc"]
     test_lineno, test_col_offset = obj["test_loc"]
 
-    langID = syncer.langID
+    langID = syncer.langID  # pylint: disable=invalid-name
 
     # only python ast is 1-indexed, tree-sitter and LSP are 0-indexed
     match langID:
@@ -147,13 +148,13 @@ def process_one_focal_file(
 
             for obj in workdir_objs:
                 result = focal2result(syncer, repos_root, obj)
-                if "error" in result.keys():
+                if "error" in result:
                     fail.append(result)
                 else:
                     succ.append(result)
 
             syncer.stop()
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             logging.debug(e)
             syncer.stop()
             continue
@@ -181,7 +182,7 @@ def main(
     all_focal_files = []
     if os.path.isdir(focal_path):
         focal_dir = focal_path
-        for root, dirs, files in os.walk(os.path.abspath(focal_dir)):
+        for root, _, files in os.walk(os.path.abspath(focal_dir)):
             for file in files:
                 if file.endswith(".jsonl"):
                     all_focal_files.append(os.path.join(root, file))
