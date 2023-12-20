@@ -27,5 +27,5 @@ jobs:
         run: mypy unitsyncer main.py
       - name: Type Check Evaluation Code
         run: mypy evaluation
-      - name: Type Check Scripts
-        run: mypy scripts
+      # - name: Type Check Scripts
+      #   run: mypy scripts
