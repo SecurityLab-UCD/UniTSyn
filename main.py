@@ -102,7 +102,8 @@ def process_one_focal_file(
     focal_file="./data/focal/ageitgey-face_recognition.jsonl",
     repos_root="data/repos",
     language="python",
-):
+    skip_processed=True,
+) -> tuple[int, int]:
     with open(focal_file) as f:
         objs = [json.loads(line) for line in f.readlines()]
 
@@ -125,6 +126,16 @@ def process_one_focal_file(
     source_file = focal_file.replace("focal", "source")
     success_file = source_file.replace(".jsonl", ".success.jsonl")
     failure_file = source_file.replace(".jsonl", ".failure.jsonl")
+
+    # check if this file is already processed
+    if skip_processed and os.path.exists(success_file) and os.path.exists(failure_file):
+        with open(success_file, "rb") as f:
+            n_succ = sum(1 for _ in f)
+        with open(failure_file, "rb") as f:
+            n_fail = sum(1 for _ in f)
+
+        if n_succ + n_fail >= n_focal:
+            return n_focal, n_succ
 
     logging.debug(f"number of workdir_dict: {len(wd.keys())}")
     repos_root = os.path.abspath(repos_root)
