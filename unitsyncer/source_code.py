@@ -116,7 +116,7 @@ def py_get_def(node: ast.AST, lineno: int) -> Maybe[ast.FunctionDef]:
 def java_get_def(node: Node, lineno: int, ast_util: ASTUtil) -> Maybe[Node]:
     def in_modifier_range(method_node: Node, lineno: int) -> bool:
         n_modifier = ast_util.get_method_modifiers(method_node).map(len).value_or(0)
-        defn_lineno = method_node.start_point[0]
+        defn_lineno: int = method_node.start_point[0]
         return defn_lineno + n_modifier >= lineno
 
     for defn in ast_util.get_all_nodes_of_type(node, "method_declaration"):
