@@ -27,12 +27,6 @@ jobs:
           PYLINT_SCORE=$(pylint $(git ls-files '*.py') | tail -n 2 | head -n 1 | awk '{print $7}')
           echo "PYLINT_SCORE=$PYLINT_SCORE" >> $GITHUB_ENV
 
-      - name: Comment Pylint Score on PR
-        uses: some/comment-action@v1
-        with:
-          message: "Pylint score: ${{ env.PYLINT_SCORE }}"
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Fail if below threshold (8)
         run: |
           if (( $(echo "$PYLINT_SCORE < 8.0" |bc -l) )); then
