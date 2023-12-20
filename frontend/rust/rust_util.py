@@ -103,14 +103,14 @@ def get_focal_call(ast_util: ASTUtil, test_func: Node) -> Maybe[tuple[str, ASTLo
     )
     if focal_in_assert != Nothing:
         return focal_in_assert
-    else:
-        match flatten_postorder(test_func, "call_expression"):
-            case []:
-                return Nothing
-            case calls:
-                return get_first_valid_call(calls[::-1], ast_util).map(
-                    lambda n: (ast_util.get_source_from_node(n), n.start_point)
-                )
+
+    match flatten_postorder(test_func, "call_expression"):
+        case []:
+            return Nothing
+        case calls:
+            return get_first_valid_call(calls[::-1], ast_util).map(
+                lambda n: (ast_util.get_source_from_node(n), n.start_point)
+            )
     return Nothing
 
 

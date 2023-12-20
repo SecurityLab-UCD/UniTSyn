@@ -21,10 +21,5 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install mypy>=1.7.1
-
-      # - name: Run mypy
-      #   run: mypy unitsyncer
-      - name: Mypy Check
-        uses: jpetrucciani/mypy-check@0.991
-        with:
-          path: "unitsyncer"
+      - name: Run mypy
+        run: mypy unitsyncer
