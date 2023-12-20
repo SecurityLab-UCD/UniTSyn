@@ -24,7 +24,7 @@ jobs:
       #     pylint $(git ls-files '*.py')
       - name: Run Pylint
         run: |
-          PYLINT_OUTPUT=$(pylint $(git ls-files '*.py'))
+          PYLINT_OUTPUT=$(pylint $(git ls-files '*.py') || true)
           PYLINT_SCORE=$(echo "$PYLINT_OUTPUT" | grep 'rated at' | sed 's/.*rated at \([0-9.]*\)\/10.*/\1/')
           echo "PYLINT_SCORE=$PYLINT_SCORE" >> $GITHUB_ENV
           echo "$PYLINT_OUTPUT"
