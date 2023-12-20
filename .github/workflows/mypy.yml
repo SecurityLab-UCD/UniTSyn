@@ -22,4 +22,7 @@ jobs:
           pip install -r requirements.txt
           pip install mypy>=1.7.1
       - name: Run mypy
-        run: mypy unitsyncer
+        run: |
+          mypy unitsyncer main.py 
+          mypy frontend/*.py frontend/parser frontend/java frontend/go frontend/javascript frontend/rust
+          mypy evaluation
