@@ -6,7 +6,7 @@ from unitsyncer.sansio_lsp_syncer import SansioLSPSynchronizer
 from pylspclient.lsp_structs import LANGUAGE_IDENTIFIER, Location, Position, Range
 from returns.maybe import Maybe, Nothing, Some
 from returns.result import Result, Success, Failure
-from unitsyncer.util import parallel_starmap as starmap, path2uri
+from unitsyncer.util import parallel_starmap as starmap, path2uri, convert_to_seconds
 from unitsyncer.common import CORES
 import math
 from unitsyncer.source_code import get_function_code
@@ -188,6 +188,7 @@ def main(
     language="python",
     jobs=CORES,
     debug=False,
+    timeout="30m",
 ):
     logging.basicConfig(level=logging.DEBUG if debug else logging.INFO)
     all_focal_files = []
@@ -215,6 +216,7 @@ def main(
                         f, repos_root=repos_root, language=language
                     ),
                     all_focal_files,
+                    timeout=convert_to_seconds(timeout),
                 ),
                 total=len(all_focal_files),
             )
