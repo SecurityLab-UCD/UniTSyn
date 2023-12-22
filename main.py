@@ -17,6 +17,7 @@ from pathos.multiprocessing import ProcessPool
 import logging
 import fire
 from itertools import groupby
+import pathlib
 
 
 def id2path(func_id: str) -> str:
@@ -134,8 +135,13 @@ def process_one_focal_file(
         with open(failure_file, "rb") as f:
             n_fail = sum(1 for _ in f)
 
+        if language == LANGUAGE_IDENTIFIER.JAVA:
+            return n_focal, n_succ
         if n_succ + n_fail >= n_focal:
             return n_focal, n_succ
+
+    pathlib.Path(success_file).touch()
+    pathlib.Path(failure_file).touch()
 
     logging.debug(f"number of workdir_dict: {len(wd.keys())}")
     repos_root = os.path.abspath(repos_root)
