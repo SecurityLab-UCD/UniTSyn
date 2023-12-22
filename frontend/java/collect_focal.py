@@ -46,24 +46,45 @@ def get_focal_call(ast_util: ASTUtil, func: Node) -> Maybe[tuple[str, ASTLoc]]:
     if not has_assert or not calls_before_assert:
         return Nothing
 
-    def get_loc(call: str) -> tuple[str, ASTLoc]:
+    def get_loc(call: str) -> Maybe[tuple[str, ASTLoc]]:
+        """add offset to nested function calls
+
+        Args:
+            call (str): code str of a method_invocation
+
+        Returns:
+            Maybe[tuple[str, ASTLoc]]: (method_name, its location)
+        """
         idx = func_calls.index(call)
         node = calls[idx]
         lineno, col = node.start_point
-        match call.split("."):
-            case [obj_name, *_, method_name]:  # pylint: disable=unused-variable
-                offset = len(call) - len(method_name)
-                return method_name, (lineno, col + offset)
-            case _:
-                return call, (lineno, col)
 
-    return Some(get_loc(calls_before_assert[-1]))
+        # regular expression to find method names
+        pattern = r"(\w+)\s*\("
+        matches = list(re.finditer(pattern, call))
+
+        if matches:
+            last_match = matches[-1]
+            method_name = last_match.group(1)
+            offset = last_match.start(1)
+            loc = (lineno, col + offset)
+            return Some((method_name, loc))
+        else:
+            return Nothing
+
+    return get_loc(calls_before_assert[-1])
 
 
 def main():
-    test_f = "data/repos/spring-cloud-spring-cloud-netflix/spring-cloud-spring-cloud-netflix-630151f/spring-cloud-netflix-eureka-client-tls-tests/src/test/java/org/springframework/cloud/netflix/eureka/BaseCertTest.java"  # pylint: disable=line-too-long
-    with open(test_f) as f:
-        code = f.read()
+    code = """
+@Test
+void catalogLoads() {
+	@SuppressWarnings("rawtypes")
+	ResponseEntity<Map> entity = new TestRestTemplate()
+			.getForEntity("http://localhost:" + this.port + "/context/eureka/apps", Map.class);
+	String computedPath = entity.getHeaders().getFirst("X-Version-Filter-Computed-Path");
+	assertThat(computedPath).isEqualTo("/context/eureka/v2/apps");
+}"""
     ast_util = ASTUtil(code)
     tree = ast_util.tree(JAVA_LANGUAGE)
     root_node = tree.root_node

@@ -6,7 +6,7 @@ from unitsyncer.sansio_lsp_syncer import SansioLSPSynchronizer
 from pylspclient.lsp_structs import LANGUAGE_IDENTIFIER, Location, Position, Range
 from returns.maybe import Maybe, Nothing, Some
 from returns.result import Result, Success, Failure
-from unitsyncer.util import parallel_starmap as starmap, path2uri
+from unitsyncer.util import parallel_starmap as starmap, path2uri, convert_to_seconds
 from unitsyncer.common import CORES
 import math
 from unitsyncer.source_code import get_function_code
@@ -102,7 +102,8 @@ def process_one_focal_file(
     focal_file="./data/focal/ageitgey-face_recognition.jsonl",
     repos_root="data/repos",
     language="python",
-):
+    skip_processed=True,
+) -> tuple[int, int]:
     with open(focal_file) as f:
         objs = [json.loads(line) for line in f.readlines()]
 
@@ -125,6 +126,16 @@ def process_one_focal_file(
     source_file = focal_file.replace("focal", "source")
     success_file = source_file.replace(".jsonl", ".success.jsonl")
     failure_file = source_file.replace(".jsonl", ".failure.jsonl")
+
+    # check if this file is already processed
+    if skip_processed and os.path.exists(success_file) and os.path.exists(failure_file):
+        with open(success_file, "rb") as f:
+            n_succ = sum(1 for _ in f)
+        with open(failure_file, "rb") as f:
+            n_fail = sum(1 for _ in f)
+
+        if n_succ + n_fail >= n_focal:
+            return n_focal, n_succ
 
     logging.debug(f"number of workdir_dict: {len(wd.keys())}")
     repos_root = os.path.abspath(repos_root)
@@ -177,6 +188,7 @@ def main(
     language="python",
     jobs=CORES,
     debug=False,
+    timeout="30m",
 ):
     logging.basicConfig(level=logging.DEBUG if debug else logging.INFO)
     all_focal_files = []
@@ -204,6 +216,7 @@ def main(
                         f, repos_root=repos_root, language=language
                     ),
                     all_focal_files,
+                    timeout=convert_to_seconds(timeout),
                 ),
                 total=len(all_focal_files),
             )

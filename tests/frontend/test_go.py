@@ -7,7 +7,7 @@ from frontend.parser.ast_util import ASTUtil
 from frontend.parser import GO_LANGUAGE
 
 
-class TestSourceCode(unittest.TestCase):
+class TestGoFrontend(unittest.TestCase):
     def test_is_test_fn(self):
         code = """
 func TestDatasets(t *testing.T) {
