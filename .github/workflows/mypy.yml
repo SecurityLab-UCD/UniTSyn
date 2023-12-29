@@ -22,7 +22,7 @@ jobs:
           pip install -r requirements.txt
           pip install mypy>=1.7.1
       - name: Type Check Frontend
-        run: mypy frontend/*.py frontend/parser frontend/java frontend/go frontend/javascript frontend/rust
+        run: mypy frontend/*.py frontend/parser frontend/java frontend/go frontend/javascript frontend/rust frontend/cpp
       - name: Type Check Backend
         run: mypy unitsyncer main.py
       - name: Type Check Evaluation Code

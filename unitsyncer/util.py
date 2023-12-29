@@ -5,6 +5,9 @@ from pathos.multiprocessing import ProcessPool
 import sys
 import io
 
+from frontend.parser.ast_util import ASTUtil
+from tree_sitter.binding import Node
+
 
 class ReadPipe(threading.Thread):
     """source:
@@ -68,3 +71,14 @@ def silence(func):
 def convert_to_seconds(s: str) -> int:
     seconds_per_unit = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
     return int(s[:-1]) * seconds_per_unit[s[-1]]
+
+
+def get_cpp_func_name(ast_util: ASTUtil, node: Node) -> Maybe[str]:
+    """extract function name from function_definition node"""
+    for child in node.children:
+        if child.type == "function_declarator":
+            declarator = ast_util.get_source_from_node(child)
+            func_name = declarator.split("(")[0]
+            return Some(func_name)
+
+    return Nothing

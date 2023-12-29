@@ -49,6 +49,8 @@ def get_lsp_cmd(language: str) -> Optional[list[str]]:
 
 
 class Synchronizer:
+    """interface definition for all Synchronizer"""
+
     def __init__(self, workspace_dir: str, language: str) -> None:
         self.workspace_dir = os.path.abspath(workspace_dir)
         self.langID = language
@@ -71,6 +73,8 @@ class Synchronizer:
 
 
 class LSPSynchronizer(Synchronizer):
+    """Synchronizer implementation based on pylspclient"""
+
     def __init__(self, workspace_dir: str, language: str) -> None:
         super().__init__(workspace_dir, language)
 
@@ -172,7 +176,7 @@ class LSPSynchronizer(Synchronizer):
         def_location: Location
         match response:
             case None | []:
-                return Failure("No definition found")
+                return Failure(f"No definition found: {response}")
             case [loc, *_]:
                 def_location = loc
             case loc:
@@ -203,3 +207,38 @@ class LSPSynchronizer(Synchronizer):
         self.lsp_client.shutdown()
         self.lsp_client.exit()
         self.lsp_proc.kill()
+
+
+def main():
+    # workspace_dir = os.path.abspath(
+    #     "data/repos/google-googletest/google-googletest-f8d7d77/"
+    # )
+    # test_file = os.path.join(workspace_dir, "googletest", "src", "gtest-test-part.cc")
+    # func_loc = (51, 30)
+
+    workspace_dir = os.path.abspath("data/repos/cpp_example/")
+    test_file = os.path.join(workspace_dir, "main.cpp")
+    func_loc = (3, 12)
+
+    sync = LSPSynchronizer(workspace_dir, "cpp")
+    sync.initialize()
+
+    print(sync.get_source_of_call("", test_file, *func_loc))
+
+    # with open(test_file, "r") as f:
+    #     code = f.read()
+
+    # lines = code.splitlines()
+    # for i, l in enumerate(lines):
+    #     for j in range(len(l)):
+    #         match sync.get_source_of_call("", test_file, i, j):
+    #             case Success(x):
+    #                 print(i, j)
+    #                 print(x)
+    #             case Failure(_):
+    #                 pass
+    sync.stop()
+
+
+if __name__ == "__main__":
+    main()

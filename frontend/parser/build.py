@@ -6,11 +6,12 @@ import logging
 import tqdm
 import fire
 
-SUPPORTED = ["java", "javascript", "rust", "go"]
+SUPPORTED = ["java", "javascript", "rust", "go", "cpp"]
 
 
-def main(force=False):
-    tree_sitter_dirs = [f"tree-sitter-{lang}" for lang in SUPPORTED]
+def main(force=False, language="all"):
+    lang_list = SUPPORTED if language == "all" else [language]
+    tree_sitter_dirs = [f"tree-sitter-{lang}" for lang in lang_list]
     if force:
         logging.info("Removing languages.so")
         os.remove("languages.so")

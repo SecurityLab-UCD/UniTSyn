@@ -3,7 +3,7 @@ import ast
 from typing import Optional, TypeAlias
 from pylspclient.lsp_structs import LANGUAGE_IDENTIFIER, Location as PyLSPLoc
 from sansio_lsp_client import Location as SansioLoc
-from unitsyncer.util import replace_tabs, uri2path
+from unitsyncer.util import replace_tabs, uri2path, get_cpp_func_name
 from returns.maybe import Maybe, Nothing, Some
 from frontend.parser.ast_util import ASTUtil
 from frontend.parser import (
@@ -11,6 +11,7 @@ from frontend.parser import (
     JAVA_LANGUAGE,
     JAVASCRIPT_LANGUAGE,
     RUST_LANGUAGE,
+    CPP_LANGUAGE,
 )
 from tree_sitter.binding import Node
 from frontend.parser.ast_util import remove_leading_spaces
@@ -73,7 +74,6 @@ def get_function_code(
                     lambda node: (
                         ast_util.get_source_from_node(node),
                         None,
-                        # js focal may not be a function, so directly unwrap may fail
                         f"{file_path}::{ast_util.get_name(node).value_or(None)}",
                     )
                 )
@@ -85,8 +85,18 @@ def get_function_code(
                     lambda node: (
                         ast_util.get_source_from_node(node),
                         None,
-                        # js focal may not be a function, so directly unwrap may fail
                         f"{file_path}::{ast_util.get_name(node).value_or(None)}",
+                    )
+                )
+            case LANGUAGE_IDENTIFIER.C | LANGUAGE_IDENTIFIER.CPP:
+                ast_util = ASTUtil(replace_tabs(code))
+                tree = ast_util.tree(CPP_LANGUAGE)
+
+                return cpp_get_def(tree.root_node, lineno, ast_util).map(
+                    lambda node: (
+                        ast_util.get_source_from_node(node),
+                        None,
+                        f"{file_path}::{get_cpp_func_name(ast_util, node).value_or(None)}",
                     )
                 )
 
@@ -160,3 +170,12 @@ def go_get_def(node: Node, lineno: int, ast_util: ASTUtil) -> Maybe[Node]:
     return Maybe.from_optional(
         find_in("method_declaration") or find_in("function_declaration")
     )
+
+
+def cpp_get_def(node: Node, lineno: int, ast_util: ASTUtil) -> Maybe[Node]:
+    for defn in ast_util.get_all_nodes_of_type(node, "function_definition"):
+        # tree-sitter AST is 0-indexed
+        defn_lineno = defn.start_point[0]
+        if defn_lineno == lineno:
+            return Some(defn)
+    return Nothing
