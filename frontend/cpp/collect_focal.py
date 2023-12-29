@@ -6,6 +6,7 @@ from tree_sitter.binding import Node
 from frontend.parser import CPP_LANGUAGE
 from frontend.parser.ast_util import ASTUtil, ASTLoc, flatten_postorder
 from returns.maybe import Maybe, Nothing, Some, maybe
+from unitsyncer.util import get_cpp_func_name
 
 
 def get_focal_call(ast_util: ASTUtil, func: Node) -> Maybe[tuple[str, ASTLoc]]:
@@ -75,12 +76,6 @@ TEST(OpenACCTest, DirectiveHelpers) {
 }
 """
 
-    code = """
-TEST(TestNothing, SomeTest) {
-    int a = 1 + 2;
-    int b = 2 + 3;
-}
-"""
     ast_util = ASTUtil(code)
     tree = ast_util.tree(CPP_LANGUAGE)
     root_node = tree.root_node

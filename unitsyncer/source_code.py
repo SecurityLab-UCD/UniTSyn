@@ -3,7 +3,7 @@ import ast
 from typing import Optional, TypeAlias
 from pylspclient.lsp_structs import LANGUAGE_IDENTIFIER, Location as PyLSPLoc
 from sansio_lsp_client import Location as SansioLoc
-from unitsyncer.util import replace_tabs, uri2path
+from unitsyncer.util import replace_tabs, uri2path, get_cpp_func_name
 from returns.maybe import Maybe, Nothing, Some
 from frontend.parser.ast_util import ASTUtil
 from frontend.parser import (
@@ -92,20 +92,11 @@ def get_function_code(
                 ast_util = ASTUtil(replace_tabs(code))
                 tree = ast_util.tree(CPP_LANGUAGE)
 
-                def get_cpp_func_name(node: Node) -> Maybe[str]:
-                    for child in node.children:
-                        if child.type == "function_declarator":
-                            declarator = ast_util.get_source_from_node(child)
-                            func_name = declarator.split("(")[0]
-                            return Some(func_name)
-
-                    return Nothing
-
                 return cpp_get_def(tree.root_node, lineno, ast_util).map(
                     lambda node: (
                         ast_util.get_source_from_node(node),
                         None,
-                        f"{file_path}::{get_cpp_func_name(node).value_or(None)}",
+                        f"{file_path}::{get_cpp_func_name(ast_util, node).value_or(None)}",
                     )
                 )
 
