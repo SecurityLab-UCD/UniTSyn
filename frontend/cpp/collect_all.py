@@ -18,8 +18,11 @@ def has_test(file_path):
     def has_google_test(code):
         return '#include "gtest/gtest.h"' in code
 
-    with open(file_path, "r", errors="replace") as f:
-        code = f.read()
+    try:
+        with open(file_path, "r", errors="replace") as f:
+            code = f.read()
+    except FileNotFoundError:
+        return False
     return has_google_test(code)
 
 

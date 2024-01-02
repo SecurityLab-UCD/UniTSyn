@@ -35,8 +35,11 @@ def get_function_code(
     col_offset = func_location.range.start.character  # pylint: disable=unused-variable
 
     def _get_function_code(file_path) -> Maybe[tuple[str, str | None, str | None]]:
-        with open(file_path, "r", errors="replace") as file:
-            code = file.read()
+        try:
+            with open(file_path, "r", errors="replace") as file:
+                code = file.read()
+        except FileNotFoundError:
+            return Nothing
 
         match lang:
             case LANGUAGE_IDENTIFIER.PYTHON:

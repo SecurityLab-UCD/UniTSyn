@@ -1,4 +1,5 @@
 """definition for general Synchronizer and LSPSynchronizer based on pylspclient"""
+from code import compile_command
 import pylspclient
 import subprocess
 import sys
@@ -25,6 +26,7 @@ from returns.converters import maybe_to_result
 import logging
 from unitsyncer.util import silence
 import json
+from os.path import realpath
 
 
 def get_lsp_cmd(language: str) -> Optional[list[str]]:
@@ -120,6 +122,22 @@ class LSPSynchronizer(Synchronizer):
         logging.debug(json.dumps(response))
         self.lsp_client.initialized()
 
+        if self.langID == LANGUAGE_IDENTIFIER.CPP:
+            # https://gitlab.kitware.com/cmake/cmake/-/issues/16588
+            # produces compile_commands.json in workspace for clangd to run
+            compile_commands = os.path.join(self.workspace_dir, "compile_commands.json")
+            if not os.path.exists(compile_commands):
+                logging.debug(
+                    f"Calling cmake to produce compile_commands.json in {self.workspace_dir}"
+                )
+                subprocess.run(
+                    ["cmake", "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON", "."],
+                    cwd=self.workspace_dir,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
+
     def open_file(self, file_path: str) -> str:
         """send a file to LSP server
 
@@ -189,7 +207,10 @@ class LSPSynchronizer(Synchronizer):
         logging.debug(file_path)
 
         # check if file path is relative to workspace root
-        if not file_path.startswith(self.workspace_dir):
+        if not (
+            file_path.startswith(self.workspace_dir)
+            or file_path.startswith(realpath(self.workspace_dir))
+        ):
             return Failure(f"Source code not in workspace: {file_path}")
 
         def not_found_error(_):
