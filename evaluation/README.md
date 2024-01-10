@@ -27,3 +27,14 @@ or from GitHub release.
 Coverage report is provided by [jacoco](https://github.com/jacoco/jacoco),
 please download [jacoco-0.8.11.zip] from [its website](https://www.jacoco.org/jacoco/),
 
+### Javascript
+
+We use [istanbuljs/nyc](https://github.com/istanbuljs/nyc) to compute coverage.
+Please download it to the system via
+
+```sh
+npm install -g nyc
+```
+
+We also require [nodejs](https://nodejs.org/en/download/current),
+so please also down it.

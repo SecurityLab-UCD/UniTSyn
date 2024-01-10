@@ -33,10 +33,6 @@ def test_add():
 def add(x: int, y: int) -> int:
     return x + y
         """
-        test = """
-def test_add():
-    assert add(1, 2) == 3
-        """
         self.assertEqual(get_coverage(focal, test, "python"), 100)
 
     def test_cpp(self):
@@ -69,15 +65,6 @@ int test_add() {
         focal = """
 int add(int x, int y) { return x + y; }
 """
-        test = """
-int test_add() {
-  int z = add(1, 2);
-  if (z == 3)
-    return 0;
-
-  return 1;
-}
-"""
         self.assertEqual(get_coverage(focal, test, "cpp"), 100)
 
     def test_java(self):
@@ -105,14 +92,42 @@ public static int add(int x, int y) {
     return x + y;
 }
 """
-        test = """
-public static void test_add() {
-    int z = add(1, 2);
-}
-"""
         self.assertEqual(
             get_coverage(focal, test, "java", java_lib_path=java_lib_path), 100
         )
+
+    def test_js(self):
+        focal = """
+function add(a, b) {
+    switch (a) {
+        case 1:
+            return 1 + b;
+        case 2:
+            return 2 + b;
+        case 3:
+            return 3 + b;
+        default:
+            break;
+    }
+    return a + b;
+};
+
+
+"""
+        test = """
+function test_add() {
+    let z= add(1, 2);
+    console.log(z);
+}
+"""
+        self.assertEqual(get_coverage(focal, test, "javascript"), 25)
+
+        focal = """
+function add(a, b) {
+    return a + b;
+};
+"""
+        self.assertEqual(get_coverage(focal, test, "javascript"), 100)
 
 
 if __name__ == "__main__":

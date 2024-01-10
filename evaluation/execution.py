@@ -33,6 +33,7 @@ def get_ext(lang: str) -> str:
 
 
 def extract_function_name(func: str, lang: str) -> Optional[str]:
+    pattern = r""
     match lang.lower():
         case "python":
 
@@ -52,14 +53,15 @@ def extract_function_name(func: str, lang: str) -> Optional[str]:
             return extractor.name
         case "cpp":
             pattern = r"\b[A-Za-z_][A-Za-z0-9_]*\s+([A-Za-z_][A-Za-z0-9_]*)\s*\([^)]*\)"
-            matches = re.findall(pattern, func)
-            return str(matches[0]) if matches else None
         case "java":
             pattern = r"\b(?:public|protected|private|static|\s)*\s+\w+\s+([A-Za-z_][A-Za-z0-9_]*)\s*\([^)]*\)"
-            matches = re.findall(pattern, func)
-            return str(matches[0]) if matches else None
+        case "javascript":
+            pattern = r"function\s+([a-zA-Z_$][\w_$]*)\s*\("
         case _:
             return None
+
+    matches = re.findall(pattern, func)
+    return str(matches[0]) if matches else None
 
 
 def run_command_in(cwd: str):
@@ -102,14 +104,15 @@ def get_coverage(
         return None
 
     tmp_dir = tempfile.TemporaryDirectory()
-    run_cmd = run_command_in(tmp_dir.name)
+    tmp_dir_path = tmp_dir.name
+    run_cmd = run_command_in(tmp_dir_path)
     ext = get_ext(lang)
 
     focal_file_name = "focal" + ext
     test_file_name = "test" + ext
-    test_file = os.path.join(tmp_dir.name, test_file_name)
+    test_file = os.path.join(tmp_dir_path, test_file_name)
 
-    focal_file = os.path.join(tmp_dir.name, focal_file_name)
+    focal_file = os.path.join(tmp_dir_path, focal_file_name)
     with open(focal_file, "w") as f:
         f.write(code)
 
@@ -121,17 +124,17 @@ def get_coverage(
                 fp.write(f"\n{test_name}()\n")
             subprocess.run(
                 ["coverage", "run", "--branch", "test.py"],
-                cwd=tmp_dir.name,
+                cwd=tmp_dir_path,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
             subprocess.run(
                 ["coverage", "json"],
-                cwd=tmp_dir.name,
+                cwd=tmp_dir_path,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
-            with open(os.path.join(tmp_dir.name, "coverage.json")) as cov_fp:
+            with open(os.path.join(tmp_dir_path, "coverage.json")) as cov_fp:
                 j = json.load(cov_fp)
             try:
                 cov = j["files"][focal_file_name]["summary"]["percent_covered"]
@@ -170,7 +173,7 @@ def get_coverage(
                 return None
         case "java":
             main_file = "Main.java"
-            main_file_path = os.path.join(tmp_dir.name, main_file)
+            main_file_path = os.path.join(tmp_dir_path, main_file)
             class_code_lines = [
                 "class FocalTest {",
                 code,
@@ -192,7 +195,7 @@ def get_coverage(
                 f"java -jar {java_lib_path}/jacococli.jar report jacoco.exec"
                 " --classfiles bin --sourcefiles Main.java --csv coverage.csv"
             )
-            coverage_file = os.path.join(tmp_dir.name, "coverage.csv")
+            coverage_file = os.path.join(tmp_dir_path, "coverage.csv")
             with open(coverage_file, newline="") as csvfile:
                 reader = csv.DictReader(csvfile)
                 for row in reader:
@@ -202,7 +205,20 @@ def get_coverage(
                         total = covered + missed
                         cov = 100.0 * (covered / total if total != 0 else 1)
                         break
-
+        case "javascript":
+            with open(focal_file, "a") as f:
+                f.write(test)
+                f.write(f"\n{test_name}();\n")
+            run_cmd("nyc --reporter=json-summary node focal.js")
+            coverage_file = os.path.join(
+                tmp_dir_path, "coverage", "coverage-summary.json"
+            )
+            with open(coverage_file) as cov_fp:
+                j = json.load(cov_fp)
+            try:
+                cov = j[focal_file]["branches"]["pct"]
+            except KeyError:
+                return None
         case _:
             return None
 
@@ -212,16 +228,29 @@ def get_coverage(
 
 def main():
     focal = """
-public static int add(int x, int y) {
-    return x + y;
-}
+function add(a, b) {
+    switch (a) {
+        case 1:
+            return 1 + b;
+        case 2:
+            return 2 + b;
+        case 3:
+            return 3 + b;
+        default:
+            break;
+    }
+    return a + b;
+};
+
+
 """
     test = """
-public static void test_add() {
-    int z = add(1, 2);
+function test_add() {
+    let z= add(1, 2);
+    console.log(z);
 }
 """
-    print(get_coverage(focal, test, "java"))
+    print(get_coverage(focal, test, "javascript"))
 
 
 if __name__ == "__main__":
