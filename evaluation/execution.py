@@ -57,6 +57,8 @@ def extract_function_name(func: str, lang: str) -> Optional[str]:
             pattern = r"\b(?:public|protected|private|static|\s)*\s+\w+\s+([A-Za-z_][A-Za-z0-9_]*)\s*\([^)]*\)"
         case "javascript":
             pattern = r"function\s+([a-zA-Z_$][\w_$]*)\s*\("
+        case "go":
+            pattern = r"func\s+([a-zA-Z_$][\w_$]*)\s*\("
         case _:
             return None
 
@@ -219,6 +221,32 @@ def get_coverage(
                 cov = j[focal_file]["branches"]["pct"]
             except KeyError:
                 return None
+
+        case "go":
+            mod_file = os.path.join(tmp_dir_path, "go.mod")
+            with open(mod_file, "w") as mod_fp:
+                mod_fp.write("module go_cov\ngo 1.16\n")
+
+            test_file_name = "focal_test.go"
+            test_file = os.path.join(tmp_dir_path, test_file_name)
+            with open(test_file, "w") as test_fp:
+                test_fp.write("package main\n")
+                test_fp.write('import "testing"\n')
+                test_fp.write(test)
+            with open(focal_file, "w") as focal_fp:
+                focal_fp.write("package main\n")
+                focal_fp.write(code)
+
+            focal_name = extract_function_name(code, lang)
+            run_cmd("go test -coverprofile=coverage.out")
+            cov_result: str = run_cmd(
+                "go tool cover -func=coverage.out", stdout=subprocess.PIPE
+            ).stdout
+            for line in cov_result.splitlines():
+                elems = line.split("\t")
+                if len(elems) == 4 and elems[1] == focal_name:
+                    cov = float(elems[-1][:-1])  # str 100.0% -> float 100.0
+                    break
         case _:
             return None
 
@@ -228,29 +256,27 @@ def get_coverage(
 
 def main():
     focal = """
-function add(a, b) {
-    switch (a) {
-        case 1:
-            return 1 + b;
-        case 2:
-            return 2 + b;
-        case 3:
-            return 3 + b;
-        default:
-            break;
-    }
-    return a + b;
-};
-
-
-"""
-    test = """
-function test_add() {
-    let z= add(1, 2);
-    console.log(z);
+func Add(x int, y int) int {
+	switch x {
+	case 1:
+		return 1 + y
+	case 2:
+		return 2 + y
+	case 3:
+		return 3 + y
+	}
+	return x + y
 }
 """
-    print(get_coverage(focal, test, "javascript"))
+    test = """
+func TestAdd(t *testing.T) {
+	total := Add(1, 2)
+	if total != 3 {
+		t.Errorf("add(1, 2) = %d; want 3", total)
+	}
+}
+"""
+    print(get_coverage(focal, test, "go"))
 
 
 if __name__ == "__main__":

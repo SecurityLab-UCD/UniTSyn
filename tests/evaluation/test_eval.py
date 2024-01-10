@@ -129,6 +129,37 @@ function add(a, b) {
 """
         self.assertEqual(get_coverage(focal, test, "javascript"), 100)
 
+    def test_go(self):
+        focal = """
+func Add(x int, y int) int {
+	return x + y
+}
+"""
+        test = """
+func TestAdd(t *testing.T) {
+	total := Add(1, 2)
+	if total != 3 {
+		t.Errorf("add(1, 2) = %d; want 3", total)
+	}
+}
+"""
+        self.assertEqual(get_coverage(focal, test, "go"), 100)
+
+        focal = """
+func Add(x int, y int) int {
+	switch x {
+	case 1:
+		return 1 + y
+	case 2:
+		return 2 + y
+	case 3:
+		return 3 + y
+	}
+	return x + y
+}
+"""
+        self.assertEqual(get_coverage(focal, test, "go"), 40.0)
+
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
