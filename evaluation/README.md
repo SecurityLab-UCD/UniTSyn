@@ -38,3 +38,8 @@ npm install -g nyc
 
 We also require [nodejs](https://nodejs.org/en/download/current),
 so please also down it.
+
+### Golang
+
+Golang's coverage is build in the compiler, so no need to install additional dependencies.
+However, for go, it only supports **statement coverage**.
