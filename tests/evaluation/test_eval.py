@@ -1,5 +1,4 @@
-"""tests for rust coverage module"""
-import json
+"""tests for  get_coverage module in evaluation/execution.py"""
 import os
 from evaluation.execution import get_coverage
 import unittest
