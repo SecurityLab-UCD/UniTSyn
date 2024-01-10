@@ -92,20 +92,6 @@ T = TypeVar("T")
 U = TypeVar("U")
 
 
-# NOTE: use @overload to work around type checking
-# since `str` is a Iterable, but not compatible with `Iterable[U]` type
-# `type String = List[Char]` is not valid in Python since there is no `Char`
-# the type checker would then infer it as `Iterable[str]`, which != `str`
-@overload
-def concatMap(func: Callable[[T], str], iterable: Iterable[T]) -> str:
-    ...
-
-
-@overload
-def concatMap(func: Callable[[T], Iterable[U]], iterable: Iterable[T]) -> Iterable[U]:
-    ...
-
-
 def concatMap(func: Callable[[T], Iterable[U]], iterable: Iterable[T]) -> Iterable[U]:
     """creates a list from a list generating function by application of this function
     on all elements in a list passed as the second argument

@@ -49,7 +49,10 @@ def flatten_use_delc(use_delc_code: str) -> list[str]:
         return []
 
     def fold_nodes(nodes: list[Node]) -> str:
-        return concatMap(ast_util.get_source_from_node, nodes)
+        # NOTE: ignore type since `str` is a Iterable, but not compatible with `Iterable[U]` type
+        # `type String = List[Char]` is not valid in Python since there is no `Char`
+        # the type checker would then infer it as `Iterable[str]`, which != `str`
+        return concatMap(ast_util.get_source_from_node, nodes)  # type: ignore
 
     def get_use_src(node: Node) -> str | None:
         match node.type:
