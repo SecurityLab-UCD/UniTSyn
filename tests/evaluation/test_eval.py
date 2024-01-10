@@ -4,9 +4,12 @@ import os
 from evaluation.execution import get_coverage
 import unittest
 import logging
+from unitsyncer.common import UNITSYNCER_HOME
 
 
 class TestEvaluationCoverage(unittest.TestCase):
+    """tests for evaluation/execution.py"""
+
     def test_python(self):
         focal = """
 def add(x: int, y: int) -> int:
@@ -76,6 +79,40 @@ int test_add() {
 }
 """
         self.assertEqual(get_coverage(focal, test, "cpp"), 100)
+
+    def test_java(self):
+        java_lib_path = os.path.join(UNITSYNCER_HOME, "evaluation", "lib")
+        focal = """
+public static int add(int x, int y) {
+    if (x > 10) {
+        return x + y + 1;
+    } else {
+        return x + y;
+    }
+}
+"""
+        test = """
+public static void test_add() {
+    int z = add(1, 2);
+}
+"""
+        self.assertEqual(
+            get_coverage(focal, test, "java", java_lib_path=java_lib_path), 50
+        )
+
+        focal = """
+public static int add(int x, int y) {
+    return x + y;
+}
+"""
+        test = """
+public static void test_add() {
+    int z = add(1, 2);
+}
+"""
+        self.assertEqual(
+            get_coverage(focal, test, "java", java_lib_path=java_lib_path), 100
+        )
 
 
 if __name__ == "__main__":

@@ -6,10 +6,10 @@ import tempfile
 from typing import Optional
 import os
 import subprocess
-from os.path import join as pjoin
 import json
 import ast
 import re
+import csv
 
 
 def get_ext(lang: str) -> str:
@@ -54,6 +54,10 @@ def extract_function_name(func: str, lang: str) -> Optional[str]:
             pattern = r"\b[A-Za-z_][A-Za-z0-9_]*\s+([A-Za-z_][A-Za-z0-9_]*)\s*\([^)]*\)"
             matches = re.findall(pattern, func)
             return str(matches[0]) if matches else None
+        case "java":
+            pattern = r"\b(?:public|protected|private|static|\s)*\s+\w+\s+([A-Za-z_][A-Za-z0-9_]*)\s*\([^)]*\)"
+            matches = re.findall(pattern, func)
+            return str(matches[0]) if matches else None
         case _:
             return None
 
@@ -80,6 +84,7 @@ def get_coverage(
     code: str,
     test: str,
     lang: str = "python",
+    java_lib_path: str = os.path.join(os.getcwd(), "lib"),
 ) -> Optional[float]:
     """compute branch coverage of `test` on `code`
 
@@ -163,6 +168,41 @@ def get_coverage(
                             cov = 100 if branch_cnt == 0 else percentage
             except KeyError:
                 return None
+        case "java":
+            main_file = "Main.java"
+            main_file_path = os.path.join(tmp_dir.name, main_file)
+            class_code_lines = [
+                "class FocalTest {",
+                code,
+                test,
+                "}",
+                "public class Main {",
+                "public static void main(String[] args) {",
+                f"FocalTest.{test_name}();",
+                "}",
+                "}",
+            ]
+            with open(main_file_path, "w") as f:
+                f.writelines(class_code_lines)
+            run_cmd("javac Main.java -d bin/")
+            run_cmd(
+                f"java -javaagent:{java_lib_path}/jacocoagent.jar=destfile=jacoco.exec -cp bin Main"
+            )
+            run_cmd(
+                f"java -jar {java_lib_path}/jacococli.jar report jacoco.exec"
+                " --classfiles bin --sourcefiles Main.java --csv coverage.csv"
+            )
+            coverage_file = os.path.join(tmp_dir.name, "coverage.csv")
+            with open(coverage_file, newline="") as csvfile:
+                reader = csv.DictReader(csvfile)
+                for row in reader:
+                    if row["CLASS"] == "FocalTest":
+                        covered = int(row["BRANCH_COVERED"])
+                        missed = int(row["BRANCH_MISSED"])
+                        total = covered + missed
+                        cov = 100.0 * (covered / total if total != 0 else 1)
+                        break
+
         case _:
             return None
 
@@ -172,29 +212,16 @@ def get_coverage(
 
 def main():
     focal = """
-int add(int x, int y) {
-    switch(x){
-        case 1:
-            return 1 + y;
-        case 2:
-            return 2 + y;
-        case 3:
-            return 3 + y;
-        default:
-            return x + y;
-    }
+public static int add(int x, int y) {
+    return x + y;
 }
 """
     test = """
-int test_add() {
-  int z = add(1, 2);
-  if (z == 3)
-    return 0;
-
-  return 1;
+public static void test_add() {
+    int z = add(1, 2);
 }
 """
-    print(get_coverage(focal, test, "cpp"))
+    print(get_coverage(focal, test, "java"))
 
 
 if __name__ == "__main__":
