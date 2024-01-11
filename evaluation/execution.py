@@ -106,7 +106,7 @@ def get_coverage(
     #     return None
 
     tmp_dir = tempfile.TemporaryDirectory()
-    tmp_dir_path = "tmp"  # tmp_dir.name
+    tmp_dir_path = tmp_dir.name
     run_cmd = run_command_in(tmp_dir_path)
     ext = get_ext(lang)
 
