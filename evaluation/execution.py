@@ -83,18 +83,8 @@ def get_coverage(
         with open(test_file, "w") as fp:
             fp.write("from focal import *\n")
             fp.write(test)
-        subprocess.run(
-            ["coverage", "run", "--branch", "test.py"],
-            cwd=tmp_dir_path,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        subprocess.run(
-            ["coverage", "json"],
-            cwd=tmp_dir_path,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        run_cmd("coverage run --branch test.py")
+        run_cmd("coverage json")
         with open(os.path.join(tmp_dir_path, "coverage.json")) as cov_fp:
             j = json.load(cov_fp)
         try:
