@@ -10,30 +10,6 @@ class TestEvaluationCoverage(unittest.TestCase):
     """tests for evaluation/execution.py"""
 
     def test_python(self):
-        focal = """
-def add(x: int, y: int) -> int:
-    match x:
-        case 1:
-            return 1 + y
-        case 2:
-            return 2 + y
-        case 3:
-            return 3 + y
-        case _:
-            return x + y
-        """
-        test = """
-def test_add():
-    assert add(1, 2) == 3
-        """
-        self.assertEqual(get_coverage(focal, test, "python"), 31.25)
-
-        focal = """
-def add(x: int, y: int) -> int:
-    return x + y
-        """
-        self.assertEqual(get_coverage(focal, test, "python"), 100)
-
         focal = 'from typing import List\n\n\ndef has_close_elements(numbers: List[float], threshold: float) -> bool:\n    """ Check if in given list of numbers, are any two numbers closer to each other than\n    given threshold.\n    >>> has_close_elements([1.0, 2.0, 3.0], 0.5)\n    False\n    >>> has_close_elements([1.0, 2.8, 3.0, 4.0, 5.0, 2.0], 0.3)\n    True\n    """\n    for idx, elem in enumerate(numbers):\n        for idx2, elem2 in enumerate(numbers):\n            if idx != idx2:\n                distance = abs(elem - elem2)\n                if distance < threshold:\n                    return True\n\n    return False\n'
         test = "\n\nMETADATA = {\n    'author': 'jt',\n    'dataset': 'test'\n}\n\n\ndef check(has_close_elements):\n    assert has_close_elements([1.0, 2.0, 3.9, 4.0, 5.0, 2.2], 0.3) == True\n    assert has_close_elements([1.0, 2.0, 3.9, 4.0, 5.0, 2.2], 0.05) == False\n    assert has_close_elements([1.0, 2.0, 5.9, 4.0, 5.0], 0.95) == True\n    assert has_close_elements([1.0, 2.0, 5.9, 4.0, 5.0], 0.8) == False\n    assert has_close_elements([1.0, 2.0, 3.0, 4.0, 5.0, 2.0], 0.1) == True\n    assert has_close_elements([1.1, 2.2, 3.1, 4.1, 5.1], 1.0) == True\n    assert has_close_elements([1.1, 2.2, 3.1, 4.1, 5.1], 0.5) == False\n\ncheck(has_close_elements)"
         self.assertEqual(get_coverage(focal, test, "python"), 100)

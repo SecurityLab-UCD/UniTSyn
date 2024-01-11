@@ -32,40 +32,6 @@ def get_ext(lang: str) -> str:
     return ext
 
 
-def extract_function_name(func: str, lang: str) -> Optional[str]:
-    pattern = r""
-    match lang.lower():
-        case "python":
-
-            class FunctionNameExtractor(
-                ast.NodeVisitor
-            ):  # pylint: disable=missing-class-docstring
-                def __init__(self):
-                    self.name = None
-
-                def visit_FunctionDef(self, node):  # pylint: disable=invalid-name
-                    self.name = node.name
-
-            tree = ast.parse(func)
-            extractor = FunctionNameExtractor()
-            extractor.visit(tree)
-
-            return extractor.name
-        case "cpp":
-            pattern = r"\b[A-Za-z_][A-Za-z0-9_]*\s+([A-Za-z_][A-Za-z0-9_]*)\s*\([^)]*\)"
-        case "java":
-            pattern = r"\b(?:public|protected|private|static|\s)*\s+\w+\s+([A-Za-z_][A-Za-z0-9_]*)\s*\([^)]*\)"
-        case "javascript":
-            pattern = r"function\s+([a-zA-Z_$][\w_$]*)\s*\("
-        case "go":
-            pattern = r"func\s+([a-zA-Z_$][\w_$]*)\s*\("
-        case _:
-            return None
-
-    matches = re.findall(pattern, func)
-    return str(matches[0]) if matches else None
-
-
 def run_command_in(cwd: str):
     """Create a helper function to run shell command in `cwd` directory
 
@@ -101,9 +67,6 @@ def get_coverage(
         Optional[float]: branch coverage rate
     """
     cov: float | None = None
-    test_name = extract_function_name(test, lang)
-    # if not test_name and lang not in ("cpp", "java"):
-    #     return None
 
     tmp_dir = tempfile.TemporaryDirectory()
     tmp_dir_path = tmp_dir.name
@@ -123,7 +86,6 @@ def get_coverage(
             with open(test_file, "w") as fp:
                 fp.write("from focal import *\n")
                 fp.write(test)
-                fp.write(f"\n{test_name}()\n")
             subprocess.run(
                 ["coverage", "run", "--branch", "test.py"],
                 cwd=tmp_dir_path,
