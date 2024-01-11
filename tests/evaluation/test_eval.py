@@ -35,62 +35,16 @@ def add(x: int, y: int) -> int:
         self.assertEqual(get_coverage(focal, test, "python"), 100)
 
     def test_cpp(self):
-        focal = """
-int add(int x, int y) {
-    switch(x){
-        case 1:
-            return 1 + y;
-        case 2:
-            return 2 + y;
-        case 3:
-            return 3 + y;
-        default:
-            return x + y;
-    }
-}
-"""
-        test = """
-int test_add() {
-  int z = add(1, 2);
-  if (z == 3)
-    return 0;
+        focal = "/*\nCheck if in given vector of numbers, are any two numbers closer to each other than\ngiven threshold.\n>>> has_close_elements({1.0, 2.0, 3.0}, 0.5)\nfalse\n>>> has_close_elements({1.0, 2.8, 3.0, 4.0, 5.0, 2.0}, 0.3)\ntrue\n*/\n#include<stdio.h>\n#include<vector>\n#include<math.h>\nusing namespace std;\nbool has_close_elements(vector<float> numbers, float threshold){\n    int i,j;\n    \n    for (i=0;i<numbers.size();i++)\n    for (j=i+1;j<numbers.size();j++)\n    if (abs(numbers[i]-numbers[j])<threshold)\n    return true;\n\n    return false;\n}\n\n"
+        test = "#undef NDEBUG\n#include<assert.h>\nint main(){\n    vector<float> a={1.0, 2.0, 3.9, 4.0, 5.0, 2.2};\n    assert (has_close_elements(a, 0.3)==true);\n    assert (has_close_elements(a, 0.05) == false);\n\n    assert (has_close_elements({1.0, 2.0, 5.9, 4.0, 5.0}, 0.95) == true);\n    assert (has_close_elements({1.0, 2.0, 5.9, 4.0, 5.0}, 0.8) ==false);\n    assert (has_close_elements({1.0, 2.0, 3.0, 4.0, 5.0}, 2.0) == true);\n    assert (has_close_elements({1.1, 2.2, 3.1, 4.1, 5.1}, 1.0) == true);\n    assert (has_close_elements({1.1, 2.2, 3.1, 4.1, 5.1}, 0.5) == false);\n    \n}\n"
 
-  return 1;
-}
-"""
-        # 31.25
-        self.assertEqual(get_coverage(focal, test, "cpp"), 50)
-
-        focal = """
-int add(int x, int y) { return x + y; }
-"""
         self.assertEqual(get_coverage(focal, test, "cpp"), 100)
 
     def test_java(self):
         java_lib_path = os.path.join(UNITSYNCER_HOME, "evaluation", "lib")
-        focal = """
-public static int add(int x, int y) {
-    if (x > 10) {
-        return x + y + 1;
-    } else {
-        return x + y;
-    }
-}
-"""
-        test = """
-public static void test_add() {
-    int z = add(1, 2);
-}
-"""
-        self.assertEqual(
-            get_coverage(focal, test, "java", java_lib_path=java_lib_path), 50
-        )
 
-        focal = """
-public static int add(int x, int y) {
-    return x + y;
-}
-"""
+        focal = "import java.util.*;\nimport java.lang.*;\n\nclass Solution {\n    /**\n    Check if in given list of numbers, are any two numbers closer to each other than given threshold.\n    >>> hasCloseElements(Arrays.asList(1.0, 2.0, 3.0), 0.5)\n    false\n    >>> hasCloseElements(Arrays.asList(1.0, 2.8, 3.0, 4.0, 5.0, 2.0), 0.3)\n    true\n     */\n    public boolean hasCloseElements(List<Double> numbers, double threshold) {\n        for (int i = 0; i < numbers.size(); i++) {\n            for (int j = i + 1; j < numbers.size(); j++) {\n                double distance = Math.abs(numbers.get(i) - numbers.get(j));\n                if (distance < threshold) return true;\n            }\n        }\n        return false;\n    }\n}"
+        test = "public class Main {\n    public static void main(String[] args) {\n        Solution s = new Solution();\n        List<Boolean> correct = Arrays.asList(\n                s.hasCloseElements(new ArrayList<>(Arrays.asList(11.0, 2.0, 3.9, 4.0, 5.0, 2.2)), 0.3),\n                !s.hasCloseElements(new ArrayList<>(Arrays.asList(1.0, 2.0, 3.9, 4.0, 5.0, 2.2)), 0.05),\n                s.hasCloseElements(new ArrayList<>(Arrays.asList(1.0, 2.0, 5.9, 4.0, 5.0)), 0.95),\n                !s.hasCloseElements(new ArrayList<>(Arrays.asList(1.0, 2.0, 5.9, 4.0, 5.0)), 0.8),\n                s.hasCloseElements(new ArrayList<>(Arrays.asList(1.0, 2.0, 3.0, 4.0, 5.0, 2.0)), 0.1),\n                s.hasCloseElements(new ArrayList<>(Arrays.asList(1.1, 2.2, 3.1, 4.1, 5.1)), 1.0),\n                !s.hasCloseElements(new ArrayList<>(Arrays.asList(1.1, 2.2, 3.1, 4.1, 5.1)), 0.5)\n        );\n        if (correct.contains(false)) {\n            throw new AssertionError();\n        }\n    }\n}"
         self.assertEqual(
             get_coverage(focal, test, "java", java_lib_path=java_lib_path), 100
         )

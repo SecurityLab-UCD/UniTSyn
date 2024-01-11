@@ -102,7 +102,7 @@ def get_coverage(
     """
     cov: float | None = None
     test_name = extract_function_name(test, lang)
-    if not test_name:
+    if not test_name and lang not in ("cpp", "java"):
         return None
 
     tmp_dir = tempfile.TemporaryDirectory()
@@ -145,11 +145,8 @@ def get_coverage(
 
         case "cpp":
             with open(test_file, "w") as fp:
-                fp.write('#include "focal.cpp"')
+                fp.write('#include "focal.cpp"\n')
                 fp.write(test)
-                fp.write(
-                    f"int main() \u007b {test_name}(); return 0; \u007d"
-                )  # \u007b \u0007d is {}
             compile_result = run_cmd(
                 "clang++ -fprofile-instr-generate -fcoverage-mapping test.cpp -o test"
             )
@@ -167,7 +164,7 @@ def get_coverage(
             try:
                 for d in j["data"]:
                     for f in d["files"]:
-                        if f["filename"] == focal_file:  # type: ignore
+                        if f["filename"] == os.path.abspath(focal_file):  # type: ignore
                             branch_cnt = f["summary"]["branches"]["count"]  # type: ignore
                             percentage = f["summary"]["branches"]["percent"]  # type: ignore
                             cov = 100 if branch_cnt == 0 else percentage
@@ -176,19 +173,9 @@ def get_coverage(
         case "java":
             main_file = "Main.java"
             main_file_path = os.path.join(tmp_dir_path, main_file)
-            class_code_lines = [
-                "class FocalTest {",
-                code,
-                test,
-                "}",
-                "public class Main {",
-                "public static void main(String[] args) {",
-                f"FocalTest.{test_name}();",
-                "}",
-                "}",
-            ]
             with open(main_file_path, "w") as f:
-                f.writelines(class_code_lines)
+                f.write(code)
+                f.write(test)
             run_cmd("javac Main.java -d bin/")
             run_cmd(
                 f"java -javaagent:{java_lib_path}/jacocoagent.jar=destfile=jacoco.exec -cp bin Main"
@@ -201,7 +188,7 @@ def get_coverage(
             with open(coverage_file, newline="") as csvfile:
                 reader = csv.DictReader(csvfile)
                 for row in reader:
-                    if row["CLASS"] == "FocalTest":
+                    if row["CLASS"] == "Solution":
                         covered = int(row["BRANCH_COVERED"])
                         missed = int(row["BRANCH_MISSED"])
                         total = covered + missed
@@ -255,28 +242,9 @@ def get_coverage(
 
 
 def main():
-    focal = """
-func Add(x int, y int) int {
-	switch x {
-	case 1:
-		return 1 + y
-	case 2:
-		return 2 + y
-	case 3:
-		return 3 + y
-	}
-	return x + y
-}
-"""
-    test = """
-func TestAdd(t *testing.T) {
-	total := Add(1, 2)
-	if total != 3 {
-		t.Errorf("add(1, 2) = %d; want 3", total)
-	}
-}
-"""
-    print(get_coverage(focal, test, "go"))
+    focal = "/*\nCheck if in given vector of numbers, are any two numbers closer to each other than\ngiven threshold.\n>>> has_close_elements({1.0, 2.0, 3.0}, 0.5)\nfalse\n>>> has_close_elements({1.0, 2.8, 3.0, 4.0, 5.0, 2.0}, 0.3)\ntrue\n*/\n#include<stdio.h>\n#include<vector>\n#include<math.h>\nusing namespace std;\nbool has_close_elements(vector<float> numbers, float threshold){\n    int i,j;\n    \n    for (i=0;i<numbers.size();i++)\n    for (j=i+1;j<numbers.size();j++)\n    if (abs(numbers[i]-numbers[j])<threshold)\n    return true;\n\n    return false;\n}\n\n"
+    test = "#undef NDEBUG\n#include<assert.h>\nint main(){\n    vector<float> a={1.0, 2.0, 3.9, 4.0, 5.0, 2.2};\n    assert (has_close_elements(a, 0.3)==true);\n    assert (has_close_elements(a, 0.05) == false);\n\n    assert (has_close_elements({1.0, 2.0, 5.9, 4.0, 5.0}, 0.95) == true);\n    assert (has_close_elements({1.0, 2.0, 5.9, 4.0, 5.0}, 0.8) ==false);\n    assert (has_close_elements({1.0, 2.0, 3.0, 4.0, 5.0}, 2.0) == true);\n    assert (has_close_elements({1.1, 2.2, 3.1, 4.1, 5.1}, 1.0) == true);\n    assert (has_close_elements({1.1, 2.2, 3.1, 4.1, 5.1}, 0.5) == false);\n    \n}\n"
+    print(get_coverage(focal, test, "cpp"))
 
 
 if __name__ == "__main__":
