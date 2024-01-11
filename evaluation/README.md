@@ -43,3 +43,9 @@ so please also down it.
 
 Golang's coverage is build in the compiler, so no need to install additional dependencies.
 However, for go, it only supports **statement coverage**.
+
+## Running Evaluation
+
+```sh
+python3 execution.py -j test_evaluation.jsonl
+```

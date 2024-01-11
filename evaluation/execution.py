@@ -8,6 +8,8 @@ import os
 import subprocess
 import json
 import csv
+import fire
+from tqdm import tqdm
 
 
 def get_ext(lang: str) -> str:
@@ -115,7 +117,7 @@ def get_coverage(
                     if f["filename"] == os.path.abspath(focal_file):  # type: ignore
                         branch_cnt = f["summary"]["branches"]["count"]  # type: ignore
                         percentage = f["summary"]["branches"]["percent"]  # type: ignore
-                        cov = 100 if branch_cnt == 0 else percentage
+                        cov = 100.0 if branch_cnt == 0 else percentage
         except KeyError:
             return None
     elif lang == "java":
@@ -189,11 +191,20 @@ def get_coverage(
     return cov
 
 
-def main():
-    focal = 'import (\n    "math"\n)\n\n// Check if in given list of numbers, are any two numbers closer to each other than given threshold.\n// >>> HasCloseElements([]float64{1.0, 2.0, 3.0}, 0.5)\n// false\n// >>> HasCloseElements([]float64{1.0, 2.8, 3.0, 4.0, 5.0, 2.0}, 0.3)\n// true\nfunc HasCloseElements(numbers []float64, threshold float64) bool {\n    for i := 0; i < len(numbers); i++ {\n        for j := i + 1; j < len(numbers); j++ {\n            var distance float64 = math.Abs(numbers[i] - numbers[j])\n            if distance < threshold {\n                return true\n            }\n        }\n    }\n    return false\n}\n\n'
-    test = "func TestHasCloseElements(t *testing.T) {\n    assert := assert.New(t)\n    assert.Equal(true, HasCloseElements([]float64{11.0, 2.0, 3.9, 4.0, 5.0, 2.2}, 0.3))\n    assert.Equal(false, HasCloseElements([]float64{1.0, 2.0, 3.9, 4.0, 5.0, 2.2}, 0.05))\n    assert.Equal(true, HasCloseElements([]float64{1.0, 2.0, 5.9, 4.0, 5.0}, 0.95))\n    assert.Equal(false, HasCloseElements([]float64{1.0, 2.0, 5.9, 4.0, 5.0}, 0.8))\n    assert.Equal(true, HasCloseElements([]float64{1.0, 2.0, 3.0, 4.0, 5.0, 2.0}, 0.1))\n    assert.Equal(true, HasCloseElements([]float64{1.1, 2.2, 3.1, 4.1, 5.1}, 1.0))\n    assert.Equal(false, HasCloseElements([]float64{1.1, 2.2, 3.1, 4.1, 5.1}, 0.5))\n}\n"
-    print(get_coverage(focal, test, "go"))
+def main(jsonl_path: str):
+    with open(jsonl_path, "r") as fp:
+        j_lines = fp.readlines()
+
+    with open(f"results_{jsonl_path}", "w") as fp:
+        for j_line in tqdm(j_lines):
+            j = json.loads(j_line)
+            focal = j["focal"]
+            test = j["test"]
+            lang = j["lang"]
+            cov = get_coverage(focal, test, lang=lang)
+            j["coverage"] = cov
+            fp.write(json.dumps(j))
 
 
 if __name__ == "__main__":
-    main()
+    fire.Fire(main)
