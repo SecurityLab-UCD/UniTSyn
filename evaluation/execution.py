@@ -22,7 +22,7 @@ def get_ext(lang: str) -> str:
             ext = ".java"
         case "cpp":
             ext = ".cpp"
-        case "javascript":
+        case "js":
             ext = ".js"
         case "go":
             ext = ".go"
@@ -102,11 +102,11 @@ def get_coverage(
     """
     cov: float | None = None
     test_name = extract_function_name(test, lang)
-    if not test_name and lang not in ("cpp", "java"):
-        return None
+    # if not test_name and lang not in ("cpp", "java"):
+    #     return None
 
     tmp_dir = tempfile.TemporaryDirectory()
-    tmp_dir_path = tmp_dir.name
+    tmp_dir_path = "tmp"  # tmp_dir.name
     run_cmd = run_command_in(tmp_dir_path)
     ext = get_ext(lang)
 
@@ -194,10 +194,9 @@ def get_coverage(
                         total = covered + missed
                         cov = 100.0 * (covered / total if total != 0 else 1)
                         break
-        case "javascript":
+        case "js":
             with open(focal_file, "a") as f:
                 f.write(test)
-                f.write(f"\n{test_name}();\n")
             run_cmd("nyc --reporter=json-summary node focal.js")
             coverage_file = os.path.join(
                 tmp_dir_path, "coverage", "coverage-summary.json"
@@ -242,9 +241,9 @@ def get_coverage(
 
 
 def main():
-    focal = "/*\nCheck if in given vector of numbers, are any two numbers closer to each other than\ngiven threshold.\n>>> has_close_elements({1.0, 2.0, 3.0}, 0.5)\nfalse\n>>> has_close_elements({1.0, 2.8, 3.0, 4.0, 5.0, 2.0}, 0.3)\ntrue\n*/\n#include<stdio.h>\n#include<vector>\n#include<math.h>\nusing namespace std;\nbool has_close_elements(vector<float> numbers, float threshold){\n    int i,j;\n    \n    for (i=0;i<numbers.size();i++)\n    for (j=i+1;j<numbers.size();j++)\n    if (abs(numbers[i]-numbers[j])<threshold)\n    return true;\n\n    return false;\n}\n\n"
-    test = "#undef NDEBUG\n#include<assert.h>\nint main(){\n    vector<float> a={1.0, 2.0, 3.9, 4.0, 5.0, 2.2};\n    assert (has_close_elements(a, 0.3)==true);\n    assert (has_close_elements(a, 0.05) == false);\n\n    assert (has_close_elements({1.0, 2.0, 5.9, 4.0, 5.0}, 0.95) == true);\n    assert (has_close_elements({1.0, 2.0, 5.9, 4.0, 5.0}, 0.8) ==false);\n    assert (has_close_elements({1.0, 2.0, 3.0, 4.0, 5.0}, 2.0) == true);\n    assert (has_close_elements({1.1, 2.2, 3.1, 4.1, 5.1}, 1.0) == true);\n    assert (has_close_elements({1.1, 2.2, 3.1, 4.1, 5.1}, 0.5) == false);\n    \n}\n"
-    print(get_coverage(focal, test, "cpp"))
+    focal = "/* Check if in given list of numbers, are any two numbers closer to each other than\n  given threshold.\n  >>> hasCloseElements([1.0, 2.0, 3.0], 0.5)\n  false\n  >>> hasCloseElements([1.0, 2.8, 3.0, 4.0, 5.0, 2.0], 0.3)\n  true\n  */\nconst hasCloseElements = (numbers, threshold) => {\n  for (let i = 0; i < numbers.length; i++) {\n    for (let j = 0; j < numbers.length; j++) {\n      if (i != j) {\n        let distance = Math.abs(numbers[i] - numbers[j]);\n        if (distance < threshold) {\n          return true;\n        }\n      }\n    }\n  }\n  return false;\n}\n\n"
+    test = "const testHasCloseElements = () => {\n  console.assert(hasCloseElements([1.0, 2.0, 3.9, 4.0, 5.0, 2.2], 0.3) === true)\n  console.assert(\n    hasCloseElements([1.0, 2.0, 3.9, 4.0, 5.0, 2.2], 0.05) === false\n  )\n  console.assert(hasCloseElements([1.0, 2.0, 5.9, 4.0, 5.0], 0.95) === true)\n  console.assert(hasCloseElements([1.0, 2.0, 5.9, 4.0, 5.0], 0.8) === false)\n  console.assert(hasCloseElements([1.0, 2.0, 3.0, 4.0, 5.0, 2.0], 0.1) === true)\n  console.assert(hasCloseElements([1.1, 2.2, 3.1, 4.1, 5.1], 1.0) === true)\n  console.assert(hasCloseElements([1.1, 2.2, 3.1, 4.1, 5.1], 0.5) === false)\n}\n\ntestHasCloseElements()\n"
+    print(get_coverage(focal, test, "js"))
 
 
 if __name__ == "__main__":

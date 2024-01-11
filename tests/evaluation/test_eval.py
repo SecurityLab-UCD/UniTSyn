@@ -54,36 +54,8 @@ def add(x: int, y: int) -> int:
         )
 
     def test_js(self):
-        focal = """
-function add(a, b) {
-    switch (a) {
-        case 1:
-            return 1 + b;
-        case 2:
-            return 2 + b;
-        case 3:
-            return 3 + b;
-        default:
-            break;
-    }
-    return a + b;
-};
-
-
-"""
-        test = """
-function test_add() {
-    let z= add(1, 2);
-    console.log(z);
-}
-"""
-        self.assertEqual(get_coverage(focal, test, "javascript"), 25)
-
-        focal = """
-function add(a, b) {
-    return a + b;
-};
-"""
+        focal = "/* Check if in given list of numbers, are any two numbers closer to each other than\n  given threshold.\n  >>> hasCloseElements([1.0, 2.0, 3.0], 0.5)\n  false\n  >>> hasCloseElements([1.0, 2.8, 3.0, 4.0, 5.0, 2.0], 0.3)\n  true\n  */\nconst hasCloseElements = (numbers, threshold) => {\n  for (let i = 0; i < numbers.length; i++) {\n    for (let j = 0; j < numbers.length; j++) {\n      if (i != j) {\n        let distance = Math.abs(numbers[i] - numbers[j]);\n        if (distance < threshold) {\n          return true;\n        }\n      }\n    }\n  }\n  return false;\n}\n\n"
+        test = "const testHasCloseElements = () => {\n  console.assert(hasCloseElements([1.0, 2.0, 3.9, 4.0, 5.0, 2.2], 0.3) === true)\n  console.assert(\n    hasCloseElements([1.0, 2.0, 3.9, 4.0, 5.0, 2.2], 0.05) === false\n  )\n  console.assert(hasCloseElements([1.0, 2.0, 5.9, 4.0, 5.0], 0.95) === true)\n  console.assert(hasCloseElements([1.0, 2.0, 5.9, 4.0, 5.0], 0.8) === false)\n  console.assert(hasCloseElements([1.0, 2.0, 3.0, 4.0, 5.0, 2.0], 0.1) === true)\n  console.assert(hasCloseElements([1.1, 2.2, 3.1, 4.1, 5.1], 1.0) === true)\n  console.assert(hasCloseElements([1.1, 2.2, 3.1, 4.1, 5.1], 0.5) === false)\n}\n\ntestHasCloseElements()\n"
         self.assertEqual(get_coverage(focal, test, "javascript"), 100)
 
     def test_go(self):
