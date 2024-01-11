@@ -191,7 +191,10 @@ def get_coverage(
     return cov
 
 
-def main(jsonl_path: str):
+def main(jsonl_path: str, change_go_proxy: bool = False):
+    if change_go_proxy:
+        subprocess.run(["go", "env", "-w", "GOPROXY=https://goproxy.cn"])
+
     with open(jsonl_path, "r") as fp:
         j_lines = fp.readlines()
 
