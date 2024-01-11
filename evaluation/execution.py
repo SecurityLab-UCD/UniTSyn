@@ -191,7 +191,11 @@ def get_coverage(
     return cov
 
 
-def main(jsonl_path: str, change_go_proxy: bool = False):
+def main(
+    jsonl_path: str,
+    change_go_proxy: bool = False,
+    java_lib_path: str = os.path.join(os.getcwd(), "lib"),
+):
     if change_go_proxy:
         subprocess.run(["go", "env", "-w", "GOPROXY=https://goproxy.cn"])
 
@@ -204,7 +208,7 @@ def main(jsonl_path: str, change_go_proxy: bool = False):
             focal = j["focal"]
             test = j["test"]
             lang = j["lang"]
-            cov = get_coverage(focal, test, lang=lang)
+            cov = get_coverage(focal, test, lang=lang, java_lib_path=java_lib_path)
             j["coverage"] = cov
             fp.write(json.dumps(j))
 

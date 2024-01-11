@@ -49,3 +49,17 @@ However, for go, it only supports **statement coverage**.
 ```sh
 python3 execution.py -j test_evaluation.jsonl
 ```
+
+## Docker
+
+In `UniTSyncer/evaluation`, run
+
+```sh
+docker build --tag yfhe0602/unitsyncer-eval . -f dockerfiles/Dockerfile.eval
+```
+
+Or you can it the image from Docker Hub
+
+```sh
+docker pull yfhe0602/unitsyncer-eval:latest
+```
