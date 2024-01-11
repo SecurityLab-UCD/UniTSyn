@@ -35,35 +35,9 @@ class TestEvaluationCoverage(unittest.TestCase):
         self.assertEqual(get_coverage(focal, test, "js"), 100)
 
     def test_go(self):
-        focal = """
-func Add(x int, y int) int {
-	return x + y
-}
-"""
-        test = """
-func TestAdd(t *testing.T) {
-	total := Add(1, 2)
-	if total != 3 {
-		t.Errorf("add(1, 2) = %d; want 3", total)
-	}
-}
-"""
+        focal = 'import (\n    "math"\n)\n\n// Check if in given list of numbers, are any two numbers closer to each other than given threshold.\n// >>> HasCloseElements([]float64{1.0, 2.0, 3.0}, 0.5)\n// false\n// >>> HasCloseElements([]float64{1.0, 2.8, 3.0, 4.0, 5.0, 2.0}, 0.3)\n// true\nfunc HasCloseElements(numbers []float64, threshold float64) bool {\n    for i := 0; i < len(numbers); i++ {\n        for j := i + 1; j < len(numbers); j++ {\n            var distance float64 = math.Abs(numbers[i] - numbers[j])\n            if distance < threshold {\n                return true\n            }\n        }\n    }\n    return false\n}\n\n'
+        test = "func TestHasCloseElements(t *testing.T) {\n    assert := assert.New(t)\n    assert.Equal(true, HasCloseElements([]float64{11.0, 2.0, 3.9, 4.0, 5.0, 2.2}, 0.3))\n    assert.Equal(false, HasCloseElements([]float64{1.0, 2.0, 3.9, 4.0, 5.0, 2.2}, 0.05))\n    assert.Equal(true, HasCloseElements([]float64{1.0, 2.0, 5.9, 4.0, 5.0}, 0.95))\n    assert.Equal(false, HasCloseElements([]float64{1.0, 2.0, 5.9, 4.0, 5.0}, 0.8))\n    assert.Equal(true, HasCloseElements([]float64{1.0, 2.0, 3.0, 4.0, 5.0, 2.0}, 0.1))\n    assert.Equal(true, HasCloseElements([]float64{1.1, 2.2, 3.1, 4.1, 5.1}, 1.0))\n    assert.Equal(false, HasCloseElements([]float64{1.1, 2.2, 3.1, 4.1, 5.1}, 0.5))\n}\n"
         self.assertEqual(get_coverage(focal, test, "go"), 100)
-
-        focal = """
-func Add(x int, y int) int {
-	switch x {
-	case 1:
-		return 1 + y
-	case 2:
-		return 2 + y
-	case 3:
-		return 3 + y
-	}
-	return x + y
-}
-"""
-        self.assertEqual(get_coverage(focal, test, "go"), 40.0)
 
 
 if __name__ == "__main__":

@@ -7,8 +7,6 @@ from typing import Optional
 import os
 import subprocess
 import json
-import ast
-import re
 import csv
 
 
@@ -180,21 +178,24 @@ def get_coverage(
             with open(test_file, "w") as test_fp:
                 test_fp.write("package main\n")
                 test_fp.write('import "testing"\n')
+                test_fp.write('import "github.com/stretchr/testify/assert"\n')
                 test_fp.write(test)
             with open(focal_file, "w") as focal_fp:
                 focal_fp.write("package main\n")
                 focal_fp.write(code)
 
-            focal_name = extract_function_name(code, lang)
+            run_cmd("go get github.com/stretchr/testify/assert")
             run_cmd("go test -coverprofile=coverage.out")
             cov_result: str = run_cmd(
                 "go tool cover -func=coverage.out", stdout=subprocess.PIPE
             ).stdout
-            for line in cov_result.splitlines():
+            try:
+                line = cov_result.splitlines()[0]
                 elems = line.split("\t")
-                if len(elems) == 4 and elems[1] == focal_name:
-                    cov = float(elems[-1][:-1])  # str 100.0% -> float 100.0
-                    break
+                cov = float(elems[-1][:-1])  # str 100.0% -> float 100.0
+            except IndexError:
+                return None
+
         case _:
             return None
 
@@ -203,9 +204,9 @@ def get_coverage(
 
 
 def main():
-    focal = "/* Check if in given list of numbers, are any two numbers closer to each other than\n  given threshold.\n  >>> hasCloseElements([1.0, 2.0, 3.0], 0.5)\n  false\n  >>> hasCloseElements([1.0, 2.8, 3.0, 4.0, 5.0, 2.0], 0.3)\n  true\n  */\nconst hasCloseElements = (numbers, threshold) => {\n  for (let i = 0; i < numbers.length; i++) {\n    for (let j = 0; j < numbers.length; j++) {\n      if (i != j) {\n        let distance = Math.abs(numbers[i] - numbers[j]);\n        if (distance < threshold) {\n          return true;\n        }\n      }\n    }\n  }\n  return false;\n}\n\n"
-    test = "const testHasCloseElements = () => {\n  console.assert(hasCloseElements([1.0, 2.0, 3.9, 4.0, 5.0, 2.2], 0.3) === true)\n  console.assert(\n    hasCloseElements([1.0, 2.0, 3.9, 4.0, 5.0, 2.2], 0.05) === false\n  )\n  console.assert(hasCloseElements([1.0, 2.0, 5.9, 4.0, 5.0], 0.95) === true)\n  console.assert(hasCloseElements([1.0, 2.0, 5.9, 4.0, 5.0], 0.8) === false)\n  console.assert(hasCloseElements([1.0, 2.0, 3.0, 4.0, 5.0, 2.0], 0.1) === true)\n  console.assert(hasCloseElements([1.1, 2.2, 3.1, 4.1, 5.1], 1.0) === true)\n  console.assert(hasCloseElements([1.1, 2.2, 3.1, 4.1, 5.1], 0.5) === false)\n}\n\ntestHasCloseElements()\n"
-    print(get_coverage(focal, test, "js"))
+    focal = 'import (\n    "math"\n)\n\n// Check if in given list of numbers, are any two numbers closer to each other than given threshold.\n// >>> HasCloseElements([]float64{1.0, 2.0, 3.0}, 0.5)\n// false\n// >>> HasCloseElements([]float64{1.0, 2.8, 3.0, 4.0, 5.0, 2.0}, 0.3)\n// true\nfunc HasCloseElements(numbers []float64, threshold float64) bool {\n    for i := 0; i < len(numbers); i++ {\n        for j := i + 1; j < len(numbers); j++ {\n            var distance float64 = math.Abs(numbers[i] - numbers[j])\n            if distance < threshold {\n                return true\n            }\n        }\n    }\n    return false\n}\n\n'
+    test = "func TestHasCloseElements(t *testing.T) {\n    assert := assert.New(t)\n    assert.Equal(true, HasCloseElements([]float64{11.0, 2.0, 3.9, 4.0, 5.0, 2.2}, 0.3))\n    assert.Equal(false, HasCloseElements([]float64{1.0, 2.0, 3.9, 4.0, 5.0, 2.2}, 0.05))\n    assert.Equal(true, HasCloseElements([]float64{1.0, 2.0, 5.9, 4.0, 5.0}, 0.95))\n    assert.Equal(false, HasCloseElements([]float64{1.0, 2.0, 5.9, 4.0, 5.0}, 0.8))\n    assert.Equal(true, HasCloseElements([]float64{1.0, 2.0, 3.0, 4.0, 5.0, 2.0}, 0.1))\n    assert.Equal(true, HasCloseElements([]float64{1.1, 2.2, 3.1, 4.1, 5.1}, 1.0))\n    assert.Equal(false, HasCloseElements([]float64{1.1, 2.2, 3.1, 4.1, 5.1}, 0.5))\n}\n"
+    print(get_coverage(focal, test, "go"))
 
 
 if __name__ == "__main__":
