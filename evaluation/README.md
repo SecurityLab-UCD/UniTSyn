@@ -58,7 +58,7 @@ In `UniTSyncer/evaluation`, run
 docker build --tag yfhe0602/unitsyncer-eval . -f dockerfiles/Dockerfile.eval
 ```
 
-Or you can it the image from Docker Hub
+Or you can get the pre-built image from Docker Hub (preferred)
 
 ```sh
 docker pull yfhe0602/unitsyncer-eval:latest
