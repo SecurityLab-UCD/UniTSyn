@@ -3,7 +3,6 @@ coverage evaluation script for LLM generated code-test pairs
 """
 
 import tempfile
-from typing import Optional
 import os
 import subprocess
 import json
@@ -49,12 +48,18 @@ def run_command_in(cwd: str):
     return subprocess_caller
 
 
+BranchCov = float | None
+StatCov = float | None
+LineCov = float | None
+Coverages = tuple[StatCov, LineCov, BranchCov]
+
+
 def get_coverage(
     code: str,
     test: str,
     lang: str = "python",
     java_lib_path: str = os.path.join(os.getcwd(), "lib"),
-) -> tuple[Optional[float], Optional[float]] | None:
+) -> Coverages | None:
     """compute branch coverage of `test` on `code`
 
     Args:
@@ -68,6 +73,8 @@ def get_coverage(
     """
     line_cov: float | None = None
     branch_cov: float | None = None
+    stat_cov: float | None = None
+
     lang = lang.lower()
     java_lib_path = os.path.abspath(java_lib_path)
 
@@ -177,7 +184,9 @@ def get_coverage(
         with open(coverage_file) as cov_fp:
             j = json.load(cov_fp)
         try:
-            cov = j[focal_file]["branches"]["pct"]
+            branch_cov = j[focal_file]["branches"]["pct"]
+            line_cov = j[focal_file]["lines"]["pct"]
+            stat_cov = j[focal_file]["statements"]["pct"]
         except KeyError:
             return None
 
@@ -213,7 +222,7 @@ def get_coverage(
         return None
 
     tmp_dir.cleanup()
-    return line_cov, branch_cov
+    return stat_cov, line_cov, branch_cov
 
 
 def main(
