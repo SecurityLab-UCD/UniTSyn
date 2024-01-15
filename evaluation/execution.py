@@ -131,7 +131,11 @@ def get_coverage(
                     if f["filename"] == os.path.abspath(focal_file):  # type: ignore
                         branch_cnt = f["summary"]["branches"]["count"]  # type: ignore
                         percentage = f["summary"]["branches"]["percent"]  # type: ignore
-                        cov = 100.0 if branch_cnt == 0 else percentage
+                        branch_cov = 100.0 if branch_cnt == 0 else percentage
+
+                        lines_cnt = f["summary"]["lines"]["count"]  # type: ignore
+                        percentage = f["summary"]["lines"]["percent"]  # type: ignore
+                        line_cov = 100.0 if lines_cnt == 0 else percentage
         except KeyError:
             return None
     elif lang == "java":
