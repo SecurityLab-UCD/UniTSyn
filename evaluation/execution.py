@@ -244,7 +244,7 @@ def main(
             lang = j["lang"]
             cov = get_coverage(focal, test, lang=lang, java_lib_path=java_lib_path)
             j["coverage"] = cov
-            fp.write(json.dumps(j))
+            fp.write(json.dumps(j) + "\n")
 
 
 if __name__ == "__main__":
