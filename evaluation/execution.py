@@ -10,6 +10,7 @@ import json
 import csv
 import fire
 from tqdm import tqdm
+import dataclasses
 
 
 def get_ext(lang: str) -> str:
@@ -53,7 +54,7 @@ def get_coverage(
     test: str,
     lang: str = "python",
     java_lib_path: str = os.path.join(os.getcwd(), "lib"),
-) -> Optional[float]:
+) -> tuple[Optional[float], Optional[float]] | None:
     """compute branch coverage of `test` on `code`
 
     Args:
@@ -62,9 +63,11 @@ def get_coverage(
         lang (str, optional): language used. Defaults to "python".
 
     Returns:
-        Optional[float]: branch coverage rate
+        tuple[Optional[float], Optional[float]] | None: (line, branch) coverage rate,
+            None if compile failed
     """
-    cov: float | None = None
+    line_cov: float | None = None
+    branch_cov: float | None = None
     lang = lang.lower()
     java_lib_path = os.path.abspath(java_lib_path)
 
@@ -90,9 +93,20 @@ def get_coverage(
         with open(os.path.join(tmp_dir_path, "coverage.json")) as cov_fp:
             j = json.load(cov_fp)
         try:
-            cov = j["files"][focal_file_name]["summary"]["percent_covered"]
+            exec_result = j["files"][focal_file_name]["summary"]
         except KeyError:
             return None
+
+        covered_lines = exec_result["covered_lines"]
+        num_statements = exec_result["num_statements"]
+        line_cov = (
+            100 * (covered_lines / num_statements) if num_statements != 0 else 100.0
+        )
+        num_branches = exec_result["num_branches"]
+        covered_branches = exec_result["covered_branches"]
+        branch_cov = (
+            100 * (covered_branches / num_branches) if num_branches != 0 else 100.0
+        )
 
     elif lang == "cpp":
         with open(test_file, "w") as fp:
@@ -139,10 +153,17 @@ def get_coverage(
             reader = csv.DictReader(csvfile)
             for row in reader:
                 if row["CLASS"] == "Solution":
-                    covered = int(row["BRANCH_COVERED"])
-                    missed = int(row["BRANCH_MISSED"])
-                    total = covered + missed
-                    cov = 100.0 * (covered / total if total != 0 else 1)
+                    branch_covered = int(row["BRANCH_COVERED"])
+                    branch_missed = int(row["BRANCH_MISSED"])
+                    branch_num = branch_covered + branch_missed
+                    branch_cov = 100.0 * (
+                        branch_covered / branch_num if branch_num != 0 else 1
+                    )
+
+                    line_covered = int(row["LINE_COVERED"])
+                    line_missed = int(row["LINE_MISSED"])
+                    line_num = branch_covered + line_missed
+                    line_cov = 100.0 * (line_covered / line_num if line_num != 0 else 1)
                     break
     elif lang == "js":
         with open(focal_file, "a") as f:
@@ -188,7 +209,7 @@ def get_coverage(
         return None
 
     tmp_dir.cleanup()
-    return cov
+    return line_cov, branch_cov
 
 
 def main(
