@@ -9,7 +9,6 @@ import json
 import csv
 import fire
 from tqdm import tqdm
-import dataclasses
 
 
 def get_ext(lang: str) -> str:
