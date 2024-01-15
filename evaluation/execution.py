@@ -214,7 +214,7 @@ def get_coverage(
         try:
             line = cov_result.splitlines()[0]
             elems = line.split("\t")
-            cov = float(elems[-1][:-1])  # str 100.0% -> float 100.0
+            stat_cov = float(elems[-1][:-1])  # str 100.0% -> float 100.0
         except IndexError:
             return None
 
