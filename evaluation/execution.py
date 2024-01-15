@@ -51,7 +51,6 @@ def run_command_in(cwd: str):
 BranchCov = float | None
 StatCov = float | None
 LineCov = float | None
-Coverages = tuple[StatCov, LineCov, BranchCov]
 
 
 def get_coverage(
@@ -59,7 +58,7 @@ def get_coverage(
     test: str,
     lang: str = "python",
     java_lib_path: str = os.path.join(os.getcwd(), "lib"),
-) -> Coverages | None:
+) -> tuple[StatCov, LineCov, BranchCov] | None:
     """compute branch coverage of `test` on `code`
 
     Args:
@@ -68,7 +67,7 @@ def get_coverage(
         lang (str, optional): language used. Defaults to "python".
 
     Returns:
-        tuple[Optional[float], Optional[float]] | None: (line, branch) coverage rate,
+        tuple[StatCov, LineCov, BranchCov] | None: tuple of coverage rates,
             None if compile failed
     """
     line_cov: float | None = None
