@@ -28,7 +28,7 @@ def go_get_def(code: str) -> str | None:
     test_delc = func_delcs[0]
     test_name_node = ast_util.get_all_nodes_of_type(test_delc, "identifier")[0]
     test_name = ast_util.get_source_from_node(test_name_node)
-    return f"func {test_name}(t *testing.T) {{\n    assert := assert.New(t)\n"
+    return f"func {test_name}(t *testing.T) {{\n"
 
 
 def js_get_def(code: str) -> str | None:
