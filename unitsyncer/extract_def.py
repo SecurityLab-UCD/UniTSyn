@@ -9,11 +9,15 @@ from frontend.parser import (
     JAVA_LANGUAGE,
 )
 from itertools import takewhile
-from returns.maybe import Maybe, Nothing, Some
+from tqdm import tqdm
+import jsonlines
 
 
 def py_get_def(code: str) -> str | None:
-    tree = ast.parse(code)
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return code.split(":\n")[0]
 
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef):
@@ -81,32 +85,29 @@ def get_def_header(code: str, lang: str) -> str | None:
         header = java_get_def(code)
     elif lang == "go":
         header = go_get_def(code)
-    elif lang == "js":
+    elif lang in ("js", "javascript"):
         header = js_get_def(code)
 
     return header
 
 
-def main():
-    code = """
-@Test
-public void testBuildRecordsForUpdate() {
-    TcMqMessage message =JsonUtil.jsonToPojo(updateMsg,TcMqMessage.class);
-    TableMeta tableMeta=RuleConfigParser.RULES_MAP.getIfPresent("test");
-    TableRecords tableRecords=TableRecords.buildRecords(tableMeta,message);
-    System.out.println("testBuildRecordsForDelete:"+JsonUtil.objectToJson(tableRecords));
-    Assert.assertTrue(StringUtils.isNotBlank(tableRecords.getTableName()));
-    Assert.assertEquals(tableRecords.getFieldRows().size(),1);
-    Assert.assertEquals(tableRecords.getWhereRows().size(),1);
-    Assert.assertNotNull(tableRecords.getMqMessage());
-    Assert.assertNotNull(tableRecords.getTableMeta());
-    Assert.assertEquals(tableRecords.getFieldRows().get(0).getFields().get(0).getName(),"id");
-    Assert.assertEquals(tableRecords.getFieldRows().get(0).getFields().get(0).getKeyType(),KeyType.PRIMARY_KEY);
-    Assert.assertEquals(tableRecords.getWhereRows().get(0).getFields().get(0).getName(),"id");
-    Assert.assertEquals(tableRecords.getWhereRows().get(0).getFields().get(0).getKeyType(),KeyType.PRIMARY_KEY);
-}
-"""
-    print(java_get_def(code))
+def main(in_path: str, out_path: str):
+    with jsonlines.open(in_path, "r") as reader, jsonlines.open(
+        out_path, "a"
+    ) as writer:
+        for j in reader:
+            test = j["test"]
+            lang = j["lang"]
+
+            try:
+                header = get_def_header(test, lang)
+                j["test_header"] = header
+                writer.write(j)
+            except Exception as e:
+                print(e)
+                print(j)
+                continue
+
 
 
 if __name__ == "__main__":
