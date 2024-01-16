@@ -20,6 +20,7 @@ RUN apt-get install -y llvm clang
 # Java dependency
 RUN apt-get install -y openjdk-18-jdk openjdk-18-jre
 RUN wget https://github.com/jacoco/jacoco/releases/download/v0.8.11/jacoco-0.8.11.zip && unzip jacoco-0.8.11.zip
+RUN rm -r coverage doc test index.html
 
 # JS dependency
 RUN apt-get install -y nodejs npm
@@ -29,9 +30,6 @@ RUN npm install -g nyc
 RUN apt-get install -y golang-go
 
 
-
-# get UniTSyncer
 RUN pip install fire tqdm
 COPY execution.py .
-
 

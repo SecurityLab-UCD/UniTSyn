@@ -8,6 +8,7 @@ from returns.maybe import Maybe, Nothing, Some
 from returns.result import Result, Success, Failure
 from unitsyncer.util import parallel_starmap as starmap, path2uri, convert_to_seconds
 from unitsyncer.common import CORES
+from unitsyncer.extract_def import get_def_header
 import math
 from unitsyncer.source_code import get_function_code
 import json
@@ -92,6 +93,7 @@ def focal2result(syncer: Synchronizer, repos_root, obj):
             )
             result["code"] = code
             result["docstring"] = docstring
+            result["test_header"] = get_def_header(test, langID)
         case Failure(e):
             logging.debug(e)
             result["error"] = e
