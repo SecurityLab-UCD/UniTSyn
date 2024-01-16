@@ -3,7 +3,6 @@ coverage evaluation script for LLM generated code-test pairs
 """
 
 import tempfile
-from typing import Optional
 import os
 import subprocess
 import json
@@ -48,12 +47,17 @@ def run_command_in(cwd: str):
     return subprocess_caller
 
 
+BranchCov = float | None
+StatCov = float | None
+LineCov = float | None
+
+
 def get_coverage(
     code: str,
     test: str,
     lang: str = "python",
     java_lib_path: str = os.path.join(os.getcwd(), "lib"),
-) -> Optional[float]:
+) -> tuple[StatCov, LineCov, BranchCov] | None:
     """compute branch coverage of `test` on `code`
 
     Args:
@@ -62,9 +66,13 @@ def get_coverage(
         lang (str, optional): language used. Defaults to "python".
 
     Returns:
-        Optional[float]: branch coverage rate
+        tuple[StatCov, LineCov, BranchCov] | None: tuple of coverage rates,
+            None if compile failed
     """
-    cov: float | None = None
+    line_cov: float | None = None
+    branch_cov: float | None = None
+    stat_cov: float | None = None
+
     lang = lang.lower()
     java_lib_path = os.path.abspath(java_lib_path)
 
@@ -90,9 +98,20 @@ def get_coverage(
         with open(os.path.join(tmp_dir_path, "coverage.json")) as cov_fp:
             j = json.load(cov_fp)
         try:
-            cov = j["files"][focal_file_name]["summary"]["percent_covered"]
+            exec_result = j["files"][focal_file_name]["summary"]
         except KeyError:
             return None
+
+        covered_lines = exec_result["covered_lines"]
+        num_statements = exec_result["num_statements"]
+        line_cov = (
+            100 * (covered_lines / num_statements) if num_statements != 0 else 100.0
+        )
+        num_branches = exec_result["num_branches"]
+        covered_branches = exec_result["covered_branches"]
+        branch_cov = (
+            100 * (covered_branches / num_branches) if num_branches != 0 else 100.0
+        )
 
     elif lang == "cpp":
         with open(test_file, "w") as fp:
@@ -117,7 +136,11 @@ def get_coverage(
                     if f["filename"] == os.path.abspath(focal_file):  # type: ignore
                         branch_cnt = f["summary"]["branches"]["count"]  # type: ignore
                         percentage = f["summary"]["branches"]["percent"]  # type: ignore
-                        cov = 100.0 if branch_cnt == 0 else percentage
+                        branch_cov = 100.0 if branch_cnt == 0 else percentage
+
+                        lines_cnt = f["summary"]["lines"]["count"]  # type: ignore
+                        percentage = f["summary"]["lines"]["percent"]  # type: ignore
+                        line_cov = 100.0 if lines_cnt == 0 else percentage
         except KeyError:
             return None
     elif lang == "java":
@@ -139,10 +162,17 @@ def get_coverage(
             reader = csv.DictReader(csvfile)
             for row in reader:
                 if row["CLASS"] == "Solution":
-                    covered = int(row["BRANCH_COVERED"])
-                    missed = int(row["BRANCH_MISSED"])
-                    total = covered + missed
-                    cov = 100.0 * (covered / total if total != 0 else 1)
+                    branch_covered = int(row["BRANCH_COVERED"])
+                    branch_missed = int(row["BRANCH_MISSED"])
+                    branch_num = branch_covered + branch_missed
+                    branch_cov = 100.0 * (
+                        branch_covered / branch_num if branch_num != 0 else 1
+                    )
+
+                    line_covered = int(row["LINE_COVERED"])
+                    line_missed = int(row["LINE_MISSED"])
+                    line_num = branch_covered + line_missed
+                    line_cov = 100.0 * (line_covered / line_num if line_num != 0 else 1)
                     break
     elif lang == "js":
         with open(focal_file, "a") as f:
@@ -152,7 +182,9 @@ def get_coverage(
         with open(coverage_file) as cov_fp:
             j = json.load(cov_fp)
         try:
-            cov = j[focal_file]["branches"]["pct"]
+            branch_cov = j[focal_file]["branches"]["pct"]
+            line_cov = j[focal_file]["lines"]["pct"]
+            stat_cov = j[focal_file]["statements"]["pct"]
         except KeyError:
             return None
 
@@ -180,7 +212,7 @@ def get_coverage(
         try:
             line = cov_result.splitlines()[0]
             elems = line.split("\t")
-            cov = float(elems[-1][:-1])  # str 100.0% -> float 100.0
+            stat_cov = float(elems[-1][:-1])  # str 100.0% -> float 100.0
         except IndexError:
             return None
 
@@ -188,7 +220,7 @@ def get_coverage(
         return None
 
     tmp_dir.cleanup()
-    return cov
+    return stat_cov, line_cov, branch_cov
 
 
 def main(
@@ -210,7 +242,7 @@ def main(
             lang = j["lang"]
             cov = get_coverage(focal, test, lang=lang, java_lib_path=java_lib_path)
             j["coverage"] = cov
-            fp.write(json.dumps(j))
+            fp.write(json.dumps(j) + "\n")
 
 
 if __name__ == "__main__":
