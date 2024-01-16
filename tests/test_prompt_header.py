@@ -29,6 +29,40 @@ class TestGetDefHeader(unittest.TestCase):
             "const testHasCloseElements = () => {\n",
         )
 
+    def test_cpp(self):
+        test = """
+TEST(AsmWriterTest, DebugPrintDetachedArgument) {
+  LLVMContext Ctx;
+  auto Ty = Type::getInt32Ty(Ctx);
+  auto Arg = new Argument(Ty);
+
+  std::string S;
+  raw_string_ostream OS(S);
+  Arg->print(OS);
+  EXPECT_EQ(S, "i32 <badref>");
+  delete Arg;
+}"""
+        self.assertEqual(
+            get_def_header(test, "cpp"),
+            "TEST(AsmWriterTest, DebugPrintDetachedArgument) {\n",
+        )
+
+        code = """
+TEST(BFSTest, InstantiateGraphFromEdges)
+{
+    Graph<int> g({ {1, 2}, {1, 3}, {2, 3} });
+
+    std::vector<int> bfs = g.BFS(1);
+    std::vector<int> expected{ 1, 2, 3 };
+
+    ASSERT_EQ(bfs, expected);
+}
+"""
+        self.assertEqual(
+            get_def_header(code, "cpp"),
+            "TEST(BFSTest, InstantiateGraphFromEdges) {\n",
+        )
+
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
