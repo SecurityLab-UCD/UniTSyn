@@ -63,6 +63,60 @@ TEST(BFSTest, InstantiateGraphFromEdges)
             "TEST(BFSTest, InstantiateGraphFromEdges) {\n",
         )
 
+    def test_java(self):
+        code = """@Test
+void catalogLoads() {
+	@SuppressWarnings("rawtypes")
+	ResponseEntity<Map> entity = new TestRestTemplate()
+			.getForEntity("http://localhost:" + this.port + "/context/eureka/apps", Map.class);
+	assertThat(entity.getStatusCode()).isEqualTo(HttpStatus.OK);
+	String computedPath = entity.getHeaders().getFirst("X-Version-Filter-Computed-Path");
+	assertThat(computedPath).isEqualTo("/context/eureka/v2/apps");
+}"""
+
+        self.assertEqual(get_def_header(code, "java"), "@Test\nvoid catalogLoads() {\n")
+
+        code = """@Test
+void testAdd() {
+    assertThat(add(1, 2)).isEqualTo(3);    
+}"""
+        self.assertEqual(get_def_header(code, "java"), "@Test\nvoid testAdd() {\n")
+
+        code = """@Test
+public void testInputParts(ServiceTransformationEngine transformationEngine, @All ServiceManager serviceManager) throws Exception {
+
+    //check and import services
+    checkAndImportServices(transformationEngine, serviceManager);
+
+    URI op = findServiceURI(serviceManager, "serv1323166560");
+    String[] expected = {"con241744282", "con1849951292", "con1653328292"};
+    if (op != null) {
+        Set<URI> ops = serviceManager.listOperations(op);
+        Set<URI> inputs = serviceManager.listInputs(ops.iterator().next());
+        Set<URI> parts = new HashSet<URI>(serviceManager.listMandatoryParts(inputs.iterator().next()));
+        assertTrue(parts.size() == 3);
+        for (URI part : parts) {
+            boolean valid = false;
+            for (String expectedInput : expected) {
+                if (part.toASCIIString().contains(expectedInput)) {
+                    valid = true;
+                    break;
+                }
+            }
+            assertTrue(valid);
+        }
+    } else {
+        fail();
+    }
+
+    serviceManager.shutdown();
+}"""
+
+        self.assertEqual(
+            get_def_header(code, "java"),
+            "@Test\npublic void testInputParts(ServiceTransformationEngine transformationEngine, @All ServiceManager serviceManager) throws Exception {\n",
+        )
+
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)

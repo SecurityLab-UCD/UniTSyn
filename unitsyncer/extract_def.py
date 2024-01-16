@@ -2,7 +2,14 @@
 import fire
 import ast
 from frontend.parser.ast_util import ASTUtil
-from frontend.parser import GO_LANGUAGE, JAVASCRIPT_LANGUAGE, CPP_LANGUAGE
+from frontend.parser import (
+    GO_LANGUAGE,
+    JAVASCRIPT_LANGUAGE,
+    CPP_LANGUAGE,
+    JAVA_LANGUAGE,
+)
+from itertools import takewhile
+from returns.maybe import Maybe, Nothing, Some
 
 
 def py_get_def(code: str) -> str | None:
@@ -60,6 +67,10 @@ def cpp_get_def(code: str) -> str | None:
     return f"{test_name}({', '.join(map(ast_util.get_source_from_node, test_params))}) {{\n"
 
 
+def java_get_def(code: str) -> str | None:
+    return "".join(takewhile(lambda c: c != "{", code)) + "{\n"
+
+
 def get_def_header(code: str, lang: str) -> str | None:
     header: str | None = None
     if lang == "python":
@@ -67,13 +78,7 @@ def get_def_header(code: str, lang: str) -> str | None:
     elif lang == "cpp":
         header = cpp_get_def(code)
     elif lang == "java":
-        header = "\n".join(
-            [
-                "public class Main {",
-                "   public static void main(String[] args) {",
-                "   Solution s = new Solution();\n",
-            ]
-        )
+        header = java_get_def(code)
     elif lang == "go":
         header = go_get_def(code)
     elif lang == "js":
@@ -84,15 +89,24 @@ def get_def_header(code: str, lang: str) -> str | None:
 
 def main():
     code = """
-TEST(OpenACCTest, DirectiveHelpers) {
-  EXPECT_EQ(getOpenACCDirectiveKind(""), ACCD_unknown);
-  EXPECT_EQ(getOpenACCDirectiveKind("dummy"), ACCD_unknown);
-  EXPECT_EQ(getOpenACCDirectiveKind("atomic"), ACCD_atomic);
-  EXPECT_EQ(getOpenACCDirectiveKind("cache"), ACCD_cache);
-  EXPECT_EQ(getOpenACCDirectiveKind("data"), ACCD_data);
-  EXPECT_EQ(getOpenACCDirectiveKind("declare"), ACCD_declare);
-}"""
-    print(cpp_get_def(code))
+@Test
+public void testBuildRecordsForUpdate() {
+    TcMqMessage message =JsonUtil.jsonToPojo(updateMsg,TcMqMessage.class);
+    TableMeta tableMeta=RuleConfigParser.RULES_MAP.getIfPresent("test");
+    TableRecords tableRecords=TableRecords.buildRecords(tableMeta,message);
+    System.out.println("testBuildRecordsForDelete:"+JsonUtil.objectToJson(tableRecords));
+    Assert.assertTrue(StringUtils.isNotBlank(tableRecords.getTableName()));
+    Assert.assertEquals(tableRecords.getFieldRows().size(),1);
+    Assert.assertEquals(tableRecords.getWhereRows().size(),1);
+    Assert.assertNotNull(tableRecords.getMqMessage());
+    Assert.assertNotNull(tableRecords.getTableMeta());
+    Assert.assertEquals(tableRecords.getFieldRows().get(0).getFields().get(0).getName(),"id");
+    Assert.assertEquals(tableRecords.getFieldRows().get(0).getFields().get(0).getKeyType(),KeyType.PRIMARY_KEY);
+    Assert.assertEquals(tableRecords.getWhereRows().get(0).getFields().get(0).getName(),"id");
+    Assert.assertEquals(tableRecords.getWhereRows().get(0).getFields().get(0).getKeyType(),KeyType.PRIMARY_KEY);
+}
+"""
+    print(java_get_def(code))
 
 
 if __name__ == "__main__":
