@@ -10,7 +10,9 @@ from frontend.parser import (
 )
 from itertools import takewhile
 from tqdm import tqdm
-import jsonlines
+import json
+import os
+import logging
 
 
 def py_get_def(code: str) -> str | None:
@@ -92,22 +94,22 @@ def get_def_header(code: str, lang: str) -> str | None:
 
 
 def main(in_path: str, out_path: str):
-    with jsonlines.open(in_path, "r") as reader, jsonlines.open(
-        out_path, "a"
-    ) as writer:
-        for j in reader:
-            test = j["test"]
-            lang = j["lang"]
+    with tqdm(total=os.path.getsize(in_path)) as p_bar:
+        with open(in_path, "r") as in_f, open(out_path, "a") as out_f:
+            for j_line in in_f:
+                j = json.loads(j_line)
+                test = j["test"]
+                lang = j["lang"]
 
-            try:
-                header = get_def_header(test, lang)
-                j["test_header"] = header
-                writer.write(j)
-            except Exception as e:
-                print(e)
-                print(j)
-                continue
+                try:
+                    header = get_def_header(test, lang)
+                    j["test_header"] = header
+                    out_f.write(json.dumps(j) + "\n")
+                except Exception as e:
+                    logging.error(e)
+                    logging.error(j)
 
+                p_bar.update(len(j_line))
 
 
 if __name__ == "__main__":
