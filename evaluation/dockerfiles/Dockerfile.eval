@@ -31,14 +31,5 @@ RUN apt-get install -y golang-go
 
 
 RUN pip install fire tqdm
-COPY evaluation/execution.py .
-
-
-# header extraction
-RUN pip install tree-sitter==0.20.1 returns
-COPY frontend/parser frontend/parser
-COPY evaluation/extract_def.py .
-COPY unitsyncer/common.py unitsyncer/common.py
-RUN cd frontend/parser && python3 build.py -f True
-RUN export PYTHONPATH=$PYTHONPATH:$UNITSYNCER_HOME
+COPY execution.py .
 

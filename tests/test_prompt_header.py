@@ -1,6 +1,6 @@
 """tests for get_def_header module in evaluation/extract_def.py"""
 import os
-from evaluation.extract_def import get_def_header
+from unitsyncer.extract_def import get_def_header
 import unittest
 import logging
 from unitsyncer.common import UNITSYNCER_HOME
