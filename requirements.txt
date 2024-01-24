@@ -16,3 +16,4 @@ python-Levenshtein
 fuzzywuzzy
 cytoolz
 orjson
+pathos
