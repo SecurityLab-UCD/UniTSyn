@@ -18,7 +18,6 @@ To run this script on a new project, you need to install the corresponding langu
 | Java       | [java-language-server](https://github.com/georgewfraser/java-language-server)\*                        | &#x2714; | &#x2714;   |
 | JavaScript | [typescript-language-server](https://github.com/typescript-language-server/typescript-language-server) | &#x2714; | &#x2714;   |
 | Go         | [gopls](https://pkg.go.dev/golang.org/x/tools/gopls)                                                   | &#x2714; | &#x2714;   |
-| Rust       | [rust-analyzer](https://rust-analyzer.github.io/manual.html)                                           | &#x2714; | &#x2714;\* |
 | C/C++      | [clangd](https://clangd.llvm.org/installation.html)                                                    | &#x2714; | &#x2714;   |
 
 \*NOTE: you need git clone the repo to workdir of this project, then follow the instructions in the repo to install the language server.
@@ -77,17 +76,3 @@ python3 scripts/find_repos.py --language='Python' --checks_list='["stars", "late
 
 Cursors representing where the search left off are saved to `data/repo_cursors/<language>_cursor.txt`. `find_repos.py` will automatically use and update this cursor to avoid mining duplicate repos.
 
-## Collecting Rust Fuzzing Data
-
-`frontend/rust/collect_fuzz.py` is used to collect fuzzing data from the Rust fuzzing corpus.
-The pipeline is as follows:
-
-1. transform: transform the `fuzz_target!` to print the input to stdout and get test template,
-2. build: build the fuzzing target in each repo, `cargo fuzz build`
-3. fuzz: fuzz the target in each repo, `cargo fuzz run <target>`
-4. testgen: substitute the input to the test template and get the test code
-
-```bash
-python3 frontend/rust/collect_fuzz.py --repo_id data/repo_meta/rust.txt -p all
-python3 frontend/rust/collect_all.py --repo_id data/repo_meta/rust.txt --repo_root data/rust_repos --fuzz True
-```
