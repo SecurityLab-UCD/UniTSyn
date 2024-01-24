@@ -224,7 +224,6 @@ def main(
                         f, repos_root=repos_root, language=language
                     ),
                     all_focal_files,
-                    timeout=convert_to_seconds(timeout),
                 ),
                 total=len(all_focal_files),
             )
