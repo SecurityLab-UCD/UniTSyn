@@ -1,8 +1,6 @@
 """util functions to navigate in python repo"""
-import os
-import sys
+
 import ast
-import jedi
 from typing import Optional, Callable, List, Union
 
 
@@ -11,8 +9,17 @@ class ModuleNavigator:
 
     def __init__(self, path: str):
         self.path = path
-        self.ast = ast.parse(open(path, "r").read())
+        with open(path, "r", errors="replace") as fp:
+            self.ast = ast.parse(fp.read())
         self.nodes, self.parents = flatten(self.ast)
+
+    @staticmethod
+    def build(path: str):
+        try:
+            nav = ModuleNavigator(path)
+            return nav
+        except SyntaxError:
+            return None
 
     def find_all(self, ntype: Union[type, Callable], root: Optional[ast.AST] = None):
         if root is None:
@@ -29,13 +36,13 @@ class ModuleNavigator:
         return find_by_name(root, name, nodes=nodes)
 
     def get_path_to(self, node: ast.AST):
-        return get_path_to(self.ast, node, nodes=self.nodes, parents=self.parents)
+        return get_path_to(node, self.nodes, self.parents)
 
     def postorder(self, root: Optional[ast.AST] = None):
         nodes = []
 
         def walk(n):
-            children = []
+            children: list[ast.AST] = []
             for f in getattr(n, "_fields", []):
                 field = getattr(n, f, [])
                 if isinstance(field, (tuple, list)):
@@ -46,8 +53,15 @@ class ModuleNavigator:
                 walk(child)
             nodes.append(n)
 
-        walk(root if root is not None else self.root)
+        walk(root if root is not None else self.ast)
         return nodes
+
+    @property
+    def total_lines(self) -> int:
+        line_numbers = {
+            node.lineno for node in ast.walk(self.ast) if hasattr(node, "lineno")
+        }
+        return len(line_numbers)
 
     def __str__(self):
         return ast.dump(self.ast)
@@ -55,13 +69,14 @@ class ModuleNavigator:
 
 def flatten(root: ast.AST):
     """flatten an ast pre-order"""
-    nodes, parents = [], []
+    nodes: list[ast.AST] = []
+    parents: list[int] = []
 
     def walk(n, p=None):
         nidx = len(nodes)
         nodes.append(n)
         parents.append(p)
-        children = []
+        children: list[ast.AST] = []
         for f in getattr(n, "_fields", []):
             field = getattr(n, f, [])
             if isinstance(field, (tuple, list)):
@@ -102,15 +117,11 @@ def find_by_name(root: ast.AST, name: str, nodes: Optional[List[ast.AST]] = None
 
 
 def get_path_to(
-    root: ast.AST,
     target: ast.AST,
-    nodes: Optional[List[ast.AST]] = None,
-    parents: Optional[List[int]] = None,
+    nodes: list[ast.AST],
+    parents: list[int],
 ):
-    if None not in (nodes, parents):
-        nodes, parents = flatten(root)
-    else:
-        assert len(nodes) == len(parents), "nodes and parents should have the same size"
+
     # find the path to target bottom-up
     try:
         target_idx = nodes.index(target)
@@ -124,14 +135,14 @@ def get_path_to(
 
 
 def dump_ast_func(
-    func: ast.AST,
+    func: ast.FunctionDef,
     path: str,
     nav: Optional[ModuleNavigator] = None,
     ancestors: Optional[List[ast.AST]] = None,
     return_nav: Optional[bool] = False,
 ):
     """converts an ast node of function into string"""
-    if nav is None and ancestors is None:
+    if nav is None:
         nav = ModuleNavigator(path)
     if ancestors is None:
         ancestors = nav.get_path_to(func)
