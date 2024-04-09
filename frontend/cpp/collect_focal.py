@@ -1,4 +1,5 @@
 """find focal call in Java test functions"""
+
 from typing import Optional
 import fire
 import re
@@ -7,6 +8,17 @@ from frontend.parser import CPP_LANGUAGE
 from frontend.parser.ast_util import ASTUtil, ASTLoc, flatten_postorder
 from returns.maybe import Maybe, Nothing, Some, maybe
 from unitsyncer.util import get_cpp_func_name
+
+
+def is_test_fn(n: Node, ast_util: ASTUtil):
+    def is_gtest_testcase(node: Node):
+        return (
+            get_cpp_func_name(ast_util, node)
+            .map(lambda name: name == "TEST")
+            .value_or(False)
+        )
+
+    return is_gtest_testcase(n)
 
 
 def get_focal_call(ast_util: ASTUtil, func: Node) -> Maybe[tuple[str, ASTLoc]]:

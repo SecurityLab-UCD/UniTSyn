@@ -144,11 +144,11 @@ def main(
     with Pool(nproc) as pool:
         rows = list(tqdm(pool.imap(analyze, repo_roots), total=len(repo_roots)))
 
-    rows = lfilter(None, rows)
+    valid_rows: list[dict] = lfilter(None, rows)
     with open(output_csv_file, "w") as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=rows[0].keys())
+        writer = csv.DictWriter(csvfile, fieldnames=valid_rows[0].keys())
         writer.writeheader()
-        writer.writerows(rows)
+        writer.writerows(valid_rows)
 
 
 if __name__ == "__main__":
