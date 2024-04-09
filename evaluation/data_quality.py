@@ -1,6 +1,6 @@
 import fire
 import os
-from multiprocessing import cpu_count
+from multiprocessing import cpu_count, Pool
 from pathos.multiprocessing import ProcessingPool
 from frontend.parser.ast_util import ASTUtil
 from unitsyncer.util import replace_tabs
@@ -14,7 +14,7 @@ from frontend.parser import (
     GO_LANGUAGE,
 )
 from funcy import lfilter
-from functools import reduce
+from functools import reduce, partial
 import logging
 from tqdm import tqdm
 import csv
@@ -73,40 +73,42 @@ def collect_files(root: str, lang: str) -> list[str]:
     return l
 
 
-def get_analyzer(lang: str):
+def analyze(repo_root: str, lang: str = "java", nproc: int = 100) -> dict:
     def tuple_add(p1, p2):
         return (p1[0] + p2[0], p1[1] + p2[1])
 
     def analyze_file(file_path: str) -> tuple[int, int]:
+        try:
+            with open(file_path, "r", errors="replace") as f:
+                ast_util = ASTUtil(replace_tabs(f.read()))
+        except FileNotFoundError:
+            return 0, 0
 
-        with open(file_path, "r", errors="replace") as f:
-            ast_util = ASTUtil(replace_tabs(f.read()))
-        tree = ast_util.tree(LANG[lang])
-        root_node = tree.root_node
-        is_test = test_checker(ast_util, lang)
+        try:
+            tree = ast_util.tree(LANG[lang])
+            root_node = tree.root_node
+            is_test = test_checker(ast_util, lang)
 
-        functions = ast_util.get_all_nodes_of_type(root_node, FN_NODE_TYPE[lang])
-        n_tests = len(lfilter(is_test, functions))
+            functions = ast_util.get_all_nodes_of_type(root_node, FN_NODE_TYPE[lang])
+            n_tests = len(lfilter(is_test, functions))
+        except Exception as e:
+            logging.warning(e)
+            return 0, 0
+
         n_funcs = len(functions) - n_tests
         return n_funcs, n_tests
 
-    def _analyze(repo_root: str) -> dict | None:
-        try:
-            n_funcs, n_tests = reduce(
-                tuple_add, map(analyze_file, collect_files(repo_root, lang)), (0, 0)
-            )
-        except Exception as e:
-            logging.warning(e)
-            return None
+    with ProcessingPool(processes=nproc) as pool:
+        stats = pool.map(analyze_file, collect_files(repo_root, lang))
 
-        return {
-            "repo_id": repo_root,
-            "#funcs": n_funcs,
-            "#unit": n_tests,
-            "ratio": n_tests / n_funcs if n_funcs != 0 else None,
-        }
+    n_funcs, n_tests = reduce(tuple_add, stats, (0, 0))
 
-    return _analyze
+    return {
+        "repo_id": repo_root,
+        "#funcs": n_funcs,
+        "#unit": n_tests,
+        "ratio": n_tests / n_funcs if n_funcs != 0 else None,
+    }
 
 
 def main(
@@ -118,17 +120,13 @@ def main(
 ):
 
     with open(input_repo_list_path, "r") as fp:
-        repo_list = fp.read().splitlines()
+        repo_list = fp.read().splitlines()[5000:]
 
     root = os.path.abspath(root)
     repo_roots = [os.path.join(root, wrap_repo(repo_id)) for repo_id in repo_list]
-    analyze = get_analyzer(lang)
 
     logging.info(f"Processing {len(repo_roots)} repos.")
-    with ProcessingPool(nproc) as pool:
-        rows = list(tqdm(pool.imap(analyze, repo_roots), total=len(repo_roots)))
-
-    valid_rows: list[dict] = lfilter(None, rows)
+    valid_rows = [analyze(r, lang, nproc) for r in tqdm(repo_roots)]
     with open(output_csv_file, "w") as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=valid_rows[0].keys())
         writer.writeheader()
