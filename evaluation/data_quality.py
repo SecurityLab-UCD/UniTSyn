@@ -1,138 +1,123 @@
-import fire
-import os
-from multiprocessing import cpu_count, Pool
-from pathos.multiprocessing import ProcessingPool
-from frontend.parser.ast_util import ASTUtil
-from unitsyncer.util import replace_tabs
-from typing import Callable
-from tree_sitter.binding import Node
-from frontend.util import wrap_repo
-from frontend.parser import (
-    JAVA_LANGUAGE,
-    JAVASCRIPT_LANGUAGE,
-    CPP_LANGUAGE,
-    GO_LANGUAGE,
-)
-from funcy import lfilter
-from functools import reduce, partial
-import logging
+"""script to reproduce plot in data quality analysis"""
+
+import json
+import matplotlib.pyplot as plt
+import numpy as np
+from multiprocessing import Pool
+import random
+import pandas as pd
 from tqdm import tqdm
-import csv
-
-EXT = {
-    "java": ["java"],
-    "cpp": ["cc", "cpp", "c++"],
-    "js": ["js"],
-    "go": ["go"],
-}
-
-FN_NODE_TYPE = {
-    "java": "method_declaration",
-    "cpp": "function_definition",
-    "js": "call_expression",
-    "go": "function_declaration",
-}
-
-LANG = {
-    "java": JAVA_LANGUAGE,
-    "cpp": CPP_LANGUAGE,
-    "js": JAVASCRIPT_LANGUAGE,
-    "go": GO_LANGUAGE,
-}
+import dataclasses
+from funcy import lmap, lfilter
 
 
-def test_checker(ast_util: ASTUtil, lang: str) -> Callable[[Node], bool]:
-    match lang:
-        case "java":
-            from frontend.java.collect_focal import is_test_fn as is_java_test
-
-            return lambda n: is_java_test(n, ast_util)
-        case "cpp":
-            from frontend.cpp.collect_focal import is_test_fn as is_cpp_test
-
-            return lambda n: is_cpp_test(n, ast_util)
-        case "go":
-            from frontend.go.collect_focal import is_test_fn as is_go_test
-
-            return lambda n: is_go_test(n, ast_util)
-        case "js":
-            from frontend.javascript.js_util import is_test_fn as is_js_test
-
-            return lambda n: is_js_test(n, ast_util)
-        case _:
-            return lambda _: False
+plt.style.use("_mpl-gallery")
 
 
-def collect_files(root: str, lang: str) -> list[str]:
-    l = []
-    for dirpath, _, filenames in os.walk(root):
-        for filename in filenames:
-            extension = filename.split(".")[-1]
-            if extension in EXT[lang]:
-                l.append(os.path.join(dirpath, filename))
-    return l
+def repo_id(test_id: str) -> str:
+    return test_id.split("/")[0]
 
 
-def analyze(repo_root: str, lang: str = "java", nproc: int = 100) -> dict:
-    def tuple_add(p1, p2):
-        return (p1[0] + p2[0], p1[1] + p2[1])
-
-    def analyze_file(file_path: str) -> tuple[int, int]:
-        try:
-            with open(file_path, "r", errors="replace") as f:
-                ast_util = ASTUtil(replace_tabs(f.read()))
-        except FileNotFoundError:
-            return 0, 0
-
-        try:
-            tree = ast_util.tree(LANG[lang])
-            root_node = tree.root_node
-            is_test = test_checker(ast_util, lang)
-
-            functions = ast_util.get_all_nodes_of_type(root_node, FN_NODE_TYPE[lang])
-            n_tests = len(lfilter(is_test, functions))
-        except Exception as e:
-            logging.warning(e)
-            return 0, 0
-
-        n_funcs = len(functions) - n_tests
-        return n_funcs, n_tests
-
-    with ProcessingPool(processes=nproc) as pool:
-        stats = pool.map(analyze_file, collect_files(repo_root, lang))
-
-    n_funcs, n_tests = reduce(tuple_add, stats, (0, 0))
-
-    return {
-        "repo_id": repo_root,
-        "#funcs": n_funcs,
-        "#unit": n_tests,
-        "ratio": n_tests / n_funcs if n_funcs != 0 else None,
-    }
+@dataclasses.dataclass
+class ProjStat:
+    repo_id: str
+    n_test_lines: int
+    n_code_lines: int
+    n_assert: int
 
 
-def main(
-    input_repo_list_path: str,
-    root: str,
-    lang: str,
-    nproc: int = cpu_count(),
-    output_csv_file: str = "output_ratio.csv",
-):
+def analyze(objs: list[dict]) -> pd.DataFrame:
+    proj_map: dict[str, ProjStat] = {}
+    for obj in tqdm(objs):
+        repo = repo_id(obj["test_id"])
+        test: str = obj["test"]
+        code: str = obj["code"]
+        n_test_lines = len(test.splitlines())
+        n_code_lines = len(code.splitlines())
 
-    with open(input_repo_list_path, "r") as fp:
-        repo_list = fp.read().splitlines()[5000:]
+        lower_test = test.lower()
+        n_assert = lower_test.count("assert")
+        if obj["lang"] in ("js", "cpp"):
+            n_expect = lower_test.count("expect")
+            n_assert += n_expect
+            if obj["lang"] == "js":
+                n_test = lower_test.count("test")
+                n_assert += n_test
 
-    root = os.path.abspath(root)
-    repo_roots = [os.path.join(root, wrap_repo(repo_id)) for repo_id in repo_list]
+        if repo in proj_map:
+            proj_map[repo].n_test_lines += n_test_lines
+            proj_map[repo].n_code_lines += n_code_lines
+            proj_map[repo].n_assert += n_assert
+        else:
+            proj_map[repo] = ProjStat(repo, n_test_lines, n_code_lines, n_assert)
+    return pd.DataFrame([o.__dict__ for o in proj_map.values()])
 
-    logging.info(f"Processing {len(repo_roots)} repos.")
-    valid_rows = [analyze(r, lang, nproc) for r in tqdm(repo_roots)]
-    with open(output_csv_file, "w") as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=valid_rows[0].keys())
-        writer.writeheader()
-        writer.writerows(valid_rows)
+
+def test_to_code_ratio(df: pd.DataFrame):
+    return df["n_test_lines"] / df["n_code_lines"]
+
+
+def get_density(df: pd.DataFrame):
+    return df["n_assert"] / df["n_test_lines"]
+
+
+def main():
+
+    with open("data/source/all.jsonl", "r") as fp:
+        lines = fp.readlines()
+
+    with Pool() as p:
+        objs = p.map(json.loads, lines)
+
+    langs = ["python", "java", "go", "cpp", "js"]
+
+    objss = lmap(lambda l: lfilter(lambda o: o["lang"] == l, objs), langs)
+
+    dfs = lmap(analyze, objss)
+
+    np.random.seed(0)
+    bins = np.linspace(0, 10, 100)
+
+    ratios = lmap(test_to_code_ratio, dfs)
+    ticks = list(range(10))
+    for name, ratio in zip(langs, ratios):
+        plt.figure(figsize=(12, 6))
+        plt.hist(ratio, bins, alpha=0.5)
+        plt.xticks(ticks)
+        plt.xlabel("Test-to-code Ratio", fontsize=18)
+        plt.ylabel("Per-project Frequency", fontsize=18)
+        plt.rc("axes", labelsize=18)
+        plt.savefig(f"{name}.pdf", dpi=500, bbox_inches="tight")
+
+    with open("python_coverage.jsonl", "r") as fp:
+        covs = list(map(json.loads, fp.readlines()))
+
+    cov_df = pd.DataFrame(covs)
+    cov_df.describe()
+
+    plt.figure(figsize=(12, 4))
+    plt.boxplot(
+        cov_df["coverage"], patch_artist=True, vert=False, widths=0.5, notch=True
+    )
+    plt.xlabel("Coverage Percentage", fontsize=18)
+    plt.rc("axes", labelsize=18)
+
+    plt.savefig(f"coverage_box.pdf", dpi=500, bbox_inches="tight")
+
+    ds = list(map(get_density, dfs))
+
+    bins = np.linspace(0, 1, 100)
+    for name, density in zip(langs, ds):
+        print(name)
+        plt.figure(figsize=(12, 6))
+        plt.hist(density, bins, alpha=0.5)
+        # plt.legend(loc='upper right', fontsize=18)
+        # plt.yscale("log")
+        plt.xlabel("Assertion density", fontsize=18)
+        plt.ylabel("Per-project Frequency", fontsize=18)
+        plt.rc("axes", labelsize=18)
+        plt.savefig(f"density/{name}.pdf", dpi=500, bbox_inches="tight")
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    fire.Fire(main)
+    main()
