@@ -1,4 +1,5 @@
 """find focal call in Java test functions"""
+
 from typing import Optional
 import fire
 import re
@@ -6,6 +7,14 @@ from tree_sitter.binding import Node
 from frontend.parser import JAVA_LANGUAGE
 from frontend.parser.ast_util import ASTUtil, ASTLoc, flatten_postorder
 from returns.maybe import Maybe, Nothing, Some, maybe
+
+
+def is_test_fn(node: Node, ast_util: ASTUtil):
+    def has_test_modifier(node: Node):
+        modifiers = ast_util.get_method_modifiers(node)
+        return modifiers.map(lambda x: "@Test" in x).value_or(False)
+
+    return has_test_modifier(node)
 
 
 def fuzzy_focal_name(test_func_name: str) -> str:

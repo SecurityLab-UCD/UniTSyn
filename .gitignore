@@ -177,3 +177,5 @@ debug/
 **/target/
 
 stat
+*.jsonl
+*.csv

@@ -1,4 +1,5 @@
 """main script for Javascript frontend"""
+
 from typing import Iterable
 import fire
 import os
@@ -10,7 +11,7 @@ from unitsyncer.util import replace_tabs
 import json
 from frontend.util import mp_map_repos, wrap_repo, run_with_timeout
 from collections import Counter
-from frontend.javascript.js_util import js_get_test_args, get_focal_call
+from frontend.javascript.js_util import js_get_test_args, get_focal_call, is_test_fn
 
 
 def has_test(file_path):
@@ -57,13 +58,9 @@ def collect_test_funcs(ast_util: ASTUtil) -> Iterable[Maybe[tuple[str, Node]]]:
 
     # js test function is a higher order function that takes a function as input
     call_exprs = ast_util.get_all_nodes_of_type(root_node, "call_expression")
-
-    def is_call_to_test(node: Node):
-        return ast_util.get_name(node).map(lambda n: n == "describe").value_or(False)
-
     return map(
         lambda node: js_get_test_args(ast_util, node),
-        filter(is_call_to_test, call_exprs),
+        filter(lambda n: is_test_fn(n, ast_util), call_exprs),
     )
 
 

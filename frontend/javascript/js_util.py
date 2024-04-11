@@ -1,10 +1,19 @@
 """util functions for JS frontend"""
+
 from typing import Iterable
 from tree_sitter.binding import Node
 from frontend.parser import JAVASCRIPT_LANGUAGE
 from frontend.parser.ast_util import ASTUtil, ASTLoc, flatten_postorder
 from returns.maybe import Maybe, Nothing, Some
 from unitsyncer.util import replace_tabs
+
+
+def is_test_fn(n: Node, ast_util: ASTUtil):
+
+    def is_call_to_test(node: Node):
+        return ast_util.get_name(node).map(lambda n: n == "describe").value_or(False)
+
+    return is_call_to_test(n)
 
 
 def js_get_test_args(

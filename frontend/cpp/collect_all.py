@@ -1,4 +1,5 @@
 """main script for C/C++ frontend"""
+
 from typing import Iterable
 import fire
 import os
@@ -6,7 +7,7 @@ from tree_sitter.binding import Node
 from frontend.parser import CPP_LANGUAGE
 from frontend.parser.ast_util import ASTUtil
 from returns.maybe import Maybe, Nothing, Some
-from frontend.cpp.collect_focal import get_focal_call
+from frontend.cpp.collect_focal import get_focal_call, is_test_fn
 from unitsyncer.util import replace_tabs
 import json
 from frontend.util import mp_map_repos, wrap_repo, run_with_timeout
@@ -47,14 +48,7 @@ def collect_test_funcs(ast_util: ASTUtil) -> Iterable[Node]:
 
     defns = ast_util.get_all_nodes_of_type(root_node, "function_definition")
 
-    def is_gtest_testcase(node: Node):
-        return (
-            get_cpp_func_name(ast_util, node)
-            .map(lambda name: name == "TEST")
-            .value_or(False)
-        )
-
-    return filter(is_gtest_testcase, defns)
+    return filter(lambda n: is_test_fn(n, ast_util), defns)
 
 
 def collect_test_n_focal(file_path: str):

@@ -1,4 +1,5 @@
 """main script for Java frontend"""
+
 from typing import Iterable
 import fire
 import os
@@ -6,7 +7,7 @@ from tree_sitter.binding import Node
 from frontend.parser import JAVA_LANGUAGE
 from frontend.parser.ast_util import ASTUtil
 from returns.maybe import Maybe, Nothing, Some
-from frontend.java.collect_focal import get_focal_call
+from frontend.java.collect_focal import get_focal_call, is_test_fn
 from unitsyncer.util import replace_tabs
 import json
 from frontend.util import mp_map_repos, wrap_repo, run_with_timeout
@@ -48,11 +49,7 @@ def collect_test_funcs(ast_util: ASTUtil) -> Iterable[Node]:
 
     decls = ast_util.get_all_nodes_of_type(root_node, "method_declaration")
 
-    def has_test_modifier(node: Node):
-        modifiers = ast_util.get_method_modifiers(node)
-        return modifiers.map(lambda x: "@Test" in x).value_or(False)
-
-    return filter(has_test_modifier, decls)
+    return filter(lambda n: is_test_fn(n, ast_util), decls)
 
 
 def collect_test_n_focal(file_path: str):

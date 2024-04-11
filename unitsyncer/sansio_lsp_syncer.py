@@ -1,4 +1,5 @@
 """Synchronizer Based on sansio_lsp"""
+
 from unitsyncer.sync import Synchronizer, get_lsp_cmd
 import pprint
 import pathlib
@@ -319,22 +320,3 @@ class SansioLSPSynchronizer(Synchronizer):
 
     def stop(self):
         pass
-
-
-def main():
-    workspace_dir = (
-        "/home/yfhe/UniTSyncer/data/repos/mistifyio-go-zfs/mistifyio-go-zfs-2923acc"
-    )
-    sync = SansioLSPSynchronizer(workspace_dir, "go")
-    sync.initialize()
-
-    test_file = os.path.join(workspace_dir, "zfs_test.go")
-    func_GetData = (19, 20)
-    func_GetProperty = (34, 20)
-    print(sync.get_source_of_call("GetData", test_file, *func_GetData))
-    print(sync.get_source_of_call("GetProperty", test_file, *func_GetProperty))
-    sync.stop()
-
-
-if __name__ == "__main__":
-    main()
