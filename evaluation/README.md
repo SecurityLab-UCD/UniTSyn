@@ -55,11 +55,5 @@ python3 execution.py -j test_evaluation.jsonl
 In `UniTSyncer/evaluation`, run
 
 ```sh
-docker build --tag yfhe0602/unitsyncer-eval . -f dockerfiles/Dockerfile.eval
-```
-
-Or you can get the pre-built image from Docker Hub (preferred)
-
-```sh
-docker pull yfhe0602/unitsyncer-eval:latest
+docker build --tag unitsyncer-eval . -f dockerfiles/Dockerfile.eval
 ```

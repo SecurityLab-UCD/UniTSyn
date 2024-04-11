@@ -17,7 +17,7 @@ from tqdm import tqdm
 def build_image(repo_id: str):
     _, workdir = repo_id.split("/")
     dockerfile = f"""
-FROM yfhe0602/unitsyncer-eval:python
+FROM unitsyncer-eval:python
 ENV DEBIAN_FRONTEND noninteractive
 RUN git clone https://github.com/{repo_id}
 WORKDIR {workdir}

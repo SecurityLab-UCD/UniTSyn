@@ -12,13 +12,13 @@ Multilingual **Uni**t **T**est and Function Source **Sync**hronization for CodeL
 
 To run this script on a new project, you need to install the corresponding language server:
 
-| Language   | Language Server                                                                                        | Frontend | Backend    |
-| ---------- | ------------------------------------------------------------------------------------------------------ | -------- | ---------- |
-| Python     | [pylsp](https://github.com/python-lsp/python-lsp-server)                                               | &#x2714; | &#x2714;   |
-| Java       | [java-language-server](https://github.com/georgewfraser/java-language-server)\*                        | &#x2714; | &#x2714;   |
-| JavaScript | [typescript-language-server](https://github.com/typescript-language-server/typescript-language-server) | &#x2714; | &#x2714;   |
-| Go         | [gopls](https://pkg.go.dev/golang.org/x/tools/gopls)                                                   | &#x2714; | &#x2714;   |
-| C/C++      | [clangd](https://clangd.llvm.org/installation.html)                                                    | &#x2714; | &#x2714;   |
+| Language   | Language Server                                                                                        | Frontend | Backend  |
+| ---------- | ------------------------------------------------------------------------------------------------------ | -------- | -------- |
+| Python     | [pylsp](https://github.com/python-lsp/python-lsp-server)                                               | &#x2714; | &#x2714; |
+| Java       | [java-language-server](https://github.com/georgewfraser/java-language-server)\*                        | &#x2714; | &#x2714; |
+| JavaScript | [typescript-language-server](https://github.com/typescript-language-server/typescript-language-server) | &#x2714; | &#x2714; |
+| Go         | [gopls](https://pkg.go.dev/golang.org/x/tools/gopls)                                                   | &#x2714; | &#x2714; |
+| C/C++      | [clangd](https://clangd.llvm.org/installation.html)                                                    | &#x2714; | &#x2714; |
 
 \*NOTE: you need git clone the repo to workdir of this project, then follow the instructions in the repo to install the language server.
 
