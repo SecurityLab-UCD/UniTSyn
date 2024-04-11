@@ -17,3 +17,5 @@ fuzzywuzzy
 cytoolz
 orjson
 pathos
+funcy
+funcy_chain

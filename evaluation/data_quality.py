@@ -87,24 +87,9 @@ def main():
         plt.xlabel("Test-to-code Ratio", fontsize=18)
         plt.ylabel("Per-project Frequency", fontsize=18)
         plt.rc("axes", labelsize=18)
-        plt.savefig(f"{name}.pdf", dpi=500, bbox_inches="tight")
+        plt.savefig(f"ratio/{name}.pdf", dpi=500, bbox_inches="tight")
 
-    with open("python_coverage.jsonl", "r") as fp:
-        covs = list(map(json.loads, fp.readlines()))
-
-    cov_df = pd.DataFrame(covs)
-    cov_df.describe()
-
-    plt.figure(figsize=(12, 4))
-    plt.boxplot(
-        cov_df["coverage"], patch_artist=True, vert=False, widths=0.5, notch=True
-    )
-    plt.xlabel("Coverage Percentage", fontsize=18)
-    plt.rc("axes", labelsize=18)
-
-    plt.savefig(f"coverage_box.pdf", dpi=500, bbox_inches="tight")
-
-    ds = list(map(get_density, dfs))
+    ds = lmap(get_density, dfs)
 
     bins = np.linspace(0, 1, 100)
     for name, density in zip(langs, ds):
