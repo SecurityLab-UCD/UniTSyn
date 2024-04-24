@@ -3,7 +3,7 @@ python-lsp-server>=1.8.2
 jedi>=0.19.1
 returns[compatible-mypy]
 jsonlines>=4.0.0
-tree-sitter
+tree-sitter==0.20.1
 tqdm>=4.64.1
 lambdas>=0.2.0
 sansio-lsp-client==0.10.0

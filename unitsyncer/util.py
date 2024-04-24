@@ -10,7 +10,7 @@ from functools import reduce
 from operator import add
 
 from frontend.parser.ast_util import ASTUtil
-from tree_sitter import Node
+from tree_sitter.binding import Node
 
 
 class ReadPipe(threading.Thread):

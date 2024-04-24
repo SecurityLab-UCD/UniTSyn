@@ -1,6 +1,6 @@
 """Helper Class and Functions for tree-sitter AST"""
 from tree_sitter import Language, Parser, Tree
-from tree_sitter import Node
+from tree_sitter.binding import Node
 from returns.maybe import Maybe, Nothing, Some
 from unitsyncer.common import UNITSYNCER_HOME
 from typing import Optional, Tuple
