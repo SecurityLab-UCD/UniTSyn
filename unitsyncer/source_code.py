@@ -13,7 +13,7 @@ from frontend.parser import (
     RUST_LANGUAGE,
     CPP_LANGUAGE,
 )
-from tree_sitter.binding import Node
+from tree_sitter import Node
 from frontend.parser.ast_util import remove_leading_spaces
 
 Location: TypeAlias = PyLSPLoc | SansioLoc

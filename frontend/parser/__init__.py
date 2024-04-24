@@ -1,9 +1,12 @@
-from tree_sitter import Language, Parser, Tree
-from unitsyncer.common import UNITSYNCER_HOME
+from tree_sitter import Language
+import tree_sitter_rust as tsrust
+import tree_sitter_java as tsjava
+import tree_sitter_javascript as tsjavascript
+import tree_sitter_go as tsgo
+import tree_sitter_cpp as tscpp
 
-SHARED_LIB = f"{UNITSYNCER_HOME}/frontend/parser/languages.so"
-JAVA_LANGUAGE = Language(SHARED_LIB, "java")
-JAVASCRIPT_LANGUAGE = Language(SHARED_LIB, "javascript")
-RUST_LANGUAGE = Language(SHARED_LIB, "rust")
-GO_LANGUAGE = Language(SHARED_LIB, "go")
-CPP_LANGUAGE = Language(SHARED_LIB, "cpp")
+JAVA_LANGUAGE = Language(tsjava.language(), "java")
+JAVASCRIPT_LANGUAGE = Language(tsjavascript.language(), "javascript")
+RUST_LANGUAGE = Language(tsrust.language(), "rust")
+GO_LANGUAGE = Language(tsgo.language(), "go")
+CPP_LANGUAGE = Language(tscpp.language(), "cpp")
