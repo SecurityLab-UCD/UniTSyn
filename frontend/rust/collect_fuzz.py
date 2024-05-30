@@ -10,6 +10,7 @@ from tqdm import tqdm
 from unitsyncer.common import CORES
 from pathos.multiprocessing import ProcessingPool
 import numpy as np
+import Levenshtein
 
 def transform_repos(repos: list[str], jobs: int):
     def transform_one_repo(repo_path: str):
@@ -85,8 +86,8 @@ def substitute_input(template: str, input_data: str, idx: int) -> str:
     ).replace("fn test_something ()", f"fn test_{idx} ()")
 
 def similarity(x: str, y: str) -> float:
-    """Dummy similarity function, replace with actual implementation."""
-    return np.random.rand()
+    """add similarity metrics"""
+    return 1 - Levenshtein.distance(x, y) / max(len(x), len(y))
 
 def has_similar(selected_inputs: list[str], x: str, thresh: float) -> bool:
     return any(map(lambda y: similarity(x, y) > thresh, selected_inputs))
