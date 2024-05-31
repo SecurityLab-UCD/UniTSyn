@@ -162,7 +162,7 @@ def main(
     timeout: int = 60,
     jobs: int = CORES,
     limits: Optional[int] = None,
-    pipeline: str = "transform",
+    pipeline: str = "all",#transform
     n_fuzz=100,
 ):
     """collect fuzzing data from rust repos
