@@ -1,6 +1,6 @@
 """script for rust fuzzing and transforming test_template"""
 import logging
-from typing import Optional, List, Tuple
+from typing import Optional
 import fire
 import os
 from frontend.util import wrap_repo, parallel_subprocess
@@ -9,8 +9,7 @@ from os.path import join as pjoin, abspath
 from tqdm import tqdm
 from unitsyncer.common import CORES
 from pathos.multiprocessing import ProcessingPool
-import numpy as np
-import Levenshtein
+import random
 
 def transform_repos(repos: list[str], jobs: int):
     def transform_one_repo(repo_path: str):
@@ -23,6 +22,7 @@ def transform_repos(repos: list[str], jobs: int):
     logging.info(f"Running rust-fuzz-gen on {len(repos)} repos")
     parallel_subprocess(repos, jobs, transform_one_repo, on_exit=None)
 
+
 def get_target_list(p: subprocess.Popen):
     match p.stdout:
         case None:
@@ -30,10 +30,13 @@ def get_target_list(p: subprocess.Popen):
         case _:
             return p.stdout.read().decode("utf-8").split("\n")
 
+
 def fuzz_one_target(target: tuple[str, str], timeout):
     repo_path, target_name = target
     with open(pjoin(repo_path, "fuzz_inputs", target_name), "w") as f:
         return subprocess.Popen(
+            # todo: find out why -max_total_time doesn't work
+            # ["cargo", "fuzz", "run", target_name, "--", f"-max_total_time={timeout}"],
             [
                 "bash",
                 "-c",
@@ -43,6 +46,7 @@ def fuzz_one_target(target: tuple[str, str], timeout):
             stdout=f,
             stderr=subprocess.DEVNULL,
         )
+
 
 def build(repos: list[str], jobs: int):
     logging.info(f"Building fuzzing targets in {len(repos)} repos")
@@ -57,6 +61,7 @@ def build(repos: list[str], jobs: int):
         ),
         on_exit=None,
     )
+
 
 def fuzz_repos(repos: list[str], jobs: int, timeout: int = 60):
     logging.info("Collecting all fuzz targets")
@@ -80,27 +85,14 @@ def fuzz_repos(repos: list[str], jobs: int, timeout: int = 60):
         targets, jobs, lambda p: fuzz_one_target(p, timeout), on_exit=None
     )
 
+
 def substitute_input(template: str, input_data: str, idx: int) -> str:
     return template.replace(
         '[] ; # [doc = "This is a test template"]', f"{input_data} ; "
     ).replace("fn test_something ()", f"fn test_{idx} ()")
 
-def similarity(x: str, y: str) -> float:
-    """add similarity metrics"""
-    return 1 - Levenshtein.distance(x, y) / max(len(x), len(y))
 
-def has_similar(selected_inputs: list[str], x: str, thresh: float) -> bool:
-    return any(map(lambda y: similarity(x, y) > thresh, selected_inputs))
-
-def can_use_input(
-    selected_inputs: list[str],
-    x: str, 
-    max_len: int,
-    sim_thresh: float,
-) -> bool:
-    return len(x) < max_len and not has_similar(selected_inputs, x, sim_thresh)
-
-def substitute_one_repo(repo: str, targets: list[str], n_fuzz: int, max_len: int = 100, sim_thresh: float = 0.8):
+def substitute_one_repo(repo: str, targets: list[str], n_fuzz):
     template_dir = pjoin(repo, "tests-gen")
     input_dir = pjoin(repo, "fuzz_inputs")
     for t in targets:
@@ -114,18 +106,16 @@ def substitute_one_repo(repo: str, targets: list[str], n_fuzz: int, max_len: int
                 template = f_template.read()
             with open(pjoin(input_dir, t), "r") as f_input:
                 inputs = [i for i in f_input.read().splitlines() if i != "[]"]
-                inputs.reverse()  # Reverse to take inputs with higher coverage
 
-                valid_inputs = []
-                for input_ in inputs:
-                    if can_use_input(valid_inputs, input_, max_len, sim_thresh):
-                        valid_inputs.append(input_)
-                    if len(valid_inputs) >= n_fuzz:
-                        break
-
+                # shuffle the inputs
+                random.shuffle(inputs)
+                
+                # take the first n_fuzz elements
+                inputs = inputs[:n_fuzz]
+                
             tests = [
                 substitute_input(template, input_data, i)
-                for i, input_data in enumerate(valid_inputs)
+                for i, input_data in enumerate(inputs)
             ]
             generated_test_path = pjoin(template_dir, f"{t}.inputs.rs")
             with open(generated_test_path, "w") as f_template:
@@ -136,15 +126,14 @@ def substitute_one_repo(repo: str, targets: list[str], n_fuzz: int, max_len: int
         except FileNotFoundError:
             logging.debug(f"Template {template_path} not found")
 
-def testgen_repos(repos: list[str], jobs: int, n_fuzz: int = 100, max_len: int = 100, sim_thresh: float = 0.8):
+
+def testgen_repos(repos: list[str], jobs: int, n_fuzz: int = 100):
     """Generate tests from fuzz inputs
 
     Args:
         repos (list[str]): list of repo paths
         jobs (int): number of parallel jobs to use
         n_fuzz (int, optional): number of fuzz data to use. Defaults to 100.
-        max_len (int, optional): maximum length of input. Defaults to 100.
-        sim_thresh (float, optional): similarity threshold. Defaults to 0.8.
     """
     target_map = parallel_subprocess(
         repos,
@@ -160,11 +149,12 @@ def testgen_repos(repos: list[str], jobs: int, n_fuzz: int = 100, max_len: int =
         _ = list(
             tqdm(
                 p.map(
-                    lambda item: substitute_one_repo(item[0], item[1], n_fuzz, max_len, sim_thresh),
+                    lambda item: substitute_one_repo(item[0], item[1], n_fuzz),
                     target_map.items(),
                 )
             )
         )
+
 
 def main(
     repo_id: str = "image-rs/image-png",
@@ -173,22 +163,18 @@ def main(
     jobs: int = CORES,
     limits: Optional[int] = None,
     pipeline: str = "transform",
-    n_fuzz: int = 100,
-    max_len: int = 100,
-    sim_thresh: float = 0.8,
+    n_fuzz=100,
 ):
     """collect fuzzing data from rust repos
 
     Args:
-        repo_id (str, optional): repo id. Defaults to "image-rs/image-png".
+        repo_id (str, optional): repo id. Defaults to "marshallpierce/rust-base64".
         repo_root (str, optional): directory contains all the repos. Defaults to "data/rust_repos/".
         timeout (int, optional): max_total_time to fuzz. Defaults to 60.
         jobs (int, optional): number of parallel jobs to use. Defaults to CORES.
         limits (Optional[int], optional): number of repos to process, None if use all of them.
         pipeline (str, optional): what to do. Defaults to "transform".
         n_fuzz (int, optional): number of fuzz data to use. Defaults to 100.
-        max_len (int, optional): maximum length of input. Defaults to 100.
-        sim_thresh (float, optional): similarity threshold. Defaults to 0.8.
     """
     try:
         repo_id_list = [
@@ -220,14 +206,15 @@ def main(
         case "fuzz":
             fuzz_repos(repos, jobs, timeout=timeout)
         case "testgen":
-            testgen_repos(repos, jobs, n_fuzz, max_len, sim_thresh)
+            testgen_repos(repos, jobs, n_fuzz)
         case "all":
             transform_repos(repos, jobs)
             build(repos, jobs)
             fuzz_repos(repos, jobs, timeout=timeout)
-            testgen_repos(repos, jobs, n_fuzz, max_len, sim_thresh)
+            testgen_repos(repos, jobs, n_fuzz)
         case _:
             logging.error(f"Unknown pipeline {pipeline}")
+
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
