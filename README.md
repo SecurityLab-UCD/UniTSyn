@@ -1,6 +1,6 @@
-# UniTSync
+# UniTSyn
 
-Multilingual **Uni**t **T**est and Function Source **Sync**hronization for CodeLLM.
+Multilingual **Uni**t **T**est and Function Source **Syn**hronization for CodeLLM.
 Code for our ISSTA 2024 paper https://arxiv.org/abs/2402.03396.
 
 ## Requirements
