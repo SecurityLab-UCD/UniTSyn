@@ -1,6 +1,7 @@
-# UniTSyncer
+# UniTSync
 
-Multilingual **Uni**t **T**est and Function Source **Sync**hronization for CodeLLM
+Multilingual **Uni**t **T**est and Function Source **Sync**hronization for CodeLLM.
+Code for our ISSTA 2024 paper https://arxiv.org/abs/2402.03396.
 
 ## Requirements
 
@@ -76,3 +77,16 @@ python3 scripts/find_repos.py --language='Python' --checks_list='["stars", "late
 
 Cursors representing where the search left off are saved to `data/repo_cursors/<language>_cursor.txt`. `find_repos.py` will automatically use and update this cursor to avoid mining duplicate repos.
 
+# Cite
+
+```biblatex
+@misc{he2024unitsynlargescaledatasetcapable,
+      title={UniTSyn: A Large-Scale Dataset Capable of Enhancing the Prowess of Large Language Models for Program Testing}, 
+      author={Yifeng He and Jiabo Huang and Yuyang Rong and Yiwen Guo and Ethan Wang and Hao Chen},
+      year={2024},
+      eprint={2402.03396},
+      archivePrefix={arXiv},
+      primaryClass={cs.SE},
+      url={https://arxiv.org/abs/2402.03396}, 
+}
+```
