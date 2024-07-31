@@ -8,7 +8,7 @@ from returns.result import Result, Success, Failure
 from frontend.parser.ast_util import ASTLoc, ASTUtil
 from frontend.parser import RUST_LANGUAGE
 from tree_sitter import Language, Parser, Tree
-from tree_sitter.binding import Node
+from tree_sitter import Node
 from pylspclient.lsp_structs import Location, LANGUAGE_IDENTIFIER, Range, Position
 from unitsyncer.source_code import get_function_code
 from unitsyncer.util import path2uri, uri2path

@@ -1,7 +1,7 @@
 """util functions for JS frontend"""
 
 from typing import Iterable
-from tree_sitter.binding import Node
+from tree_sitter import Node
 from frontend.parser import JAVASCRIPT_LANGUAGE
 from frontend.parser.ast_util import ASTUtil, ASTLoc, flatten_postorder
 from returns.maybe import Maybe, Nothing, Some

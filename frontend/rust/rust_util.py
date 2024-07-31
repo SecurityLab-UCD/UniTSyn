@@ -1,6 +1,7 @@
 """Util functions for rust frontend"""
+
 from typing import Iterable, Optional
-from tree_sitter.binding import Node
+from tree_sitter import Node
 from frontend.parser import RUST_LANGUAGE
 from frontend.parser.ast_util import ASTUtil, ASTLoc, flatten_postorder
 from returns.maybe import Maybe, Nothing, Some, maybe

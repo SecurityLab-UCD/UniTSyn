@@ -1,7 +1,8 @@
 """find focal call in Golang test function"""
+
 import fire
 import re
-from tree_sitter.binding import Node
+from tree_sitter import Node
 from frontend.parser import GO_LANGUAGE
 from frontend.parser.ast_util import ASTUtil, ASTLoc, flatten_postorder
 from returns.maybe import Maybe, Nothing, Some, maybe

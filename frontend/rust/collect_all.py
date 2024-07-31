@@ -1,8 +1,9 @@
 """Main script for Rust frontend"""
+
 from typing import Iterable
 import fire
 import os
-from tree_sitter.binding import Node
+from tree_sitter import Node
 from frontend.parser import RUST_LANGUAGE
 from frontend.parser.ast_util import ASTUtil
 from frontend.rust.rust_util import get_test_functions, get_focal_call

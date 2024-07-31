@@ -1,8 +1,9 @@
 """main script of Golang frontend"""
+
 from typing import Iterable
 import fire
 import os
-from tree_sitter.binding import Node
+from tree_sitter import Node
 from frontend.parser import GO_LANGUAGE
 from frontend.parser.ast_util import ASTUtil
 from returns.maybe import Maybe, Nothing, Some
