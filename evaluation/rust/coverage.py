@@ -1,9 +1,10 @@
 """Functions for running cargo-fuzz and get coverage for test cases"""
+
 import json
 from typing import Iterable, Iterator
 import fire
 import os
-from tree_sitter.binding import Node
+from tree_sitter import Node
 from frontend.parser import RUST_LANGUAGE
 from frontend.parser.ast_util import ASTUtil
 from unitsyncer.util import replace_tabs
