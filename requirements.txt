@@ -8,7 +8,7 @@ lambdas>=0.2.0
 sansio-lsp-client==0.10.0
 pygithub==2.3.0
 pytest==8.3.2
-astor==0.9.1
+astor==0.8.1
 jedi==0.19.1
 fire==0.6.0
 python-Levenshtein==0.25.1
