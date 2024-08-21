@@ -14,6 +14,8 @@ import os
 
 
 plt.style.use("_mpl-gallery")
+plt.rcParams["pdf.fonttype"] = 42
+plt.rcParams["ps.fonttype"] = 42
 
 
 def repo_id(test_id: str) -> str:
