@@ -108,7 +108,7 @@ def main(
         plt.hist(density, bins, alpha=alpha)
         # plt.legend(loc='upper right', fontsize=18)
         # plt.yscale("log")
-        plt.xlabel("Assertion density", fontsize=fontsize)
+        plt.xlabel("Assertion Density", fontsize=fontsize)
         plt.ylabel("Per-project Frequency", fontsize=fontsize)
         plt.rc("axes", labelsize=18)
         plt.savefig(f"density/{name}.pdf", dpi=500, bbox_inches="tight")
