@@ -3,12 +3,14 @@
 import json
 import matplotlib.pyplot as plt
 import numpy as np
-from multiprocessing import Pool
+from multiprocessing import Pool, cpu_count
 import random
 import pandas as pd
 from tqdm import tqdm
 import dataclasses
 from funcy import lmap, lfilter
+import fire
+import os
 
 
 plt.style.use("_mpl-gallery")
@@ -61,12 +63,17 @@ def get_density(df: pd.DataFrame):
     return df["n_assert"] / df["n_test_lines"]
 
 
-def main():
+def main(
+    input_dataset_path: str = "data/source/all.jsonl",
+    nproc: int = cpu_count(),
+    alpha: float = 1,
+    fontsize: int = 18,
+):
 
-    with open("data/source/all.jsonl", "r") as fp:
+    with open(input_dataset_path, "r") as fp:
         lines = fp.readlines()
 
-    with Pool() as p:
+    with Pool(nproc) as p:
         objs = p.map(json.loads, lines)
 
     langs = ["python", "java", "go", "cpp", "js"]
@@ -78,31 +85,32 @@ def main():
     np.random.seed(0)
     bins = np.linspace(0, 10, 100)
 
+    os.makedirs("ratio", exist_ok=True)
     ratios = lmap(test_to_code_ratio, dfs)
     ticks = list(range(10))
     for name, ratio in zip(langs, ratios):
         plt.figure(figsize=(12, 6))
-        plt.hist(ratio, bins, alpha=0.5)
+        plt.hist(ratio, bins, alpha=alpha)
         plt.xticks(ticks)
-        plt.xlabel("Test-to-code Ratio", fontsize=18)
-        plt.ylabel("Per-project Frequency", fontsize=18)
+        plt.xlabel("Test-to-code Ratio", fontsize=fontsize)
+        plt.ylabel("Per-project Frequency", fontsize=fontsize)
         plt.rc("axes", labelsize=18)
         plt.savefig(f"ratio/{name}.pdf", dpi=500, bbox_inches="tight")
 
+    os.makedirs("density", exist_ok=True)
     ds = lmap(get_density, dfs)
-
     bins = np.linspace(0, 1, 100)
     for name, density in zip(langs, ds):
         print(name)
         plt.figure(figsize=(12, 6))
-        plt.hist(density, bins, alpha=0.5)
+        plt.hist(density, bins, alpha=alpha)
         # plt.legend(loc='upper right', fontsize=18)
         # plt.yscale("log")
-        plt.xlabel("Assertion density", fontsize=18)
-        plt.ylabel("Per-project Frequency", fontsize=18)
+        plt.xlabel("Assertion density", fontsize=fontsize)
+        plt.ylabel("Per-project Frequency", fontsize=fontsize)
         plt.rc("axes", labelsize=18)
         plt.savefig(f"density/{name}.pdf", dpi=500, bbox_inches="tight")
 
 
 if __name__ == "__main__":
-    main()
+    fire.Fire(main)
