@@ -1,4 +1,5 @@
 """Helper Class and Functions for tree-sitter AST"""
+
 from tree_sitter import Language, Parser, Tree
 from tree_sitter import Node
 from returns.maybe import Maybe, Nothing, Some
@@ -79,7 +80,7 @@ class ASTUtil:
             return nodes
 
         for child in root.children:
-            if type is None or child.type == node_type:
+            if node_type is None or child.type == node_type:
                 nodes.append(child)
             nodes += self.get_all_nodes_of_type(
                 child, node_type, max_level=max_level - 1
@@ -113,6 +114,6 @@ def flatten_postorder(
     for child in root.children:
         nodes += flatten_postorder(child, node_type, max_level - 1)
 
-    if type is None or root.type == node_type:
+    if node_type is None or root.type == node_type:
         nodes.append(root)
     return nodes

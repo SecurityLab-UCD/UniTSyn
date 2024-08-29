@@ -92,7 +92,7 @@ def main(
     ticks = list(range(10))
     for name, ratio in zip(langs, ratios):
         plt.figure(figsize=(12, 6))
-        plt.hist(ratio, bins, alpha=alpha)
+        plt.hist(ratio, bins, alpha=alpha)  # type: ignore
         plt.xticks(ticks)
         plt.xlabel("Test-to-code Ratio", fontsize=fontsize)
         plt.ylabel("Per-project Frequency", fontsize=fontsize)
@@ -105,7 +105,7 @@ def main(
     for name, density in zip(langs, ds):
         print(name)
         plt.figure(figsize=(12, 6))
-        plt.hist(density, bins, alpha=alpha)
+        plt.hist(density, bins, alpha=alpha)  # type: ignore
         # plt.legend(loc='upper right', fontsize=18)
         # plt.yscale("log")
         plt.xlabel("Assertion Density", fontsize=fontsize)
