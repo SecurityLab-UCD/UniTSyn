@@ -77,16 +77,16 @@ python3 scripts/find_repos.py --language='Python' --checks_list='["stars", "late
 
 Cursors representing where the search left off are saved to `data/repo_cursors/<language>_cursor.txt`. `find_repos.py` will automatically use and update this cursor to avoid mining duplicate repos.
 
-# Cite
+# Reference
+
+Please cite our work in your publications if it helps your research:
 
 ```biblatex
-@misc{he2024unitsynlargescaledatasetcapable,
-      title={UniTSyn: A Large-Scale Dataset Capable of Enhancing the Prowess of Large Language Models for Program Testing}, 
-      author={Yifeng He and Jiabo Huang and Yuyang Rong and Yiwen Guo and Ethan Wang and Hao Chen},
-      year={2024},
-      eprint={2402.03396},
-      archivePrefix={arXiv},
-      primaryClass={cs.SE},
-      url={https://arxiv.org/abs/2402.03396}, 
+@inproceedings{he2024unitsyn,
+    author = {He, Yifeng and Huang, Jiabo and Rong, Yuyang and Guo, Yiwen and Wang, Ethan and Chen, Hao},
+    title = {UniTSyn: A Large-Scale Dataset Capable of Enhancing the Prowess of Large Language Models for Program Testing},  
+    booktitle = {International Symposium on Software Testing and Analysis (ISSTA)},
+    date = {2024-09-16/2024-09-20},
+    address = {Vienna, Austria},
 }
 ```
