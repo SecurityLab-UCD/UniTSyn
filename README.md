@@ -23,12 +23,12 @@ To run this script on a new project, you need to install the corresponding langu
 
 \*NOTE: you need git clone the repo to workdir of this project, then follow the instructions in the repo to install the language server.
 
-You can find language server for other languages at
+You can find language servers for other languages at
 [language-server-protocol/implementors/servers](https://microsoft.github.io/language-server-protocol/implementors/servers/).
 Other languages are not supported yet, but will be as the research progresses.
 To support a new language, you need a frontend to do the following:
 
-1. Collect the unit tests locations and focal functions locations in the repo (see `scripts/collect_test.py` and `scripts/collect_focal.py` for Python frontend).
+1. Collect the unit test locations and focal functions locations in the repo (see `scripts/collect_test.py` and `scripts/collect_focal.py` for Python frontend).
 2. Given a `Location` of function declaration, extract the function source code (see `unitsyncer/source_code.py`).
 
 ## Setup
@@ -36,8 +36,6 @@ To support a new language, you need a frontend to do the following:
 ```bash
 mkdir -p data/focal data/repos data/repos_tarball data/tests
 source ./scripts/env.sh
-cd frontend/parser & python3 build.py
-cd ../..
 ```
 
 ## Run
